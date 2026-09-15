@@ -2,6 +2,8 @@
 
 Gentle Shell is the `gentle-shell` coding-agent workspace built for Pi, not a theme. The `gentle-pi` package integrates the shell bar, workspace changes, provider usage where Pi exposes it, and native agent orchestration views into a Pi session. Start with the [README](../README.md#features) for the product overview.
 
+For everyday development, use [ODD and feature recovery](readme-reference.md#organic-driven-development). Choose SDD explicitly when you want its formal phase artifacts; the workspace supports both. TDD follows configured mode, and native review remains a separate user-owned choice.
+
 Source map: [shell extension](../extensions/gentle-shell.ts), [shell bar](../lib/shell-bar.ts), [changes model](../lib/shell-changes.ts), [changes view](../lib/shell-changes-view.ts), [usage model](../lib/shell-usage.ts), [usage view](../lib/shell-usage-view.ts), [agents extension](../extensions/gentle-agents.ts), and [agent runner](../lib/agents-runner.ts).
 
 ## v2.6.0 workspace updates
