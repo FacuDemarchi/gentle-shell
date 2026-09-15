@@ -66,7 +66,7 @@ test("organic progress preserves both complete feature copies and reconciles act
 		"odd/tasks/<feature-name>.md",
 		"odd/<feature-name>/tasks",
 		"stable task IDs",
-		"full current checklist",
+		"full current document",
 		"repository-relative file locator",
 		"preserve valid completed and unrelated work",
 		"reopen invalidated items",
@@ -114,4 +114,45 @@ test("user documentation shows recovery and candidate-level consent without clai
 		"autonomous",
 	]);
 	assert.ok(read("README.md").includes("#organic-driven-development"));
+});
+
+
+test("one feature document carries intent, accepted rationale and worker context", () => {
+	containsAll(memory, [
+		"one feature document, not a separate plan file or topic",
+		"objective, problem, why, scope, constraints",
+		"progress, verification evidence, and next step",
+		"concise rationale for meaningful accepted changes",
+		"Routine corrections stay with their tasks; no exhaustive decision journal",
+		"Accepted user, review, or verification changes",
+		"automatically update affected intent and TODOs",
+		"add genuinely new tasks or reopen invalidated items with a reason",
+		"Findings alone never authorize scope expansion or automatic acceptance",
+		"Before implementation or resume, the parent reads both the actual file and full observation",
+		"passes the locator and relevant context; workers read the document before edits",
+	]);
+	containsAll(read("assets/agents/gentle-ai-worker.md"), [
+		"Read the parent's ODD feature document locator before edits",
+		"Preserve valid completed work; return proposed intent/task changes and their reasons",
+	]);
+});
+
+test("ODD forwards configured TDD without equating test presence with enablement", () => {
+	containsAll(delegation, [
+		"Resolve effective TDD on/off from existing project/session configuration or explicit user choice",
+		"retain its source and exact test runner",
+		"Record resolved mode, source, and runner in the feature document when present",
+		"Tests or frameworks being present does not enable TDD",
+		"Forward mode, source, and runner on every implementation delegation; refresh on resume",
+		"When enabled, require observed RED before implementation, GREEN, then REFACTOR",
+		"When disabled, run ordinary functional checks, not no checks",
+		"If mode is unknown/conflicting or the runner is missing",
+		"resolve only the ambiguity affecting the next action",
+		"never invent precedence or a command, and never invoke sdd-init to determine ODD TDD",
+	]);
+	containsAll(read("assets/agents/gentle-ai-worker.md"), [
+		"Consume the parent's effective TDD mode, configuration/choice source, and exact runner",
+		"Missing or conflicting mode/source/runner is not disabled TDD",
+	]);
+	assert.doesNotMatch(wrapper, /If tests exist, use strict TDD/);
 });

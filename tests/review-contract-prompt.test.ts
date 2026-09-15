@@ -63,6 +63,9 @@ test("before_agent_start injects the mirrored review execution contract for the 
 	const result = await beforeAgentStart(primaryEvent, ctx());
 	const expected = mirroredPiOrchestrationText();
 	assert.match(result.systemPrompt, /Substantial authorized work: use ODD/);
+	assert.match(result.systemPrompt, /Use configured TDD mode, source, and exact runner/);
+	assert.match(result.systemPrompt, /test presence does not enable it/);
+	assert.doesNotMatch(result.systemPrompt, /If tests exist, use strict TDD/);
 	assert.match(result.systemPrompt, /Before organic exploration, implementation, or resume/);
 	assert.doesNotMatch(result.systemPrompt, /Prefer SDD\/OpenSpec artifacts/);
 	assert.match(result.systemPrompt, /## Gentle AI review execution contract \(mirrored provider bundle 1\.2\.0\)/);
