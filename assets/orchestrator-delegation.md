@@ -69,6 +69,34 @@ Exceptions:
 - Ask a subagent to produce Spanish only when its output is intended to be pasted directly to the user, a PR/comment/reply in Spanish, or Spanish-language product/documentation text.
 - SDD/OpenSpec artifact content may follow the project's established language, but phase task instructions to subagents should still be English.
 
+### Organic Driven Development (ODD)
+
+These instructions apply to organic work, not explicitly selected SDD. Preserve the existing direct/delegated topology and one parent owner; do not introduce an ODD CLI, specialized agent, or execution harness.
+
+#### Authorization and progress
+
+Investigation, explanation, review, comparison, and proposal-only requests remain read-only: no writer, apply, or implementation artifacts. Ambiguous or conditional change intent requires one clarification; stop and wait. Explore existing code and requirements proportionately first. Research findings and automatic execution pace never authorize mutations.
+
+Small, understood work creates no durable task artifacts. Substantial means coordinated steps or progress worth recovering, not a line threshold. For substantial authorized implementation, automatically create the feature checklist after exploration, without a task or storage permission prompt. Follow `orchestrator-memory.md` for the file and full Engram recovery copy, automatic updates, truthful checkoffs, and resume. Keep the parent responsible for reconciliation; bounded workers receive task IDs, authorized scope and checks, not authority over unrelated tasks.
+
+Use about 400 authored changed lines per ODD task only as a planning heuristic, counting additions plus deletions. Keep the smallest coherent behavior with its tests and docs. This is not a task acceptance criterion, hard cap, counter-trigger, automatic stop, forced split, or RDD trigger. If the correct clear solution naturally exceeds it, briefly explain why and continue without size-only rework loops. Never delete spaces, blank lines, or comments for cosmetic line savings; never omit tests, minify, add gratuitous abstractions, or split artificially to fit the heuristic. Forward this same advisory-only instruction when delegating tasks to subagents. Existing PR size gates remain unchanged; follow repository policy.
+
+#### Research depth without a new phase
+
+Recommend optional research only for a named uncertainty. Establish the problem, intended outcome, constraints, and current evidence; inspect relevant code. Adapt depth to uncertainty and consequence: no fixed questionnaire or mandatory rounds. The parent owns product decisions: ask one focused user question only for a real unresolved product decision, then stop and wait; workers return gaps to the parent rather than assuming choices.
+
+When the question needs external evidence, use available authorized documentation/web tools and prefer primary sources. Attribute material claims to URLs or code locations; distinguish verified facts, assumptions, contradictions, freshness, and gaps. If tools are unavailable, disclose limitations without inventing access or evidence. If research is declined, continue within authorized scope only where safe without the missing evidence; pause only unsafe decisions dependent on it.
+
+Return concise findings, recommendation, tradeoffs, open questions, and implementation implications. Offer a concise proposal only when a real scope or product decision needs it. Neither research nor a proposal is mandatory. Forward these research instructions to an existing fresh general exploration/research worker through the existing delegation mechanism; do not create a specialized agent or invoke `sdd-research`. Research remains read-only and requires no new persistence or readiness machinery.
+
+Use at most one scoped independent read-only assumption challenge for a high-consequence unproven premise, even in a small security-critical change. Name the premise, evidence, and consequence; do not start a debate loop. Deterministic failures need fixes, not model debate. The native RDD refuter owns native review claims; never duplicate or bypass it with this challenge.
+
+#### Checks and candidate consent
+
+Run applicable functional checks per task, not an RDD cycle per TODO checkbox. Preserve the RDD-aware Verification rule below and coordinate native review at the applicable deliverable candidate boundary, not every task update. Checklists grant no approval or receipt and never skip an existing delivery gate.
+
+When RDD is enabled, first use native candidate risk assessment through `gentle_review` with `{"operation":"assess"}`. Passive/low uses silent structural checks with no reviewer or consent ceremony. Medium/high relays existing candidate consent and follows the native plan: native review runs only on grant; a decline continues under ordinary policy. Do not substitute model judgment, task size, or defect severity for prospective candidate risk; never infer low risk from a failed assessment. Follow the mirrored provider contract and native continuations; this paragraph introduces no lifecycle route. When RDD is disabled, do not start or prompt for RDD; ordinary checks remain. A checklist or assumption challenge never enables RDD, replaces its refuter, or answers consent.
+
 ### Delegation Rules
 
 These rules select execution topology, not the implementation method. Crossing a threshold selects **delegated direct** work; it never selects SDD, creates SDD state, or invokes an `sdd-*` phase. Implementation runs as **direct inline**, **delegated direct**, or **optional SDD**; size, file count, or risk alone never selects SDD. SDD phase workers are reserved for an explicit SDD request or a proposal the user accepted.
@@ -98,7 +126,7 @@ These are parent-orchestrator routing boundaries. Use the smallest useful topolo
 3. **Write rule**: keep one mechanical, already-understood file inline only when it needs no research or unresolved design work; delegate one writer for 2+ non-trivial files.
 4. **Context rule**: delegate reading that prepares a write and broad research/context compression.
 5. **Per-action rule**: tests, builds, and installs may use fresh workers without changing the implementation route or creating SDD state.
-6. **Optional SDD rule**: propose SDD only when durable proposal/spec/design/tasks materially reduce substantial ambiguity. Select SDD only after an explicit request or accepted proposal; risk alone never forces SDD.
+6. **Optional SDD rule**: retain SDD only after an explicit request or accepted proposal. Resolve organic uncertainty with optional research and a concise proposal only for a real decision; risk alone never forces SDD.
 
 For bounded multi-file writes, prefer the installed package-owned `gentle-ai-worker`, then a user-configured `worker`. If neither worker definition exists, fall back to the native `Agent` even when `subagent_*` tools are available. If no delegation mechanism is available, stop and explain the blocker. Judgment Day phase roles are never generic fallbacks. If the generic writer chain is unavailable, use the documented native generic fallback or stop.
 
@@ -219,7 +247,7 @@ Do not make every task SDD. Do make non-trivial tasks multi-agent at the narrowe
 
 #### 3. SDD (optional)
 
-SDD is never selected by size, file count, or risk alone. Suggest it organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity (unclear requirements or acceptance criteria, architectural or product decisions, cross-cutting behavior changes), and let the user decide.
+SDD is never selected by size, file count, or risk alone. Do not recommend SDD merely to resolve ambiguity. Use the organic research guidance above; retain SDD when the user explicitly requests it or accepts a proposal to use it.
 
 Select SDD only when the user explicitly asks to use SDD, invokes `/gentle-sdd-new`, `/gentle-sdd-ff`, or `/gentle-sdd-continue`, or accepts an SDD proposal. Once selected, do not jump directly to implementation. Calibrate context, create artifacts, and ask for approval at the appropriate gates.
 

@@ -2,6 +2,58 @@
 
 This reference preserves the detailed installation, configuration, SDD/OpenSpec, runtime, and contributor material previously carried by the README. Start with the [README](../README.md) for the product overview; use this document when you need operational detail. Historical compatibility and authority passages remain reference material, not newly endorsed operator instructions.
 
+
+## Organic Driven Development
+
+ODD keeps explore → implement → proportionate checks as the default, while explicitly selected SDD remains separate. For substantial authorized implementation, the parent automatically tracks feature progress after exploration, without asking for task-tracking or storage permission. Small, understood work creates no durable task artifact; investigation and proposal-only work stay read-only.
+
+- **Progress:** `odd/tasks/<feature-name>.md` and project-scoped Engram topic `odd/<feature-name>/tasks` hold the full current checklist, stable task IDs, authorized scope, acceptance criteria, checks, next step, and repository-relative locator. Discoveries revise affected tasks automatically, preserve valid completed work, and reopen invalidated items. New business scope still needs authorization; only observed outcomes with applicable proof earn checkoffs.
+- **Recovery:** write local progress first and read back both copies; writes are not atomic. Unavailable Engram leaves an explicit pending mirror, not invented success or a block on unrelated safe work. Resume reads full feature memory and the actual task file, reconciles code and evidence, and preserves conflicting versions. The existing Todo UI is a projection, not another authority.
+- **Task size:** about 400 authored changed lines (additions plus deletions) is advisory only, not a cap, acceptance criterion, automatic stop, forced split, or RDD trigger. Keep coherent behavior with tests and docs, explain natural overages, and continue under existing PR policy. Forward this instruction to workers; never remove whitespace, comments, or tests, minify, invent abstractions, or split artificially for cosmetic savings.
+- **Research:** optional research addresses a named uncertainty. Establish problem, intended outcome, constraints, and current evidence; inspect code and adapt depth to consequence, not fixed questionnaires or rounds. The parent asks one focused product question only when needed, then waits; workers return gaps. Use available authorized documentation/web tools, prefer primary sources, and attribute claims to URLs/code locations. Distinguish facts, assumptions, contradictions, freshness, and gaps; return a recommendation, tradeoffs, open questions, and implementation implications. Forward these instructions to an existing fresh general worker, not a specialized agent or `sdd-research`. Unavailable evidence pauses only unsafe dependent decisions. Research stays read-only with no new persistence/readiness machinery; a brief proposal is needed only for a real decision.
+- **Assumptions:** at most one scoped independent read-only challenge for a high-consequence unproven premise, including a small security-critical change. Deterministic failures need fixes, not debate. Native RDD claims stay with its refuter.
+- **Checks:** functional checks run per task, not RDD per checkbox. At a meaningful deliverable boundary, enabled RDD uses native candidate risk first via existing `gentle_review` assessment: passive/low stays silent; medium/high relays existing candidate consent and runs the native plan only on grant. Decline follows ordinary policy; unavailable assessment never means low risk. Disabled RDD never starts or prompts. Preserve native continuations and existing delivery gates.
+
+```mermaid
+flowchart TD
+    A[Request] --> B{Implementation authorized?}
+    B -->|No| C[Read-only exploration; no task artifacts]
+    B -->|Yes| D[Explore existing code and requirements]
+    D --> E{Named uncertainty and research selected?}
+    E -->|Yes| F[Adaptive read-only research with existing workers]
+    E -->|No| G[Resolve real product decisions only]
+    F --> G
+    G --> H{High-consequence unproven premise?}
+    H -->|Yes| I[One independent assumption challenge]
+    H -->|No| J{Substantial work?}
+    I --> J
+    J -->|Yes| K[Automatic task file and full Engram mirror]
+    J -->|No| L[Implement without durable tasks]
+    K --> M[Implement next task]
+    L --> N[Applicable functional checks]
+    M --> N
+    N --> O[Record truthful results; update tracked tasks and mirror]
+    O --> P{Authorized work remains?}
+    P -->|Yes| M
+    P -->|No| Q{RDD enabled at deliverable boundary?}
+    Q -->|No| R[Ordinary checks and policy]
+    Q -->|Yes| S{Native candidate risk}
+    S -->|Passive or low| T[Silent structural checks; no reviewer or prompt]
+    S -->|Medium or high| U{Existing candidate consent}
+    S -->|Unavailable| V[Native continuation; never assume low risk]
+    U -->|Granted| W[Native review plan and authority]
+    U -->|Declined| R
+    R --> X[Existing delivery gates]
+    T --> X
+    W --> X
+    X --> Y[Deliver]
+    Z[Resume] --> AA[Full feature memory and actual task file]
+    AA --> AB[Reconcile requirements, code, proof and conflicts]
+    AB --> M
+```
+
+This is guidance through existing tools, not a new CLI, phase, state engine, or execution harness. Static prompt tests and scripted hook checks prove instruction delivery, not autonomous model adherence; actual create/update/resume behavior requires observed Pi sessions.
+
 ## Navigation
 
 - [Capabilities](#capability-reference)

@@ -96,6 +96,8 @@ See active tasks, session changes, and runtime status without leaving the work y
 
 Say what you need once, then keep moving. el Gentleman helps turn intent into clear scope, a sensible next step, and evidence people can review—without making every task feel like a process meeting.
 
+**[→ Follow the organic workflow and recovery](docs/readme-reference.md#organic-driven-development)**
+
 **[→ See persona modes and routing](docs/readme-reference.md#persona-modes)**
 
 ---

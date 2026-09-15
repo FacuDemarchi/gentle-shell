@@ -1,6 +1,18 @@
 # Orchestrator — Memory Detail (lazy-loaded)
 
-Bind this to the parent Pi session only, on SDD phase memory reads/writes. Not always-on; loaded on demand from `assets/orchestrator.md`'s `## Memory Contract` pointer.
+Bind this to the parent Pi session only, on organic progress/recovery or SDD phase memory reads/writes. Not always-on; loaded on demand from `assets/orchestrator.md`'s `## Memory Contract` pointer.
+
+### Organic feature continuity
+
+For substantial authorized organic implementation, the parent maintains `odd/tasks/<feature-name>.md` and an Engram recovery copy under topic `odd/<feature-name>/tasks`, scoped to the current project. Use a descriptive filename-safe feature name, reuse the same identity, and never overwrite another feature. Include stable task IDs, authorized scope, acceptance criteria, applicable checks, and the next step. Mirror the full current checklist and repository-relative file locator, not only a summary or completion notice.
+
+After discoveries or requirement changes, automatically update affected TODOs: preserve valid completed and unrelated work, reopen invalidated items, and revise their checks. New business scope still requires user authorization. Check off only observed outcomes with applicable proof; record failed, unavailable, skipped, or pending checks honestly. The parent merges bounded worker results rather than replacing the entire feature with one worker's partial view.
+
+Persist local progress first, then mirror through the existing injected Engram save tool. Read back both writes; they are not atomic. If Engram is unavailable, preserve local progress and explicitly mark the mirror pending; do not claim persistence succeeded or block unrelated safe work. Resynchronize when available. If a file write is unsafe or unavailable, preserve existing state and report the limitation. Preserve both versions on irreconcilable edits and ask only about the real conflict; never silently prefer a newer timestamp.
+
+On resume, use `mem_context`, then project/feature-scoped `mem_search`, and `mem_get_observation` for the full saved checklist; read the actual task file. Do not infer active work from the newest global memory. Reconcile current requirements, code, and proof before continuing the next unfinished task. Preserve pending mirrors and conflicting edits; a missing copy is not permission to overwrite surviving progress. Use the injected equivalents of these existing memory tools, never invent availability.
+
+The existing `todo` tool is an optional session/UI projection, not a third authority. Rebuild it from reconciled feature progress when useful; its replay or completed-list clearing must not delete or replace the durable file or Engram copy. Small/read-only work does not acquire an ODD artifact merely because the UI displays tasks.
 
 ### SDD phases
 

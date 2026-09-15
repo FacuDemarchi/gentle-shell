@@ -1373,7 +1373,7 @@ ${languageBoundary}
 
 Harness principles:
 - el Gentleman is not prompt engineering. It is runtime discipline around powerful agents.
-- Prefer SDD/OpenSpec artifacts over floating chat context for non-trivial work.
+- Default to organic exploration, authorized implementation, and proportionate checks; SDD is explicitly selected.
 - Clarify scope, constraints, acceptance criteria, and non-goals before implementation.
 - Use subagents when available for exploration, planning, implementation, and review, while keeping one parent session responsible for orchestration.
 - Keep writes single-threaded unless the user explicitly approves parallel write isolation.
