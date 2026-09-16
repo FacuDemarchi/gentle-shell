@@ -17,6 +17,7 @@ extensions/startup-banner.ts
 lib/shell-sidebar-banner.ts
 tests/startup-banner.test.ts
 tests/shell-sidebar-banner.test.ts
+tests/shell-sidebar-layout.test.ts
 odd/tasks/gentle-shell-visible-branding.md
 
 ## Progress
@@ -46,3 +47,5 @@ Readability RED: focused command exited 1 on the intended e-shape mismatch (old 
 T2 completed: parent inspected the scoped final diff and reran focused tests (9 passed) plus git diff --check; independent read-only verification likewise passed with no concrete regression. Unrelated lib/shell-card.ts and tests/shell-card.test.ts changes were preserved. Full suite and latest-e visual acceptance remain unverified. Native assessment returned unavailable (empty output); independent verification ran as required. Native review was not started: inspection included unrelated shell-card changes, which are outside this task's scope. No approval receipt is claimed.
 
 Engram mirror pending: parent reported that the active runtime session belongs to gentle-ai and rejects gentle-pi saves. No replacement session identity was created. User visually approved the corrected e and final artwork ("ahora si!!! me encanta") and authorized PR publication and merge after CI using the current gh session. Approved issue: https://github.com/Gentleman-Programming/gentle-shell/issues/1104. Next: publish scoped PR, merge only after CI passes, and synchronize the mirror in the correct project session. Full local suite remains unrun; CI is the full-suite delivery check.
+
+PR: https://github.com/Gentleman-Programming/gentle-shell/pull/1105. Initial CI failed two integration assertions in tests/shell-sidebar-layout.test.ts because they still expected Gentle-Pi (2609 passed, 2 failed, 38 skipped). Updated only the four old title literals, preserving ordering and geometry assertions. Expanded focused command includes tests/shell-sidebar-layout.test.ts: 25 passed, 0 failed; git diff --check passed. CI rerun remains required before merge.

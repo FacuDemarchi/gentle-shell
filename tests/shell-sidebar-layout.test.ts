@@ -73,7 +73,7 @@ test("rail orders Status, changes, agents, TODO independent of registration orde
 		sidebarPart(f.tui, key, { render: () => [key, ""], invalidate() {} });
 	}
 	t.after(installSidebar(f.tui, theme));
-	assert.deepEqual(rail(f).render(50).map((line) => line.trim()), ["✿ Gentle-Pi ✿", "", "Status", "", "changes", "", "agents", "", "todo"]);
+	assert.deepEqual(rail(f).render(50).map((line) => line.trim()), ["✿ Gentle Shell ✿", "", "Status", "", "changes", "", "agents", "", "todo"]);
 });
 
 test("branding belongs to scroll content before Status, never transcript or narrow bottom", (t) => {
@@ -81,14 +81,14 @@ test("branding belongs to scroll content before Status, never transcript or narr
 	t.after(installSidebar(f.tui, theme));
 	const scroll = rail(f);
 	const lines = scroll.render(50);
-	const brandIndex = lines.findIndex((line) => line.includes("✿ Gentle-Pi ✿"));
+	const brandIndex = lines.findIndex((line) => line.includes("✿ Gentle Shell ✿"));
 	assert.ok(brandIndex >= 0 && brandIndex < lines.findIndex((line) => line.includes("Status")));
 	assert.doesNotMatch(lines.join("\n"), /[\u2800-\u28ff]/);
 	const heading = lines[brandIndex];
 	const usableWidth = scroll.getContentWidth(50) - 2;
-	const spare = usableWidth - visibleWidth("✿ Gentle-Pi ✿");
+	const spare = usableWidth - visibleWidth("✿ Gentle Shell ✿");
 	const scrollbarWidth = 50 - scroll.getContentWidth(50);
-	assert.equal(heading, " ".repeat(1 + Math.floor(spare / 2)) + "✿ Gentle-Pi ✿" + " ".repeat(1 + Math.ceil(spare / 2) + scrollbarWidth));
+	assert.equal(heading, " ".repeat(1 + Math.floor(spare / 2)) + "✿ Gentle Shell ✿" + " ".repeat(1 + Math.ceil(spare / 2) + scrollbarWidth));
 	assert.deepEqual(f.root.render(), ["transcript"]);
 	scroll.updateLayout(lines.length, 2, () => {});
 	scroll.scrollBy(9);
