@@ -1,22 +1,28 @@
-import { realpathSync } from "node:fs";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import {
 	mergeDisabledTools,
 	PI_PRETTY_SUPPRESSED_TOOL_NAMES,
 	quietToolsEnabled,
 } from "../lib/quiet-tools-config.ts";
 
-const packageJsonPath = realpathSync(
-	fileURLToPath(new URL("../package.json", import.meta.url)),
-);
-const requireFromRealPackage = createRequire(packageJsonPath);
-const piPrettyModule = requireFromRealPackage("@heyhuynhgiabuu/pi-pretty");
+type PiPrettyExtension = (pi: unknown, deps?: unknown) => unknown;
 
-const piPrettyExtension =
-	typeof piPrettyModule === "function"
-		? piPrettyModule
-		: piPrettyModule.default;
+let piPrettyExtensionPromise: Promise<PiPrettyExtension> | undefined;
+
+async function loadPiPrettyExtension(): Promise<PiPrettyExtension> {
+	return piPrettyExtensionPromise ??= import("@heyhuynhgiabuu/pi-pretty").then(
+		(piPrettyModule) => {
+			const moduleCandidate: unknown = piPrettyModule;
+			const extension =
+				typeof moduleCandidate === "function"
+					? moduleCandidate
+					: piPrettyModule.default;
+			if (typeof extension !== "function") {
+				throw new TypeError("pi-pretty must export an extension function");
+			}
+			return extension as PiPrettyExtension;
+		},
+	);
+}
 
 export default async function gentlePiPrettyExtension(pi: unknown, deps?: unknown): Promise<unknown> {
 	if (quietToolsEnabled()) {
@@ -25,5 +31,6 @@ export default async function gentlePiPrettyExtension(pi: unknown, deps?: unknow
 			PI_PRETTY_SUPPRESSED_TOOL_NAMES,
 		);
 	}
+	const piPrettyExtension = await loadPiPrettyExtension();
 	return piPrettyExtension(pi, deps);
 }

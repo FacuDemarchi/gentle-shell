@@ -68,7 +68,7 @@
 	},
 	"dependencies": {
 		"@earendil-works/pi-tui": "0.85.1",
-		"@heyhuynhgiabuu/pi-pretty": "0.6.14"
+		"@heyhuynhgiabuu/pi-pretty": "0.6.27"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": ">=0.85.1",
