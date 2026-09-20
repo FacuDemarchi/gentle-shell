@@ -199,6 +199,7 @@ import {
 	nativeReviewRecoverAuthorization,
 	normalizeNativeReviewCwd,
 	NativeReviewCliError,
+	nativeUntrackedSelection,
 	NativeReviewConsentBindingError,
 	NativeReviewConsentRequiredError,
 	NativeReviewIntegrationError,
@@ -1023,18 +1024,26 @@ async function resolveReviewAssessmentPlan(
 
 	let assessment: ReviewAssessmentV1 | undefined;
 	let unassessableDetail: string | undefined;
+	let unassessableCode = "native-assess-unavailable";
 	if (nativeReviewCli?.assess === undefined) {
 		unassessableDetail = "native review assess is unavailable: the installed gentle-ai binary does not expose the assess command.";
 	} else {
 		try {
 			const request: NativeReviewAssessRequest = {
 				cwd,
+				...nativeUntrackedSelection(input),
 				...(input.baseRef === undefined ? {} : { baseRef: input.baseRef, committedOnly: true as const }),
 				...(signal === undefined ? {} : { signal }),
 			};
 			assessment = await nativeReviewCli.assess(request);
 		} catch (error) {
-			unassessableDetail = `native review assess failed: ${error instanceof Error ? error.message : String(error)}`;
+			const nativeError = asNativeReviewCliError(error);
+			unassessableCode = nativeError?.code ?? unassessableCode;
+			// Only the sanitized process surface may supply native evidence.
+			// Arbitrary thrown messages can contain argv or environment values.
+			unassessableDetail = nativeError?.diagnostics.stderr
+				? `native review assess failed: ${nativeError.diagnostics.stderr}`
+				: "native review assess failed; no sanitized stderr diagnostic is available.";
 		}
 	}
 
@@ -1050,7 +1059,7 @@ async function resolveReviewAssessmentPlan(
 	return {
 		schema: "gentle-pi.review-assessment-plan/v1",
 		risk,
-		reasons: assessment?.reasons ?? (unassessableDetail === undefined ? [] : [{ code: "native-assess-unavailable", path: "", detail: unassessableDetail }]),
+		reasons: assessment?.reasons ?? (unassessableDetail === undefined ? [] : [{ code: unassessableCode, path: "", detail: unassessableDetail }]),
 		changedPaths: assessment?.changedPaths ?? 0,
 		changedLines: assessment?.changedLines ?? 0,
 		candidate: assessment === undefined ? null : { kind: assessment.candidate.kind, baseRef: assessment.candidate.baseRef },
@@ -4826,7 +4835,7 @@ interface ReviewScopeParameters {
 // as `gentle_review` operation `assess` (not a dedicated tool), taking its
 // optional fields through the controller's existing generic `input` JSON
 // string, exactly like START's `{"mode":...,"baseRef":...}`.
-interface ReviewAssessInput {
+interface ReviewAssessInput extends Pick<NativeReviewAssessRequest, "untrackedScope" | "expectedUntrackedInventory" | "intendedUntracked"> {
 	baseRef?: string;
 	committedOnly?: boolean;
 	writerModelId?: string;
@@ -4845,7 +4854,7 @@ function isNativeReviewOutcome(value: unknown): value is NativeReviewOutcome {
 function parseReviewAssessInput(operation: ReviewControllerOperation, raw: string | undefined): ReviewAssessInput {
 	if (raw === undefined) return {};
 	const value = parseControllerJson(raw, operation);
-	const allowed = new Set(["baseRef", "committedOnly", "writerModelId", "writerEffort", "nativeReviewOutcome"]);
+	const allowed = new Set(["baseRef", "committedOnly", "writerModelId", "writerEffort", "nativeReviewOutcome", "untrackedScope", "expectedUntrackedInventory", "intendedUntracked"]);
 	const unexpected = Object.keys(value).find((key) => !allowed.has(key));
 	if (unexpected !== undefined) throw new Error(`Review controller ${operation} input does not accept ${unexpected}`);
 	const { baseRef, committedOnly, writerModelId, writerEffort, nativeReviewOutcome } = value;
@@ -4859,6 +4868,7 @@ function parseReviewAssessInput(operation: ReviewControllerOperation, raw: strin
 	return {
 		...(baseRef === undefined ? {} : { baseRef: baseRef as string }),
 		...(committedOnly === undefined ? {} : { committedOnly: committedOnly as boolean }),
+		...nativeUntrackedSelection(value),
 		...(writerModelId === undefined ? {} : { writerModelId: writerModelId as string }),
 		...(writerEffort === undefined ? {} : { writerEffort: writerEffort as string }),
 		...(nativeReviewOutcome === undefined ? {} : { nativeReviewOutcome: nativeReviewOutcome as NativeReviewOutcome }),
