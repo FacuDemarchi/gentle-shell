@@ -122,4 +122,4 @@ Native warming refreshes a known provider cache shortly before expiry with one o
 
 ## Next Step
 
-Candidate implementation and verification are complete. The user authorized PR and merge; issue #1278 is approved. Next: create the implementation work-unit commit, run the applicable native delivery checks, push, open the PR, wait for automated checks, and merge.
+Candidate implementation and verification are complete. The user authorized PR and merge; issue #1278 is approved. Implementation work-unit commit: `ea3d167d` (`feat(agents): preserve parent prompt cache during background work`). Next: run the applicable native delivery checks, push, open the PR, wait for automated checks, and merge.
