@@ -1907,7 +1907,7 @@ test("default Node spawn adapter distinguishes IPC-only and permission-capable c
 			const { ctx } = fakeContext();
 			(ctx.sessionManager as unknown as { getCwd(): string }).getCwd = () => sessionCwd;
 			await h.fire("session_start", ctx);
-			shutdown.push(() => h.fire("session_shutdown", ctx));
+			shutdown.push(async () => { await h.fire("session_shutdown", ctx); });
 			return { h, ctx, result: h.tools.get("subagent_run")!.execute(`spawn-${mode}`, { agent: "explore", task: `Capture ${mode}`, mode }, undefined, undefined, ctx) };
 		};
 		const task = await launch("task", { PATH: "/bin", FIXTURE: "task" });

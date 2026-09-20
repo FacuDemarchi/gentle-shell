@@ -59,6 +59,7 @@ Native warming refreshes a known provider cache shortly before expiry with one o
 - [x] **T2 — Implement the Gentle Shell integration (delegated).** Wire the smallest Pi-native decision hook and user-facing configuration guidance while preserving explicit opt-out and native lifecycle bounds.
 - [x] **T3 — Verify behavior and regression boundaries (delegated verification).** Run focused tests, typecheck, diff check, and an independent read-only verification if required by native risk assessment.
 - [x] **T4 — Close the lifecycle coverage gap (delegated correction).** Add one extension-level behavioral test that fires the registered warming decision before launch, during owned background work, after session replacement/restoration, and after completion; remove reliance on wiring regex as the only integration proof.
+- [x] **T5 — Correct the CI type regression (inline correction + delegated verification).** Preserve awaited shutdown cleanup while adapting the existing `Promise<void>` callback to the result-returning fake event dispatcher.
 
 ## Acceptance Criteria
 
@@ -76,6 +77,7 @@ Native warming refreshes a known provider cache shortly before expiry with one o
 - T1/T2: delegated direct writer, triggered by multiple non-trivial files and implementation-preparation reads.
 - T3: delegated verification, triggered by command-running verification policy.
 - T4: delegated direct test-only correction; production code is unchanged.
+- T5: inline one-line test-harness correction after CI RED, followed by delegated command verification.
 
 ## Delivery Strategy
 
@@ -120,6 +122,13 @@ Native warming refreshes a known provider cache shortly before expiry with one o
 - Final independent verification after T4: combined focused suites passed 115/115; `git diff --check` passed; tracked and untracked candidate diff was inspected; no defects found. It confirmed `fakePi.fire()` still propagates handler failures and preserves lifecycle bookkeeping, test-scoped mocks/timers do not leak, the registered production callback is exercised, and production code stayed unchanged after the first review. The prior LOW coverage finding is closed.
 - Proof boundary: no live provider/cache-hit or full Pi-host lifecycle run was performed. Session replacement is represented by active-session identity changes and restoration by real `TaskStore.restore`; shutdown is covered after settlement.
 
+### T5 CI correction evidence
+
+- CI RED on PR #1279: `verify` → `Type check` ran `pnpm run typecheck` and exited 1 with `TS2322`: the existing shutdown callback promised `void`, while the corrected fake dispatcher now returns `Promise<unknown[]>`.
+- Root cause: `shutdown.push(() => h.fire("session_shutdown", ctx))` forwarded the dispatcher result into `Array<() => Promise<void>>`. This was candidate-caused test-harness typing, not a production runtime defect.
+- Correction: `shutdown.push(async () => { await h.fire("session_shutdown", ctx); });` preserves awaited cleanup and intentionally discards the event-result array.
+- Delegated GREEN: `pnpm run typecheck` passed the ratchet with 196 baseline diagnostics and 3 improved file/code pairs; combined focused/runtime suites passed 115/115; `git diff --check` passed.
+
 ## Next Step
 
-Candidate implementation and verification are complete. The user authorized PR and merge; issue #1278 is approved. Implementation work-unit commit: `ea3d167d` (`feat(agents): preserve parent prompt cache during background work`). Next: run the applicable native delivery checks, push, open the PR, wait for automated checks, and merge.
+Issue #1278 is approved and PR #1279 is open. Implementation work-unit commit: `ea3d167d` (`feat(agents): preserve parent prompt cache during background work`). The first CI run exposed T5 and the correction is verified locally. Next: commit and push T5, renew native review for the changed candidate, wait for all automated checks, and merge.
