@@ -106,7 +106,7 @@ Bring in help without losing the thread. Focused package-owned Pi agents can map
 
 ### ODD — The everyday workflow
 
-<img width="100%" src="docs/assets/diagrams/odd-workflow.svg" alt="Organic Driven Development as a seven-step serpentine: Authorize, Explore, Resolve uncertainty, Classify, Track before the first write, Implement task by task, and Close, above a dashed band marking that one feature document mirrored in Engram lets work resume across sessions">
+<img width="100%" src="docs/assets/diagrams/odd-workflow.svg" alt="Organic Driven Development as seven numbered steps: Authorize, Explore, Resolve uncertainty, and Classify across the top row; Classify forks, so small understood work stays light while substantial work gets step five, Track, with one feature document; both paths converge on Implement task by task and then Close, above a dashed band marking that one feature document mirrored in Engram lets work resume across sessions">
 
 **Organic Driven Development (ODD)** is the everyday path: the agent explores before changing anything, clarifies only real decisions, and keeps small understood work small. Substantial, authorized work gets one recoverable feature document — mirrored in memory when available — so progress, evidence, and the next step survive an interruption; checks follow the configured TDD mode.
 
@@ -128,7 +128,7 @@ Review the exact change, not a moving target. Native review keeps one candidate 
 
 <img width="100%" src="docs/assets/features/changes-view.png" alt="Gentle Changes viewer: worktree accordion with per-file status on the left, the captured diff with line counts on the right, and a keyboard hint row">
 
-You should not have to run `git status` to find out what your agent did. Gentle Changes captures every write and edit from the current session and its owned subagents — no repository scans, no background polling — and shows them in a two-pane viewer with per-file line counts and an honest **diff unavailable** when an external edit breaks continuity. `alt+g` opens it; `o` drops the real file into your editor.
+You should not have to run `git status` to find out what your agent did. Gentle Changes captures the successful write and edit tool calls from the current session and its owned subagents — no repository scans, no background polling — and shows them in a two-pane viewer with per-file line counts and an honest **diff unavailable** when an external edit breaks continuity. Coverage stops at those tools, so shell commands and failed runs leave no row, and a missing entry never proves a clean tree. `alt+g` opens it; `o` drops the real file into your editor.
 
 **[Docs →](docs/gentle-shell.md#browse-captured-diffs)**
 
@@ -156,9 +156,9 @@ Model, effort, and who does what should be choices, not accidents. Named profile
 
 ### Command palette — Every command, one keystroke away
 
-<img width="100%" src="docs/assets/features/command-palette.png" alt="Command palette with a search field and grouped entries: Configuration, Session, Diagnostics, and Skills">
+<img width="100%" src="docs/assets/features/command-palette.png" alt="Command palette with a search field and grouped entries: Configuration, Session, Diagnostics, SDD, and Skills">
 
-Extension commands are only useful if you can find them. `alt+k` opens a curated, grouped palette — Configuration, Session, Diagnostics, and Skills — searchable by label, command name, or description, showing entries only when they are actually registered.
+Extension commands are only useful if you can find them. `alt+k` opens a curated, grouped palette — Configuration, Session, Diagnostics, SDD, and Skills — searchable by label, command name, or description, showing entries only when they are actually registered.
 
 **[Docs →](docs/gentle-shell.md#command-palette)**
 
