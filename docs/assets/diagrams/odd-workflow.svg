@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" role="img" aria-labelledby="odd-title odd-desc">
+  <title id="odd-title">Organic Driven Development workflow</title>
+  <desc id="odd-desc">One feature moves through authorization, exploration, a single real decision, tracking, implementation, and a verified close. The same feature document carries progress across sessions so work resumes instead of restarting.</desc>
+  <defs>
+    <linearGradient id="odd-bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#100c15"/><stop offset="1" stop-color="#21101f"/></linearGradient>
+    <marker id="odd-arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path d="M0 0 10 5 0 10z" fill="#f095c8"/></marker>
+  </defs>
+  <rect width="960" height="660" rx="20" fill="url(#odd-bg)"/>
+  <text x="58" y="65" fill="#fff7f1" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700">Explore, track, implement.</text>
+  <text x="58" y="120" fill="#d7a0b8" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="700">Resume without ceremony.</text>
+  <g fill="#1c1420" stroke="#d7a0b8" stroke-width="2"><rect x="58" y="180" width="240" height="130" rx="16"/><rect x="350" y="180" width="240" height="130" rx="16"/><rect x="642" y="180" width="240" height="130" rx="16"/><rect x="642" y="350" width="240" height="130" rx="16" fill="#2a1426" stroke="#f095c8" stroke-width="3"/><rect x="350" y="350" width="240" height="130" rx="16"/><rect x="58" y="350" width="240" height="130" rx="16"/></g>
+  <g fill="none" stroke="#f095c8" stroke-width="3" stroke-linecap="round" marker-end="url(#odd-arrow)"><path d="M298 245H350"/><path d="M590 245H642"/><path d="M762 310V350"/><path d="M642 415H590"/><path d="M350 415H298"/></g>
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle"><g fill="#fff7f1" font-size="36" font-weight="700"><text x="178" y="239">Authorize</text><text x="470" y="239">Explore</text><text x="762" y="239">Decide</text><text x="762" y="409">Track</text><text x="470" y="409">Implement</text><text x="178" y="409">Close</text></g><g fill="#d7a0b8" font-size="28"><text x="178" y="284">read-only first</text><text x="470" y="284">code and needs</text><text x="762" y="284">one question</text><text x="762" y="454">one document</text><text x="470" y="454">workers, tests</text><text x="178" y="454">verified proof</text></g></g>
+  <rect x="58" y="520" width="844" height="100" rx="16" fill="#18121b" stroke="#d7a0b8" stroke-width="2" stroke-dasharray="8 7"/>
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle"><text x="480" y="558" fill="#fff7f1" font-size="36" font-weight="700">Resume where you stopped</text><text x="480" y="596" fill="#d7a0b8" font-size="28">One feature document, mirrored in Engram across sessions.</text></g>
+</svg>

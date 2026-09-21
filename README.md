@@ -34,7 +34,7 @@
 
 <p align="center"><sub>One workspace. A coding agent you direct. A workflow you can inspect.</sub></p>
 
-<p align="center"><strong>BUILT FOR PI</strong> &nbsp;·&nbsp; Coding-agent workspace &nbsp;·&nbsp; Focused agents &nbsp;·&nbsp; ODD + optional SDD</p>
+<p align="center"><strong>BUILT FOR PI</strong> &nbsp;·&nbsp; Coding-agent workspace &nbsp;·&nbsp; Focused agents &nbsp;·&nbsp; ODD</p>
 
 <p align="center">
   <a href="https://github.com/Gentleman-Programming/gentle-pi/stargazers"><strong>★ Star gentle-shell on GitHub</strong></a>
@@ -118,27 +118,17 @@ Bring in help without losing the thread. Focused package-owned Pi agents can map
 
 ### ODD — The everyday workflow
 
-**Organic Driven Development (ODD)** is the recommended path for everyday work: explore the code, clarify real decisions, implement authorized changes, and run proportionate checks. Ask for an outcome, for example: "Add CSV export using the existing report filters." Small/read-only work needs no durable implementation artifacts; substantial work can use focused workers without entering SDD.
+<p align="center">
+  <img src="docs/assets/diagrams/odd-workflow.svg" width="1200" alt="Organic Driven Development as a six-step serpentine from Authorize through Explore, Decide, Track, Implement, and Close, above a dashed band marking that one feature document mirrored in Engram lets work resume across sessions">
+</p>
+
+**Organic Driven Development (ODD)** is the recommended path for everyday work: explore the code, clarify real decisions, implement authorized changes, and run proportionate checks. Ask for an outcome, for example: "Add CSV export using the existing report filters." Small/read-only work needs no durable implementation artifacts; substantial work can use focused workers.
 
 One `odd/tasks/<feature-name>.md` keeps objective/problem/why, scope/constraints, actionable tasks, evidence, progress, next step, and meaningful accepted-change rationale. Engram mirrors the full document under project-scoped `odd/<feature-name>/tasks`; accepted changes update intent and affected tasks while preserving valid completed work. Memory is separately installed; if unavailable, local progress survives with an explicitly pending mirror.
 
 TDD follows configured mode, source, and exact runner, forwarded to workers and refreshed on resume. Tests existing does not enable it; disabled TDD still runs functional checks. Native RDD is separate and user-owned.
 
-**Why not SDD every day?** Its separate proposal/spec/design/tasks artifacts and phase handoffs add coordination that ordinary work often does not need. Choose SDD explicitly when you want those formal artifacts, never automatically because of size, ambiguity, or risk. SDD remains supported, not deprecated.
-
 **[→ ODD details and recovery](docs/readme-reference.md#organic-driven-development)**
-
----
-
-### Optional SDD — Formal phases when you choose them
-
-<p align="center">
-  <img src="docs/assets/diagrams/sdd-cycle.svg" width="1200" alt="Diagram of an optional specification-driven development cycle from explore through archive, with TDD evidence attached to apply when available">
-</p>
-
-When you explicitly want separate proposal, specification, design, tasks, and verification artifacts, choose SDD/OpenSpec. Configured Strict TDD records RED → GREEN → TRIANGULATE → REFACTOR evidence during apply. TDD is also available in ODD; it does not require SDD.
-
-**[→ Explore the SDD/OpenSpec flow](docs/readme-reference.md#sddopenspec-flow)**
 
 ---
 
@@ -151,6 +141,91 @@ When you explicitly want separate proposal, specification, design, tasks, and ve
 Review the exact change, not a moving target. Native review keeps one candidate in view, returns risk-scoped evidence, and can surface a bounded correction path. You still decide what happens next in your repository.
 
 **[→ Read the review integration boundary](docs/review-integration.md)**
+
+---
+
+### gentle-shell, feature by feature
+
+Every workspace feature gentle-shell ships on top of Pi. Captured screenshots live in `docs/assets/features/`; slots still awaiting their image stay commented out.
+
+#### Fullscreen workspace layout
+
+At 140 columns or wider, one live header row (brand, cwd, branch, model · effort · profile, context gauge, session cost) sits over a transcript-and-rail split. The right rail scrolls **Status → Changes → TODO** as event-driven cards that repaint only when their own state changes — one card's update never redraws its neighbors.
+
+<!-- <p align="center"><img src="docs/assets/features/fullscreen-layout.png" width="1200" alt="gentle-shell fullscreen layout: header row over transcript and right rail"></p> -->
+
+#### Live status bar and prompt petal
+
+Below 140 columns (or in regular mode) a compact single-line bar replaces pi's three-line footer: a context gauge that turns amber at 80% and red at 95%, session cost with `sub` for subscription logins, other extensions' statuses, and the session name. The prompt wraps in a rounded frame whose petal spins with `working` while the agent works and turns amber with `queued` when messages are waiting.
+
+<!-- <p align="center"><img src="docs/assets/features/status-bar-petal.png" width="1200" alt="compact status bar and rounded prompt frame with petal"></p> -->
+
+#### Gentle Changes — `/gentle:changes` · `alt+g`
+
+Captured write/edit operations from the current agent session and its owned subagents — no repository scans on startup, no background polling. The two-pane viewer puts a worktree accordion on the left and the captured diff on the right, with keyboard and mouse navigation; `o` opens the real file in `$VISUAL`/`$EDITOR`. Per-worktree branch labels, `+42 −7` line counts, and an honest **diff unavailable** when an external edit breaks continuity — ownership is never mixed.
+
+<p align="center"><img src="docs/assets/features/changes-view.png" width="1200" alt="Gentle Changes viewer: worktree accordion with per-file status on the left, the captured diff with line counts on the right, and a keyboard hint row"></p>
+
+#### Gentle Agents — `/gentle:agents` · `alt+a`
+
+Every subagent is its own `pi --mode rpc` child process. A live card above the editor shows each task with aligned `model · effort`, tokens, cost, and elapsed columns; `alt+a` opens a full-terminal overlay with retained semantic threads, a session/all-orchestrators scope switch, stop (`alt+s`), and completion, abort, and lost-exit history restored on resume. Task-mode children can ask you questions as ordinary Pi dialogs; background results return as rose cards that start a new turn — the model never polls.
+
+<p align="center"><img src="docs/assets/features/agents-view.png" width="1200" alt="Gentle Agents overlay showing a completed subagent thread with model, tokens, and elapsed columns, and the structured handoff it returned"></p>
+
+#### Parent ↔ subagent communication
+
+One parent session stays accountable while children run as isolated `pi --mode rpc` processes with their own sessions and optional worktrees. The handoff paths are explicit:
+
+- **Delegate** — `subagent_run` (task or background mode) sends a self-contained task; the parent passes context and skill paths in, and receives a structured result back. `subagent_continue` resumes a finished task in its own session.
+- **Steer mid-flight** — `subagent_send_message` delivers a message before the child's next model call; `subagent_cancel` stops it.
+- **Children ask back** — a task-mode child's dialog (`select`, `confirm`, `input`, `editor`) reaches you as an ordinary Pi prompt; a programmatic `subagent_parent_message` query waits for exactly one correlated `subagent_reply` (30 seconds, at most four pending per child).
+- **Background results** return as rose cards that start a new turn when the agent is idle — the model never polls.
+- **Cross-session notifications** — `orchestrator_session_id`, `orchestrator_list`, and `orchestrator_send_message` provide notification-and-ACK transport within the local profile.
+- **Worktree delegation** — `subagent_run.workspace_root` and `session_worktree_register` route children to a validated same-clone worktree.
+
+#### Native interactive tools
+
+gentle-shell ships its own tools instead of depending on third-party extensions — remove `npm:pi-subagents-j0k3r` and `npm:@juicesharp/rpiv-todo`; the built-ins replace them:
+
+- **`ask_user_question`** — one to four structured questions in a single questionnaire, each with two to four options, multi-select, per-option descriptions and previews — rendered as real TUI dialogs, usable in the live session.
+- **`ask_user_choice`** — one exactly representable single-select question, with an opt-in free-text response.
+- **`todo`** — plan tracking with the Gentle Todo card (see above).
+- **`gentle_review` / capture tools** — the native review surface for receipt-driven development.
+- **Optional companions** (separately installed, never bundled): `gentle-engram` for persistent memory, `pi-web-access`, `pi-lens`, `pi-intercom`.
+
+<!-- <p align="center"><img src="docs/assets/features/ask-user-question.png" width="1200" alt="ask_user_question questionnaire rendered as a live TUI dialog"></p> -->
+
+#### Gentle Todo
+
+A plan-as-you-go task list with its own card. `write` replaces the whole plan in one call, every turn's prompt carries the open tasks, and a list that goes two turns untouched turns amber with `stale · N turns` until the model brings it current. `ctrl+shift+t` collapses the card to the task in progress.
+
+<!-- <p align="center"><img src="docs/assets/features/todo-card.png" width="1200" alt="gentle todo card with open and completed tasks"></p> -->
+
+#### Subscription usage — `/gentle:usage`
+
+One panel for Codex, Claude Pro/Max, and NaN Cloud: per-window meters (5h, weekly, per-model allowances) with reset times, active provider first, family-grouped per-model rows, and the same amber-80%/red-95% gauges as the context meter. The bar always follows the active model; sidebar rows stop at the percentage, the panel carries the resets.
+
+<!-- <p align="center"><img src="docs/assets/features/usage-panel.png" width="1200" alt="usage panel with provider windows and gauges"></p> -->
+
+#### Command palette — `/gentle:commands` · `alt+k`
+
+A curated, grouped menu of shell commands — Configuration, Session, Diagnostics, and Skills — with search by label, command name, or description. Entries appear only when actually registered; rebind with `GENTLE_PI_COMMANDS_KEY`.
+
+<p align="center"><img src="docs/assets/features/command-palette.png" width="1200" alt="Command palette with a search field and grouped entries: Configuration, Session, Diagnostics, and Skills"></p>
+
+#### Gentle notices
+
+Calls into the gentle-ai binary, reviewer captures, and review preflight reminders render as rounded cards with amber/green/red rail states and collapsible results. The workflow stays visible in the transcript — never hidden behind a log.
+
+<!-- <p align="center"><img src="docs/assets/features/gentle-notices.png" width="1200" alt="gentle notice cards in the transcript"></p> -->
+
+#### Profiles and controls
+
+Named `/gentle:profiles` route the orchestrator atomically and independently from packaged and review roles; a repository can pin its profile with `p`. Model, effort, persona, and profile are explicit knobs, and every card shares one border language — rose for whatever is alive.
+
+<p align="center"><img src="docs/assets/features/profiles-routing.png" width="1200" alt="Profiles view: profile list on the left, orchestrator model and effort on the right, with per-role profile routing and effective current routing"></p>
+
+**[→ Full shell reference](docs/gentle-shell.md)**
 
 ---
 
@@ -225,7 +300,7 @@ See the [v2.6.0 release notes](https://github.com/Gentleman-Programming/gentle-p
 
 > **Fullscreen installation note:** a recognized global installation persists Pi’s `"tuiMode": "fullscreen"` setting. Project-local and other install paths do not receive that change.
 
-For prerequisites, source-checkout instructions, full install behavior, and release policy, use the **[installation reference](docs/readme-reference.md#install)**. For everyday work, describe the outcome and follow [ODD](#odd--the-everyday-workflow). Choose SDD/OpenSpec explicitly only when you want its separate phase artifacts.
+For prerequisites, source-checkout instructions, full install behavior, and release policy, use the **[installation reference](docs/readme-reference.md#install)**. For everyday work, describe the outcome and follow [ODD](#odd--the-everyday-workflow).
 
 <p align="right"><a href="#top">Back to top ↑</a></p>
 
