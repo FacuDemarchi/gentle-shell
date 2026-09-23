@@ -88,7 +88,6 @@ approval?: {
 - [ ] **PM2-3 — ODD work-unit extraction**
   - Extract capability candidates from the roadmap's `- [ ] **PM-N — Title**` work units and from `odd/tasks/*.md` headings.
   - Map a checked box to `done` and an unchecked box to `planned`, and record the mapping as an assumption rather than as verified progress.
-  - Resolve `featureDocs` against the repository and report a missing document as an omission rather than as a fatal diagnostic.
   - Report every prose-only source that cannot be interpreted as an explicit omission.
 
 - [ ] **PM2-4 — Approval transition and atomic persistence**
@@ -126,6 +125,7 @@ Measured correction-round estimates: PM-2a ≈ 200 lines (schema and its tests),
 - 2026-09-23: Unit planned after read-only exploration of PM-1's public API, the repository's existing approval and human-intent patterns, the available draft-generation sources, the extension test conventions, and the packaging constraints. Decisions on approval location, generation strategy, entry surface, and the `surfaces` invariant accepted by the user as recommended. Task document created before the first source write. PM2-1 through PM2-6 pending.
 - 2026-09-23: PM2-1 delivered the approval contract (244 changed lines). Reviewed as lineage `review-d3c7ecbb0f8ad658`, approved and acknowledged with zero correction rounds. One informational finding, `R3-invalid-calendar-date`, reports that the ISO-8601 check accepts rolled-over calendar dates such as `2026-02-30` because `Date.parse` normalizes them; it is non-blocking and is deferred to a follow-up commit.
 - 2026-09-23: PM2-2 delivered deterministic draft generation from structured sources. **Deviation from the plan:** `openspec/changes/*/state.yaml` was dropped as an input. Only 2 of 16 changes carry that file, and its content is a process ledger of SDD phases (`proposal` through `archive`), not product capability state, so mapping it to capabilities would invent meaning the source does not carry. Capabilities therefore arrive with PM2-3 or from the human, and the generator reports the gap as an omission.
+- 2026-09-23: PM2-3 delivered ODD work-unit extraction. **Second deviation from the plan:** the `featureDocExists` predicate was dropped. Every extracted capability points at the document that declared it, and that document's text was supplied by the caller, so a caller-provided existence predicate could only ever contradict the input it just handed in. The real path safety for `featureDocs` already lives in the schema validator.
 
 ## Next decision
 Implementation of PM2-1 may begin. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
