@@ -157,3 +157,137 @@ test("produces a draft that the schema validates with no diagnostics", () => {
 test("documents the artifact path it is meant to fill", () => {
 	assert.equal(PROJECT_MAP_ARTIFACT_PATH, "openspec/project-map.json");
 });
+
+const roadmap = [
+	"# Project Map Orchestration",
+	"",
+	"## Outcome",
+	"Make the whole product visible from the shell.",
+	"",
+	"## Work units",
+	"",
+	"- [x] **PM-1 — Define and validate the versioned Project Map**",
+	"  - Specify capability identifiers and outcomes.",
+	"- [ ] **PM-2 — Add draft generation and human plan approval**",
+	"  - Persist explicit draft and approved transitions.",
+	"",
+].join("\n");
+
+const unitDocument = [
+	"# PM-3 — Render the real map",
+	"",
+	"## Tasks",
+	"",
+	"- [ ] **PM3-1 — Replace static demo data**",
+	"- [x] **PM3-2 — Preserve the card order**",
+	"",
+].join("\n");
+
+test("extracts work units with their declared completion state", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }] });
+	assert.ok(result.map);
+	const byId = new Map(result.map.capabilities.map((capability) => [capability.id, capability]));
+	assert.equal(byId.get("define-and-validate-the-versioned-project-map")?.state, "done");
+	assert.equal(byId.get("add-draft-generation-and-human-plan-approval")?.state, "planned");
+});
+
+test("points every capability at the document that declared it", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }] });
+	assert.ok(result.map);
+	for (const capability of result.map.capabilities) {
+		assert.deepEqual(capability.featureDocs, ["odd/tasks/roadmap.md"]);
+	}
+});
+
+test("keeps the declared outcome text and leaves surfaces undetermined", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }] });
+	const capability = result.map?.capabilities.find((entry) => entry.id === "add-draft-generation-and-human-plan-approval");
+	assert.equal(capability?.outcome, "Add draft generation and human plan approval");
+	assert.deepEqual(capability?.surfaces, []);
+	assert.deepEqual(capability?.foundationRefs, []);
+});
+
+test("reads work units from several documents in a stable order", () => {
+	const first = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [
+			{ path: "odd/tasks/zulu.md", text: unitDocument },
+			{ path: "odd/tasks/roadmap.md", text: roadmap },
+		],
+	});
+	const second = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [
+			{ path: "odd/tasks/roadmap.md", text: roadmap },
+			{ path: "odd/tasks/zulu.md", text: unitDocument },
+		],
+	});
+	assert.ok(first.map);
+	assert.ok(second.map);
+	assert.equal(serializeProjectMap(first.map), serializeProjectMap(second.map));
+	assert.ok(first.map.capabilities.some((capability) => capability.id === "replace-static-demo-data"));
+	assert.ok(first.map.capabilities.some((capability) => capability.id === "preserve-the-card-order"));
+});
+
+test("deduplicates colliding capability identifiers and reports the collision", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [
+			{ path: "odd/tasks/a.md", text: "- [ ] **PM-9 — Shared title**\n" },
+			{ path: "odd/tasks/b.md", text: "- [ ] **PM-8 — Shared title**\n" },
+		],
+	});
+	assert.ok(result.map);
+	assert.equal(result.map.capabilities.filter((capability) => capability.id === "shared-title").length, 1);
+	assert.equal(result.map.capabilities[0].featureDocs[0], "odd/tasks/a.md");
+	assert.ok(joined(result.omissions).includes("shared-title"));
+});
+
+test("reports a document that yields no work units as an omission", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/prose.md", text: "# Just prose\n\nNo units here.\n" }] });
+	assert.ok(result.map);
+	assert.deepEqual(result.map.capabilities, []);
+	assert.ok(joined(result.omissions).includes("odd/tasks/prose.md"));
+});
+
+test("ignores prose and checklists that are not work units", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [{ path: "odd/tasks/mixed.md", text: "- [ ] a plain checklist item\n- [x] another one\n- [ ] **PM-1 — Real unit**\n" }],
+	});
+	assert.ok(result.map);
+	assert.deepEqual(result.map.capabilities.map((capability) => capability.id), ["real-unit"]);
+});
+
+test("reports a work-unit title that cannot become an identifier", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/odd.md", text: "- [ ] **PM-1 — !!!**\n" }] });
+	assert.ok(result.map);
+	assert.deepEqual(result.map.capabilities, []);
+	assert.ok(joined(result.omissions).includes("odd/tasks/odd.md"));
+});
+
+test("never throws on malformed document entries", () => {
+	for (const oddTaskDocuments of [
+		[{ path: "odd/tasks/a.md", text: null as unknown as string }],
+		[{ path: 42 as unknown as string, text: roadmap }],
+		[{ path: "", text: roadmap }],
+		[null as unknown as { path: string; text: string }],
+		"not an array" as unknown as { path: string; text: string }[],
+	]) {
+		assert.doesNotThrow(() => generateProjectMapDraft({ oddTaskDocuments }));
+	}
+});
+
+test("produces extracted capabilities that the schema accepts as a draft", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: config,
+		packageJson: manifest(),
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }],
+	});
+	assert.ok(result.map);
+	assert.ok(result.map.capabilities.length > 0);
+	const validated = validateProjectMap(result.map);
+	assert.deepEqual(validated.diagnostics, []);
+	assert.deepEqual(validated.map, result.map);
+});

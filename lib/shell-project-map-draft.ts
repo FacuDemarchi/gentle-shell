@@ -1,6 +1,7 @@
 import {
 	PROJECT_MAP_SCHEMA_V1,
 	canonicalizeProjectMap,
+	type ProjectMapCapabilityV1,
 	type ProjectMapFoundationV1,
 	type ProjectMapV1,
 } from "./shell-project-map-schema.ts";
@@ -8,6 +9,7 @@ import {
 export interface ProjectMapDraftSources {
 	packageJson?: unknown;
 	openspecConfig?: string;
+	oddTaskDocuments?: { path: string; text: string }[];
 }
 
 export interface ProjectMapDraftResult {
@@ -21,6 +23,8 @@ const IDENTIFIER_MAX_LENGTH = 64;
 const CONFIG_SECTION = /^([a-z][a-z0-9_]*):\s*$/;
 const CONFIG_NESTED_ENTRY = /^\s+([a-z][a-z0-9_]*):\s*(\S.*)$/;
 const CONFIG_TOP_ENTRY = /^([a-z][a-z0-9_]*):\s*(\S.*)$/;
+const WORK_UNIT = /^-\s\[([ xX])\]\s\*\*(.+?)\*\*\s*$/;
+const WORK_UNIT_SEPARATOR = "—";
 
 type RecordValue = Record<string, unknown>;
 
@@ -75,6 +79,38 @@ function readSimpleConfigEntries(text: string): Map<string, string> {
 		}
 	}
 	return entries;
+}
+
+function comparePaths(left: string, right: string): number {
+	if (left === right) return 0;
+	return left < right ? -1 : 1;
+}
+
+function extractWorkUnits(path: string, text: string, omissions: string[]): ProjectMapCapabilityV1[] {
+	const capabilities: ProjectMapCapabilityV1[] = [];
+	for (const rawLine of text.split("\n")) {
+		const match = WORK_UNIT.exec(rawLine.replace(/\r$/, ""));
+		if (!match) continue;
+		const label = match[2].trim();
+		const separatorIndex = label.indexOf(WORK_UNIT_SEPARATOR);
+		const title = (separatorIndex === -1 ? label : label.slice(separatorIndex + WORK_UNIT_SEPARATOR.length)).trim();
+		const id = normalizeIdentifier(title);
+		if (id === null) {
+			omissions.push(`The work unit "${label}" in ${path} cannot be normalized into a capability identifier.`);
+			continue;
+		}
+		capabilities.push({
+			id,
+			outcome: title,
+			foundationRefs: [],
+			dependsOn: [],
+			contracts: [],
+			featureDocs: [path],
+			surfaces: [],
+			state: match[1] === " " ? "planned" : "done",
+		});
+	}
+	return capabilities;
 }
 
 export function generateProjectMapDraft(sources: ProjectMapDraftSources): ProjectMapDraftResult {
@@ -136,11 +172,43 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	}
 
 	omissions.push("No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.");
+	const capabilities: ProjectMapCapabilityV1[] = [];
+	const declaredBy = new Map<string, string>();
+	if (!Array.isArray(sources.oddTaskDocuments)) {
+		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
+	} else {
+		const documents = sources.oddTaskDocuments
+			.filter(
+				(document): document is { path: string; text: string } =>
+					isRecord(document) && typeof document.path === "string" && document.path.length > 0 && typeof document.text === "string",
+			)
+			.sort((left, right) => comparePaths(left.path, right.path));
+		for (const document of documents) {
+			const extracted = extractWorkUnits(document.path, document.text, omissions);
+			if (extracted.length === 0) {
+				omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
+			}
+			for (const capability of extracted) {
+				const existing = declaredBy.get(capability.id);
+				if (existing !== undefined) {
+					omissions.push(`The capability "${capability.id}" is declared by both ${existing} and ${document.path}; the first document in sorted order wins.`);
+					continue;
+				}
+				declaredBy.set(capability.id, document.path);
+				capabilities.push(capability);
+			}
+		}
+	}
+	if (capabilities.length === 0) {
+		omissions.push("No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.");
+	}
 
 	assumptions.push("Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.");
 	assumptions.push("A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.");
 	assumptions.push("Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.");
 	assumptions.push("Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.");
+	assumptions.push("An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.");
+	assumptions.push("A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.");
 
 	if (projectId === null || projectName === null) {
 		return { map: null, assumptions, omissions };
@@ -152,7 +220,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			project: { id: projectId, name: projectName },
 			approval: { state: "draft" },
 			foundations,
-			capabilities: [],
+			capabilities,
 		}),
 		assumptions,
 		omissions,
