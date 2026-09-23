@@ -231,6 +231,12 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Exercise multi-session/worktree E2E scenarios on Linux, macOS, Windows, tmux, headless fallback, crash recovery, and stale-state cleanup.
   - Verify observability, rollback, package contents, compatibility, and complete suite behavior.
 
+## Working base
+
+All PM units are developed on top of the released tag **v3.7.0** (`59257bff`), never on a moving `main` and never on an older release. `main` runs ahead of the tag with unreleased work, so it is not a stable base; older tags would force new code to target shell surfaces that have already changed.
+
+The tag is the base for the branch, not a ceiling on upstream work: when a newer release is published and a unit needs it, the base moves by rebase before that unit starts, never in the middle of one.
+
 ## Per-unit delivery rules
 
 Every PM unit is independently planned before implementation:
@@ -288,6 +294,8 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 - 2026-09-20: Static session-only visual proof of concept completed and verified in a separate worktree; uncommitted and unpublished.
 - 2026-09-23: PM-1 completed and closed in `odd/tasks/pm-1-project-map-schema.md`. Work units: `8a346388` (versioned schema and validation, 1,316 insertions), `99f80c9f` (Windows drive-relative feature-document rejection, 23 insertions), `8fa6809f` (commit recording). Native review lineages `review-92fd0478df63a3b3` and `review-f521cbedc02977eb` closed approved and acknowledged. Branch `feat/project-map-orchestration` is pushed to the fork; no pull request exists against upstream.
 - 2026-09-23: PM-1 delivered `lib/shell-project-map-schema.ts`, `tests/shell-project-map-schema.test.ts`, and `docs/project-map.md`. The artifact location `openspec/project-map.json` is defined but not yet populated; population belongs to PM-2.
+- 2026-09-23: The branch was rebased from its original base v3.1.0 (`459f4fe2`) onto the stable tag v3.7.0 (`59257bff`), 151 commits and 6 releases forward. All five commits were rewritten: `8a346388 99f80c9f 8fa6809f 210f9350 aa9732df` became `0706cd39 2b8515bb 2667fe67 56f9476b b9ec3b0e`. The stable `patch-id` is identical before and after (`b3086602836874c428d104323c02a61ddcc00aea`), so the move changed the base and nothing else. The pre-rebase history survives only in the local branch `backup/project-map-pre-v370`.
+- 2026-09-23: The rebased branch is one reviewed candidate: lineage `review-ad14ab396d7b9c21` over base-ref `59257bff`, tier `medium`, one `review-reliability` lens, 2,166 lines, zero correction rounds, approved and acknowledged. The two PM-1 lineages above are invalidated by the base move alone; they no longer apply to any reachable commit.
 - PM-2 through PM-9 remain unstarted and require independent authorization/task planning.
 
 ## Next decision
