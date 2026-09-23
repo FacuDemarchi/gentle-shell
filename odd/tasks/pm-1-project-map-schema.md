@@ -105,6 +105,8 @@ Measured correction-round totals: 501 library lines, 632 test lines, 95 document
 - 2026-09-22: Informational review finding R3-drive-relative (Windows drive-relative feature-document paths) fixed and pinned by test.
 - 2026-09-22: Work-unit commit `8a346388` — `feat(shell): add the versioned Project Map schema and validation` (4 files, 1316 insertions). Native review lineage `review-92fd0478df63a3b3` closed approved and acknowledged.
 - 2026-09-22: Work-unit commit `99f80c9f` — `fix(shell): reject Windows drive-relative feature-document paths` (23 insertions, 3 deletions). Native review lineage `review-f521cbedc02977eb` closed approved and acknowledged.
+- 2026-09-23: The unit was rebased from its original base v3.1.0 onto the stable tag v3.7.0. Both work-unit commits were rewritten — `8a346388` is now `0706cd39` and `99f80c9f` is now `2b8515bb` — with an identical stable `patch-id`, so no reviewed content changed. The SHAs recorded above and the two lineages they carry belong to the pre-rebase history, which survives only in the local branch `backup/project-map-pre-v370`.
+- 2026-09-23: The rebased branch was reviewed as a single candidate: lineage `review-ad14ab396d7b9c21` over base-ref `59257bff`, approved and acknowledged with zero correction rounds. On the new base the focused file is green at 22/22; the full suite and typecheck remain unavailable in this clone for the recorded reason.
 
 ## Next decision
-PM-1 is closed: all seven tasks are complete, both work units are committed, reviewed, and pushed. A pull request against upstream and PM-2 (draft generation and human plan approval) remain separate decisions requiring explicit authorization.
+PM-1 is closed and now sits on the stable base v3.7.0. A pull request against upstream and PM-2 (draft generation and human plan approval) remain separate decisions requiring explicit authorization.
