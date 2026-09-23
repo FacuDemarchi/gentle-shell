@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export const PROJECT_MAP_SCHEMA_V1 = "gentle-shell.project-map/v1" as const;
 export const PROJECT_MAP_SURFACES = ["productUx", "web", "api", "data", "security", "operations", "tests"] as const;
@@ -193,8 +193,23 @@ function optionalCollection(value: RecordValue, field: string, path: string, dia
 	return optionalStringArray(value[field], `${path}.${field}`, diagnostics) ?? { entries: [], indices: [] };
 }
 
-function isSafeFeatureDocumentPath(value: string): boolean {
+export function isSafeFeatureDocumentPath(value: string): boolean {
 	return !/^[\\/]/.test(value) && !/^[A-Za-z]:/.test(value) && !value.split(/[\\/]/).includes("..");
+}
+
+/**
+ * Reports whether a string is a real ISO-8601 instant. `Date.parse` alone is not enough:
+ * it normalizes rolled-over calendar dates such as `2026-02-30` into March, so every
+ * component is range-checked against the calendar it claims to be in.
+ */
+export function isIsoInstant(value: string): boolean {
+	const match = ISO_INSTANT.exec(value);
+	if (!match) return false;
+	const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+	if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
+	const utc = new Date(Date.UTC(year, month - 1, day));
+	if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return false;
+	return !Number.isNaN(Date.parse(value));
 }
 
 function validateFoundation(value: unknown, path: string, diagnostics: ProjectMapDiagnostic[], identifiers: Set<string>): ProjectMapFoundationV1 | null {
@@ -250,7 +265,7 @@ function validateApproval(value: unknown, path: string, diagnostics: ProjectMapD
 		if (approvedAt === undefined) {
 			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, `${path}.approvedAt`, 'Missing required field "approvedAt".');
 			valid = false;
-		} else if (typeof approvedAt !== "string" || !ISO_INSTANT.test(approvedAt) || Number.isNaN(Date.parse(approvedAt))) {
+		} else if (typeof approvedAt !== "string" || !isIsoInstant(approvedAt)) {
 			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.approvedAt`, "Expected an ISO-8601 instant.");
 			valid = false;
 		}

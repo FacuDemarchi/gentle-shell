@@ -1,6 +1,7 @@
 import {
 	PROJECT_MAP_SCHEMA_V1,
 	canonicalizeProjectMap,
+	isSafeFeatureDocumentPath,
 	type ProjectMapCapabilityV1,
 	type ProjectMapFoundationV1,
 	type ProjectMapV1,
@@ -55,12 +56,23 @@ function unquote(value: string): string {
  * nesting. Block scalars, lists, comments, anchors, and multi-line values are deliberately
  * not interpreted; a caller that needs them must treat them as an omission.
  */
+function isBlockScalarMarker(value: string): boolean {
+	return /^[|>][+-]?$/.test(value.trim());
+}
+
 function readSimpleConfigEntries(text: string): Map<string, string> {
 	const entries = new Map<string, string>();
 	let section = "";
+	let blockScalarIndent: number | null = null;
 	for (const rawLine of text.split("\n")) {
 		const line = rawLine.replace(/\r$/, "");
-		if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
+		if (line.trim().length === 0) continue;
+		const indentation = line.length - line.trimStart().length;
+		if (blockScalarIndent !== null) {
+			if (indentation > blockScalarIndent) continue;
+			blockScalarIndent = null;
+		}
+		if (line.trimStart().startsWith("#")) continue;
 		const sectionMatch = CONFIG_SECTION.exec(line);
 		if (sectionMatch) {
 			section = sectionMatch[1];
@@ -68,14 +80,23 @@ function readSimpleConfigEntries(text: string): Map<string, string> {
 		}
 		const nestedMatch = CONFIG_NESTED_ENTRY.exec(line);
 		if (nestedMatch && section.length > 0) {
+			if (isBlockScalarMarker(nestedMatch[2])) {
+				blockScalarIndent = indentation;
+				continue;
+			}
 			const value = unquote(nestedMatch[2]);
-			if (value.length > 0 && value !== "|" && value !== ">") entries.set(`${section}.${nestedMatch[1]}`, value);
+			if (value.length > 0) entries.set(`${section}.${nestedMatch[1]}`, value);
 			continue;
 		}
 		const topMatch = CONFIG_TOP_ENTRY.exec(line);
 		if (topMatch) {
+			section = "";
+			if (isBlockScalarMarker(topMatch[2])) {
+				blockScalarIndent = indentation;
+				continue;
+			}
 			const value = unquote(topMatch[2]);
-			if (value.length > 0 && value !== "|" && value !== ">") entries.set(topMatch[1], value);
+			if (value.length > 0) entries.set(topMatch[1], value);
 		}
 	}
 	return entries;
@@ -145,14 +166,15 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	const foundations: ProjectMapFoundationV1[] = [];
 	if (isRecord(packageJson) && projectName !== null) {
 		const scripts = packageJson.scripts;
-		const declaresTooling = isRecord(scripts) && Object.keys(scripts).length > 0;
+		const declaresTooling =
+			isRecord(scripts) && Object.values(scripts).some((command) => typeof command === "string" && command.trim().length > 0);
 		foundations.push({
 			id: "repository-tooling",
 			outcome: "The repository and its declared tooling are present and consistent.",
 			state: declaresTooling ? "done" : "planned",
 			...(declaresTooling ? { evidence: ["package.json"] } : {}),
 		});
-		if (!declaresTooling) omissions.push("package.json declares no scripts, so the repository tooling foundation stays planned.");
+		if (!declaresTooling) omissions.push("package.json declares no usable script command, so the repository tooling foundation stays planned.");
 	}
 
 	if (openspecConfig !== null) {
@@ -182,6 +204,11 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 				(document): document is { path: string; text: string } =>
 					isRecord(document) && typeof document.path === "string" && document.path.length > 0 && typeof document.text === "string",
 			)
+			.filter((document) => {
+				if (isSafeFeatureDocumentPath(document.path)) return true;
+				omissions.push(`${document.path} is not a safe repository-relative path, so it was skipped rather than recorded as a feature document.`);
+				return false;
+			})
 			.sort((left, right) => comparePaths(left.path, right.path));
 		for (const document of documents) {
 			const extracted = extractWorkUnits(document.path, document.text, omissions);
