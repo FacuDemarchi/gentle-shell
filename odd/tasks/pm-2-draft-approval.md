@@ -80,7 +80,7 @@ approval?: {
   - Pin the amendment in the existing schema test file so the previous unconditional rule cannot silently return.
 
 - [ ] **PM2-2 — Deterministic draft generation from structured sources**
-  - Read `package.json`, `openspec/config.yaml` (simple top-level `key: value` lines only), and `openspec/changes/*/state.yaml`.
+  - Read `package.json` and `openspec/config.yaml`, interpreting only the simple top-level `key: value` lines of the latter.
   - Assemble a `ProjectMapV1` that is always `approval.state === "draft"`, with capabilities as `planned` unless structured evidence says otherwise.
   - Return `{ map, assumptions, omissions }`, where omissions name every source that could not be interpreted and every required field the generator could not fill.
   - Guarantee determinism: identical input produces byte-identical serialized output.
@@ -124,6 +124,8 @@ Measured correction-round estimates: PM-2a ≈ 200 lines (schema and its tests),
 
 ## Progress
 - 2026-09-23: Unit planned after read-only exploration of PM-1's public API, the repository's existing approval and human-intent patterns, the available draft-generation sources, the extension test conventions, and the packaging constraints. Decisions on approval location, generation strategy, entry surface, and the `surfaces` invariant accepted by the user as recommended. Task document created before the first source write. PM2-1 through PM2-6 pending.
+- 2026-09-23: PM2-1 delivered the approval contract (244 changed lines). Reviewed as lineage `review-d3c7ecbb0f8ad658`, approved and acknowledged with zero correction rounds. One informational finding, `R3-invalid-calendar-date`, reports that the ISO-8601 check accepts rolled-over calendar dates such as `2026-02-30` because `Date.parse` normalizes them; it is non-blocking and is deferred to a follow-up commit.
+- 2026-09-23: PM2-2 delivered deterministic draft generation from structured sources. **Deviation from the plan:** `openspec/changes/*/state.yaml` was dropped as an input. Only 2 of 16 changes carry that file, and its content is a process ledger of SDD phases (`proposal` through `archive`), not product capability state, so mapping it to capabilities would invent meaning the source does not carry. Capabilities therefore arrive with PM2-3 or from the human, and the generator reports the gap as an omission.
 
 ## Next decision
 Implementation of PM2-1 may begin. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.

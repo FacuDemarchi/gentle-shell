@@ -36,6 +36,19 @@ The artifact path is exported as `PROJECT_MAP_ARTIFACT_PATH` (`"openspec/project
 
 `version`, `project`, `project.id`, `project.name`, `capabilities`, and every capability's `id`, `outcome`, `surfaces`, and `state` are required. Foundations, `foundationRefs`, `dependsOn`, `contracts`, and `featureDocs` default to empty arrays. `evidence` is optional.
 
+## Draft generation
+
+`generateProjectMapDraft` (`lib/shell-project-map-draft.ts`) builds a draft from structured repository sources. It is deterministic: identical input produces byte-identical serialization, and it performs no filesystem access and no model call. It returns `{ map, assumptions, omissions }`, where `map` is `null` only when the project identity cannot be derived at all.
+
+The generator reads the package manifest for project identity and the repository tooling foundation, and `openspec/config.yaml` for the quality gates foundation. Only the simple `key: value` shape of the configuration is interpreted, including one level of nesting; block scalars, lists, comments, and multi-line values are deliberately not, and a configuration it cannot interpret is reported as an omission.
+
+Two rules keep a generated draft honest:
+
+- A foundation is `done` only when its named structured source carries a well-formed declaration of it, so `done` means declared, never verified.
+- The generator emits no capabilities. No structured source names product capabilities, so it reports that gap as an omission instead of inventing them.
+
+Every generated map is a draft. The generator never marks a map approved, and it returns a canonicalized draft, so the map it hands a caller is exactly what `validateProjectMap` returns for it.
+
 ## Approval
 
 A map that omits `approval` is a draft: validation defaults the block to `{ "state": "draft" }`. The default is deliberately fail-safe, because a map must never become approved by omission.
