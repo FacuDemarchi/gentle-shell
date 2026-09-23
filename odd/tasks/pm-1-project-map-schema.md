@@ -103,6 +103,8 @@ Measured correction-round totals: 501 library lines, 632 test lines, 95 document
 - 2026-09-22: Re-verification confirmed the four corrections and identified weak regression coverage; cyclic-group, index-fidelity, and malformed-input expectations pinned.
 - 2026-09-22: Cyclic-group diagnostics now name every member of the group; disjoint groups covered by test.
 - 2026-09-22: Informational review finding R3-drive-relative (Windows drive-relative feature-document paths) fixed and pinned by test.
+- 2026-09-22: Work-unit commit `8a346388` — `feat(shell): add the versioned Project Map schema and validation` (4 files, 1316 insertions). Native review lineage `review-92fd0478df63a3b3` closed approved and acknowledged.
+- 2026-09-22: Work-unit commit `99f80c9f` — `fix(shell): reject Windows drive-relative feature-document paths` (23 insertions, 3 deletions). Native review lineage `review-f521cbedc02977eb` closed approved and acknowledged.
 
 ## Next decision
 Report measured results per stage. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
