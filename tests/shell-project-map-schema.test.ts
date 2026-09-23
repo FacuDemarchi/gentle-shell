@@ -511,6 +511,25 @@ test("rejects Windows UNC and rooted feature-document paths", () => {
 	assert.deepEqual(paths(result), ["$.capabilities[0].featureDocs[0]", "$.capabilities[0].featureDocs[1]"]);
 });
 
+test("rejects Windows drive-relative feature-document paths", () => {
+	const result = validateProjectMap(
+		minimalMap({
+			capabilities: [
+				{
+					id: "merchant-catalog",
+					outcome: "Merchants can publish and manage their catalog.",
+					surfaces: ["web"],
+					state: "active",
+					featureDocs: ["odd/tasks/ok.md", "C:doc.md", "c:relative.md"],
+				},
+			],
+		}),
+	);
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(result), ["$.capabilities[0].featureDocs[1]", "$.capabilities[0].featureDocs[2]"]);
+});
+
 test("preserves feature-document indices after duplicate entries", () => {
 	const result = validateProjectMap(
 		minimalMap({

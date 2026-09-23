@@ -95,13 +95,14 @@ states: done | active | review | ready | blocked | planned
 - Only evidence of an error (not a warning) makes the validated map unavailable.
 
 ## Review workload forecast
-Measured correction-round totals: 501 library lines, 613 test lines, 95 documentation lines, and 107 task-document lines (1,316 total). Because that exceeds the 400-line review budget, the unit is implemented in two reviewable stages: PM-1a (PM1-1, PM1-2, PM1-5 core) and PM-1b (PM1-3, PM1-4, PM1-6, PM1-7). Each stage reports its own measured diff size.
+Measured correction-round totals: 501 library lines, 632 test lines, 95 documentation lines, and 108 task-document lines (1,336 total). Because that exceeds the 400-line review budget, the unit is implemented in two reviewable stages: PM-1a (PM1-1, PM1-2, PM1-5 core) and PM-1b (PM1-3, PM1-4, PM1-6, PM1-7). Each stage reports its own measured diff size.
 
 ## Progress
 - 2026-09-22: Unit authorized by the user with decisions a–d accepted as recommended. Task document created before the first source write. PM1-1 through PM1-7 pending.
 - 2026-09-22: Independent verification found four defects (Windows absolute paths accepted, key-order-dependent serialization, incomplete cyclic-group coverage, index drift after duplicate removal); all corrected and re-tested.
 - 2026-09-22: Re-verification confirmed the four corrections and identified weak regression coverage; cyclic-group, index-fidelity, and malformed-input expectations pinned.
 - 2026-09-22: Cyclic-group diagnostics now name every member of the group; disjoint groups covered by test.
+- 2026-09-22: Informational review finding R3-drive-relative (Windows drive-relative feature-document paths) fixed and pinned by test.
 
 ## Next decision
 Report measured results per stage. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.

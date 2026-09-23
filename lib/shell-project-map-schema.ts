@@ -183,7 +183,7 @@ function optionalCollection(value: RecordValue, field: string, path: string, dia
 }
 
 function isSafeFeatureDocumentPath(value: string): boolean {
-	return !/^[\\/]/.test(value) && !/^[A-Za-z]:[\\/]/.test(value) && !value.split(/[\\/]/).includes("..");
+	return !/^[\\/]/.test(value) && !/^[A-Za-z]:/.test(value) && !value.split(/[\\/]/).includes("..");
 }
 
 function validateFoundation(value: unknown, path: string, diagnostics: ProjectMapDiagnostic[], identifiers: Set<string>): ProjectMapFoundationV1 | null {

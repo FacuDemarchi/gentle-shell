@@ -58,7 +58,7 @@ A capability must cover at least one surface and cannot repeat a surface. String
 
 ## Feature-document references
 
-`featureDocs` entries are repository-relative paths. POSIX absolute paths, Windows drive paths, Windows UNC paths, rooted backslash paths, and paths containing a `..` segment are rejected before any filesystem access. A caller may provide a document-existence callback. Missing documents are errors by default, or warnings when `strictFeatureDocs: false` is selected.
+`featureDocs` entries are repository-relative paths. POSIX absolute paths, Windows drive paths, Windows drive-relative paths such as `C:doc.md`, Windows UNC paths, rooted backslash paths, and paths containing a `..` segment are rejected before any filesystem access. A caller may provide a document-existence callback. Missing documents are errors by default, or warnings when `strictFeatureDocs: false` is selected.
 
 ## Canonical form
 
