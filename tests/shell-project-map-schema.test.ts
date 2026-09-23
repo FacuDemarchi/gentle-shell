@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	PROJECT_MAP_APPROVAL_STATES,
+	PROJECT_MAP_ARTIFACT_PATH,
 	PROJECT_MAP_DIAGNOSTIC_CODES,
 	PROJECT_MAP_SCHEMA_V1,
 	PROJECT_MAP_STATES,
@@ -155,15 +157,15 @@ test("reports missing required fields and invalid field values", () => {
 		PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD,
 		PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD,
 		PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD,
-		PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD,
 	]);
+	// The map carries no approval block, so it is a draft and an empty surface list is allowed here.
+	// "requires a non-empty surface list once the map is approved" pins the other half of the rule.
 	assert.deepEqual(paths(result), [
 		"$.project.name",
 		"$.capabilities[0].outcome",
 		"$.capabilities[0].surfaces",
 		"$.capabilities[0].state",
 		"$.capabilities[1].outcome",
-		"$.capabilities[1].surfaces",
 	]);
 });
 
@@ -245,12 +247,14 @@ test("serializes hand-built maps independently of insertion order with fixed key
 	const first: ProjectMapV1 = {
 		version: PROJECT_MAP_SCHEMA_V1,
 		project: { id: "example-shop", name: "Example Shop" },
+		approval: { state: "draft" },
 		foundations: [],
 		capabilities: [{ id: "merchant-catalog", outcome: "Catalog works.", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "active" }],
 	};
 	const second = {
 		capabilities: [{ state: "active", surfaces: ["web"], featureDocs: [], contracts: [], dependsOn: [], foundationRefs: [], outcome: "Catalog works.", id: "merchant-catalog" }],
 		foundations: [],
+		approval: { state: "draft" },
 		project: { name: "Example Shop", id: "example-shop" },
 		version: PROJECT_MAP_SCHEMA_V1,
 	} as ProjectMapV1;
@@ -259,6 +263,9 @@ test("serializes hand-built maps independently of insertion order with fixed key
   "project": {
     "id": "example-shop",
     "name": "Example Shop"
+  },
+  "approval": {
+    "state": "draft"
   },
   "foundations": [],
   "capabilities": [
@@ -626,6 +633,128 @@ test("reads the artifact from disk and reports unreadable paths as diagnostics",
 		assert.equal(missing.map, null);
 		assert.deepEqual(codes(missing), [PROJECT_MAP_DIAGNOSTIC_CODES.UNREADABLE_ARTIFACT]);
 		assert.deepEqual(paths(missing), ["$"]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+function approvedMap(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return minimalMap({
+		approval: { state: "approved", approvedAt: "2026-09-23T12:00:00Z", approvedBy: "facundo" },
+		...overrides,
+	});
+}
+
+test("exports the approval vocabulary and the artifact path", () => {
+	assert.deepEqual([...PROJECT_MAP_APPROVAL_STATES], ["draft", "approved"]);
+	assert.equal(PROJECT_MAP_ARTIFACT_PATH, "openspec/project-map.json");
+});
+
+test("defaults a missing approval block to draft", () => {
+	const result = validateProjectMap(minimalMap());
+	assert.deepEqual(result.diagnostics, []);
+	assert.deepEqual(result.map?.approval, { state: "draft" });
+});
+
+test("accepts an approved map carrying both audit fields", () => {
+	const result = validateProjectMap(approvedMap());
+	assert.deepEqual(result.diagnostics, []);
+	assert.deepEqual(result.map?.approval, { state: "approved", approvedAt: "2026-09-23T12:00:00Z", approvedBy: "facundo" });
+});
+
+test("requires both audit fields on an approved map", () => {
+	const result = validateProjectMap(minimalMap({ approval: { state: "approved" } }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(result), ["$.approval.approvedAt", "$.approval.approvedBy"]);
+});
+
+test("rejects an approved map whose audit fields are unusable", () => {
+	const result = validateProjectMap(minimalMap({ approval: { state: "approved", approvedAt: "yesterday", approvedBy: "   " } }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(result), ["$.approval.approvedAt", "$.approval.approvedBy"]);
+});
+
+test("rejects a draft that carries approval audit fields", () => {
+	const result = validateProjectMap(minimalMap({ approval: { state: "draft", approvedAt: "2026-09-23T12:00:00Z", approvedBy: "facundo" } }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(result), ["$.approval.approvedAt", "$.approval.approvedBy"]);
+});
+
+test("rejects an unknown or malformed approval block", () => {
+	const unknownState = validateProjectMap(minimalMap({ approval: { state: "pending" } }));
+	assert.equal(unknownState.map, null);
+	assert.deepEqual(codes(unknownState), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(unknownState), ["$.approval.state"]);
+
+	const missingState = validateProjectMap(minimalMap({ approval: {} }));
+	assert.equal(missingState.map, null);
+	assert.deepEqual(codes(missingState), [PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(missingState), ["$.approval.state"]);
+
+	const notAnObject = validateProjectMap(minimalMap({ approval: "approved" }));
+	assert.equal(notAnObject.map, null);
+	assert.deepEqual(codes(notAnObject), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(notAnObject), ["$.approval"]);
+});
+
+test("rejects unknown and runtime coordination fields inside the approval block", () => {
+	const result = validateProjectMap(minimalMap({ approval: { state: "draft", approvedOn: "x", lease: "y" } }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.FORBIDDEN_RUNTIME_FIELD, PROJECT_MAP_DIAGNOSTIC_CODES.UNKNOWN_FIELD]);
+	assert.deepEqual(paths(result), ["$.approval.lease", "$.approval.approvedOn"]);
+});
+
+test("allows an empty surface list while the map is a draft", () => {
+	const draft = minimalMap({ capabilities: [{ id: "shopping-cart", outcome: "Shoppers can build a cart.", surfaces: [], state: "planned" }] });
+	const result = validateProjectMap(draft);
+	assert.deepEqual(result.diagnostics, []);
+	assert.deepEqual(result.map?.capabilities[0].surfaces, []);
+});
+
+test("requires a non-empty surface list once the map is approved", () => {
+	const result = validateProjectMap(approvedMap({ capabilities: [{ id: "shopping-cart", outcome: "Shoppers can build a cart.", surfaces: [], state: "planned" }] }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(result), ["$.capabilities[0].surfaces"]);
+});
+
+test("still requires the surfaces field on a draft capability", () => {
+	const result = validateProjectMap(minimalMap({ capabilities: [{ id: "shopping-cart", outcome: "Shoppers can build a cart.", state: "planned" }] }));
+	assert.equal(result.map, null);
+	assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(result), ["$.capabilities[0].surfaces"]);
+});
+
+test("canonicalizes approval between project and foundations", () => {
+	const result = validateProjectMap(approvedMap());
+	assert.ok(result.map);
+	const parsed = JSON.parse(serializeProjectMap(result.map)) as Record<string, unknown>;
+	assert.deepEqual(Object.keys(parsed), ["version", "project", "approval", "foundations", "capabilities"]);
+	assert.deepEqual(Object.keys(parsed.approval as Record<string, unknown>), ["state", "approvedAt", "approvedBy"]);
+});
+
+test("keeps serialization stable and round-trippable for approved maps", () => {
+	const result = validateProjectMap(approvedMap());
+	assert.ok(result.map);
+	const once = serializeProjectMap(result.map);
+	assert.equal(serializeProjectMap(result.map), once);
+	assert.deepEqual(canonicalizeProjectMap(canonicalizeProjectMap(result.map)), canonicalizeProjectMap(result.map));
+	const reparsed = parseProjectMap(once);
+	assert.deepEqual(reparsed.diagnostics, []);
+	assert.deepEqual(reparsed.map, canonicalizeProjectMap(result.map));
+});
+
+test("defaults a draft when the artifact omits approval entirely", () => {
+	const directory = mkdtempSync(join(tmpdir(), "project-map-approval-"));
+	try {
+		const artifactPath = join(directory, "project-map.json");
+		writeFileSync(artifactPath, JSON.stringify(minimalMap(), null, 2), "utf8");
+		const read = readProjectMapFile(artifactPath);
+		assert.deepEqual(read.diagnostics, []);
+		assert.equal(read.map?.approval.state, "draft");
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}

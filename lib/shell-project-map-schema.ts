@@ -1,12 +1,16 @@
 import { readFileSync } from "node:fs";
 
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export const PROJECT_MAP_SCHEMA_V1 = "gentle-shell.project-map/v1" as const;
 export const PROJECT_MAP_SURFACES = ["productUx", "web", "api", "data", "security", "operations", "tests"] as const;
 export type ProjectMapSurface = (typeof PROJECT_MAP_SURFACES)[number];
 export const PROJECT_MAP_STATES = ["done", "active", "review", "ready", "blocked", "planned"] as const;
 export type ProjectMapState = (typeof PROJECT_MAP_STATES)[number];
+export const PROJECT_MAP_APPROVAL_STATES = ["draft", "approved"] as const;
+export type ProjectMapApprovalState = (typeof PROJECT_MAP_APPROVAL_STATES)[number];
+export const PROJECT_MAP_ARTIFACT_PATH = "openspec/project-map.json";
 export const PROJECT_MAP_RUNTIME_FIELDS = ["session", "sessionId", "session_id", "worktree", "branch", "lease", "leases", "heartbeat", "heartbeats", "claim", "claims", "blockers", "generation"] as const;
 export const PROJECT_MAP_DIAGNOSTIC_CODES = {
 	UNSUPPORTED_SCHEMA: "project-map/unsupported-schema-version",
@@ -48,9 +52,16 @@ export interface ProjectMapCapabilityV1 {
 	state: ProjectMapState;
 }
 
+export interface ProjectMapApprovalV1 {
+	state: ProjectMapApprovalState;
+	approvedAt?: string;
+	approvedBy?: string;
+}
+
 export interface ProjectMapV1 {
 	version: typeof PROJECT_MAP_SCHEMA_V1;
 	project: { id: string; name: string };
+	approval: ProjectMapApprovalV1;
 	foundations: ProjectMapFoundationV1[];
 	capabilities: ProjectMapCapabilityV1[];
 }
@@ -219,7 +230,54 @@ function validateFoundation(value: unknown, path: string, diagnostics: ProjectMa
 	return { id, outcome: value.outcome, state: value.state as ProjectMapState, ...(evidence === undefined ? {} : { evidence }) };
 }
 
-function validateCapability(value: unknown, path: string, diagnostics: ProjectMapDiagnostic[], identifiers: Set<string>): ValidatedCapability | null {
+function validateApproval(value: unknown, path: string, diagnostics: ProjectMapDiagnostic[]): ProjectMapApprovalV1 | null {
+	if (!isRecord(value)) {
+		diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, path, "Expected an approval object.");
+		return null;
+	}
+	validateUnknownFields(value, ["state", "approvedAt", "approvedBy"], path, diagnostics);
+	let valid = true;
+	if (value.state === undefined) {
+		diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, `${path}.state`, 'Missing required field "state".');
+		valid = false;
+	} else if (typeof value.state !== "string" || !PROJECT_MAP_APPROVAL_STATES.includes(value.state as ProjectMapApprovalState)) {
+		diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.state`, "Expected a supported approval state.");
+		valid = false;
+	}
+	const approvedAt = value.approvedAt;
+	const approvedBy = value.approvedBy;
+	if (value.state === "approved") {
+		if (approvedAt === undefined) {
+			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, `${path}.approvedAt`, 'Missing required field "approvedAt".');
+			valid = false;
+		} else if (typeof approvedAt !== "string" || !ISO_INSTANT.test(approvedAt) || Number.isNaN(Date.parse(approvedAt))) {
+			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.approvedAt`, "Expected an ISO-8601 instant.");
+			valid = false;
+		}
+		if (approvedBy === undefined) {
+			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, `${path}.approvedBy`, 'Missing required field "approvedBy".');
+			valid = false;
+		} else if (typeof approvedBy !== "string" || approvedBy.trim().length === 0) {
+			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.approvedBy`, "Expected a non-empty approver identity.");
+			valid = false;
+		}
+	} else if (value.state === "draft") {
+		for (const field of ["approvedAt", "approvedBy"] as const) {
+			if (value[field] !== undefined) {
+				diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.${field}`, `A draft map may not carry "${field}".`);
+				valid = false;
+			}
+		}
+	}
+	if (!valid || typeof value.state !== "string") return null;
+	return {
+		state: value.state as ProjectMapApprovalState,
+		...(typeof approvedAt === "string" ? { approvedAt } : {}),
+		...(typeof approvedBy === "string" ? { approvedBy } : {}),
+	};
+}
+
+function validateCapability(value: unknown, path: string, diagnostics: ProjectMapDiagnostic[], identifiers: Set<string>, surfacesRequired: boolean): ValidatedCapability | null {
 	if (!isRecord(value)) {
 		diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, path, "Expected a capability object.");
 		return null;
@@ -252,9 +310,14 @@ function validateCapability(value: unknown, path: string, diagnostics: ProjectMa
 		}
 	}
 	let surfaces: ProjectMapSurface[] = [];
-	if (!Array.isArray(value.surfaces) || value.surfaces.length === 0) {
-		if (value.surfaces !== undefined) diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.surfaces`, "Expected a non-empty array of supported surfaces.");
+	if (!Array.isArray(value.surfaces)) {
+		if (value.surfaces !== undefined) diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.surfaces`, "Expected an array of supported surfaces.");
 		valid = false;
+	} else if (value.surfaces.length === 0) {
+		if (surfacesRequired) {
+			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `${path}.surfaces`, "An approved capability requires a non-empty array of supported surfaces.");
+			valid = false;
+		}
 	} else {
 		const seen = new Set<string>();
 		for (let index = 0; index < value.surfaces.length; index += 1) {
@@ -369,7 +432,7 @@ export function validateProjectMap(value: unknown, options: ProjectMapValidation
 			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.UNSUPPORTED_SCHEMA, "$.version", `Unsupported schema version \"${value.version}\".`);
 			return { map: null, diagnostics };
 		}
-		validateUnknownFields(value, ["version", "project", "foundations", "capabilities"], "$", diagnostics);
+		validateUnknownFields(value, ["version", "project", "approval", "foundations", "capabilities"], "$", diagnostics);
 		let project: { id: string; name: string } | null = null;
 		if (value.project === undefined) {
 			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.MISSING_FIELD, "$.project", "Missing required field \"project\".");
@@ -400,6 +463,12 @@ export function validateProjectMap(value: unknown, options: ProjectMapValidation
 				if (foundation) foundations.push(foundation);
 			}
 		}
+		let approval: ProjectMapApprovalV1 = { state: "draft" };
+		if (value.approval !== undefined) {
+			const validatedApproval = validateApproval(value.approval, "$.approval", diagnostics);
+			if (validatedApproval) approval = validatedApproval;
+		}
+		const surfacesRequired = approval.state === "approved";
 		const capabilities: ProjectMapCapabilityV1[] = [];
 		const capabilityIds = new Set<string>();
 		const originalIndices = new Map<string, number>();
@@ -410,7 +479,7 @@ export function validateProjectMap(value: unknown, options: ProjectMapValidation
 			diagnostic(diagnostics, PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.capabilities", "Expected an array of capabilities.");
 		} else {
 			for (let index = 0; index < value.capabilities.length; index += 1) {
-				const validated = validateCapability(value.capabilities[index], `$.capabilities[${index}]`, diagnostics, capabilityIds);
+				const validated = validateCapability(value.capabilities[index], `$.capabilities[${index}]`, diagnostics, capabilityIds, surfacesRequired);
 				if (validated) {
 					capabilities.push(validated.capability);
 					originalIndices.set(validated.capability.id, index);
@@ -443,7 +512,7 @@ export function validateProjectMap(value: unknown, options: ProjectMapValidation
 		}
 		detectDependencyCycles(capabilities, originalIndices, collectionIndices, diagnostics);
 		if (!project || diagnostics.some((entry) => entry.severity === "error")) return { map: null, diagnostics };
-		return { map: canonicalizeProjectMap({ version: PROJECT_MAP_SCHEMA_V1, project, foundations, capabilities }), diagnostics };
+		return { map: canonicalizeProjectMap({ version: PROJECT_MAP_SCHEMA_V1, project, approval, foundations, capabilities }), diagnostics };
 	} catch {
 		return { map: null, diagnostics: [{ code: PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, path: "$", message: "Project map validation failed.", severity: "error" }] };
 	}
@@ -472,6 +541,11 @@ export function canonicalizeProjectMap(map: ProjectMapV1): ProjectMapV1 {
 		project: {
 			id: map.project.id,
 			name: map.project.name,
+		},
+		approval: {
+			state: map.approval.state,
+			...(map.approval.approvedAt === undefined ? {} : { approvedAt: map.approval.approvedAt }),
+			...(map.approval.approvedBy === undefined ? {} : { approvedBy: map.approval.approvedBy }),
 		},
 		foundations: map.foundations
 			.map((foundation) => ({
