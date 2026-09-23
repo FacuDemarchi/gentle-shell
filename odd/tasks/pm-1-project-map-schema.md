@@ -66,25 +66,25 @@ states: done | active | review | ready | blocked | planned
 - Migration-safe defaults apply only to optional collections (`foundations`, `foundationRefs`, `dependsOn`, `contracts`, `featureDocs` default to empty). The schema version is never defaulted: an unknown version fails closed.
 
 ## Tasks
-- [ ] **PM1-1 — Schema version, fail-closed version gate, and canonical form**
+- [x] **PM1-1 — Schema version, fail-closed version gate, and canonical form**
   - Export the v1 version tag, coverage surfaces, lifecycle states, and diagnostic codes.
   - Reject any other version with a single diagnostic and no partial map.
   - Canonicalize (stable ordering, applied defaults) and serialize deterministically.
-- [ ] **PM1-2 — Structural validation**
+- [x] **PM1-2 — Structural validation**
   - Reject unknown fields at every level with the exact path, and runtime-coordination fields with their own code.
   - Report missing required fields and wrong types with stable codes.
   - Detect duplicate identifiers per namespace and duplicate entries inside collections.
-- [ ] **PM1-3 — Reference resolution and dependency cycles**
+- [x] **PM1-3 — Reference resolution and dependency cycles**
   - Report unknown `foundationRefs` and `dependsOn` references with the exact path; `contracts` stays structural in v1.
   - Detect dependency cycles, including self-reference, and report one diagnostic per cyclic dependency group.
-- [ ] **PM1-4 — Feature-document references**
+- [x] **PM1-4 — Feature-document references**
   - Reject absolute paths and `..` escapes without filesystem access.
   - With an existence predicate, report a missing document as an error in strict mode and a warning in tolerant mode.
-- [ ] **PM1-5 — Artifact reading and reusable validation entry points**
+- [x] **PM1-5 — Artifact reading and reusable validation entry points**
   - Validate a decoded value, parse JSON text, and read the artifact from disk with a diagnostic instead of a thrown error.
-- [ ] **PM1-6 — Documentation**
+- [x] **PM1-6 — Documentation**
   - Document the format, defaults, canonical form, and every diagnostic code in `docs/project-map.md`.
-- [ ] **PM1-7 — Verification**
+- [x] **PM1-7 — Verification**
   - Focused test file green; full-suite and typecheck attempted and their unavailability recorded honestly.
 
 ## Acceptance criteria
@@ -107,4 +107,4 @@ Measured correction-round totals: 501 library lines, 632 test lines, 95 document
 - 2026-09-22: Work-unit commit `99f80c9f` — `fix(shell): reject Windows drive-relative feature-document paths` (23 insertions, 3 deletions). Native review lineage `review-f521cbedc02977eb` closed approved and acknowledged.
 
 ## Next decision
-Report measured results per stage. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
+PM-1 is closed: all seven tasks are complete, both work units are committed, reviewed, and pushed. A pull request against upstream and PM-2 (draft generation and human plan approval) remain separate decisions requiring explicit authorization.
