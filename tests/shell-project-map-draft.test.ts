@@ -282,7 +282,6 @@ test("produces extracted capabilities that the schema accepts as a draft", () =>
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
 		openspecConfig: config,
-		packageJson: manifest(),
 		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }],
 	});
 	assert.ok(result.map);
@@ -290,4 +289,52 @@ test("produces extracted capabilities that the schema accepts as a draft", () =>
 	const validated = validateProjectMap(result.map);
 	assert.deepEqual(validated.diagnostics, []);
 	assert.deepEqual(validated.map, result.map);
+});
+
+test("does not read a block scalar body as configuration", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: ["context: |", "  apply: not a section", "  test_command: not a command", "apply:", "  test_command: \"pnpm test\"", ""].join("\n"),
+	});
+	assert.equal(result.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
+});
+
+test("requires a usable script command, not merely a key", () => {
+	for (const scripts of [{ test: 42 }, { test: null }, { test: "   " }, { test: {} }]) {
+		const result = generateProjectMapDraft({ packageJson: manifest({ scripts }) });
+		assert.equal(
+			result.map?.foundations.find((entry) => entry.id === "repository-tooling")?.state,
+			"planned",
+			`expected planned for scripts ${JSON.stringify(scripts)}`,
+		);
+	}
+	const usable = generateProjectMapDraft({ packageJson: manifest({ scripts: { test: "pnpm test", lint: 42 } }) });
+	assert.equal(usable.map?.foundations.find((entry) => entry.id === "repository-tooling")?.state, "done");
+});
+
+test("skips a document whose path is not repository-relative", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [
+			{ path: "/etc/absolute.md", text: "- [ ] **PM-1 — Absolute**\n" },
+			{ path: "../outside.md", text: "- [ ] **PM-2 — Outside**\n" },
+			{ path: "C:drive.md", text: "- [ ] **PM-3 — Drive**\n" },
+			{ path: "odd/tasks/inside.md", text: "- [ ] **PM-4 — Inside**\n" },
+		],
+	});
+	assert.ok(result.map);
+	assert.deepEqual(result.map.capabilities.map((capability) => capability.id), ["inside"]);
+	const omissions = joined(result.omissions);
+	assert.ok(omissions.includes("/etc/absolute.md"));
+	assert.ok(omissions.includes("../outside.md"));
+	assert.ok(omissions.includes("C:drive.md"));
+});
+
+test("produces a draft that the schema accepts even when a document is skipped", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [{ path: "odd/tasks/inside.md", text: "- [ ] **PM-4 — Inside**\n" }],
+	});
+	assert.ok(result.map);
+	assert.deepEqual(validateProjectMap(result.map).diagnostics, []);
 });

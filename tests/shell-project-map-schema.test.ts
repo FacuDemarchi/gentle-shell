@@ -11,6 +11,7 @@ import {
 	PROJECT_MAP_STATES,
 	PROJECT_MAP_SURFACES,
 	canonicalizeProjectMap,
+	isSafeFeatureDocumentPath,
 	parseProjectMap,
 	readProjectMapFile,
 	serializeProjectMap,
@@ -757,5 +758,25 @@ test("defaults a draft when the artifact omits approval entirely", () => {
 		assert.equal(read.map?.approval.state, "draft");
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("rejects an ISO instant that is not a real calendar moment", () => {
+	for (const approvedAt of ["2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-01-32T00:00:00Z", "2026-09-23T25:00:00Z", "2026-09-23T00:60:00Z", "2026-09-23T00:00:61Z"]) {
+		const result = validateProjectMap(approvedMap({ approval: { state: "approved", approvedAt, approvedBy: "facundo" } }));
+		assert.equal(result.map, null, `expected ${approvedAt} to be rejected`);
+		assert.deepEqual(codes(result), [PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.deepEqual(paths(result), ["$.approval.approvedAt"]);
+	}
+	const real = validateProjectMap(approvedMap({ approval: { state: "approved", approvedAt: "2026-02-28T23:59:59Z", approvedBy: "facundo" } }));
+	assert.deepEqual(real.diagnostics, []);
+	const leap = validateProjectMap(approvedMap({ approval: { state: "approved", approvedAt: "2028-02-29T00:00:00Z", approvedBy: "facundo" } }));
+	assert.deepEqual(leap.diagnostics, []);
+});
+
+test("exports the feature-document path predicate the draft generator reuses", () => {
+	assert.equal(isSafeFeatureDocumentPath("odd/tasks/roadmap.md"), true);
+	for (const unsafe of ["/absolute.md", "C:drive.md", "../outside.md", "odd/../../outside.md", "\\\\unc\\share.md", "\\rooted.md"]) {
+		assert.equal(isSafeFeatureDocumentPath(unsafe), false, `expected ${unsafe} to be unsafe`);
 	}
 });
