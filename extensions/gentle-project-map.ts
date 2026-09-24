@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { approveProjectMap, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
+import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible } from "../lib/shell-project-map-card.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
@@ -48,10 +48,18 @@ export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["draft", "approve", "status", "show", "hide"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
-const USAGE = `Usage: /${PROJECT_MAP_COMMAND_NAME} <${PROJECT_MAP_SUB_ACTIONS.join("|")}> [actor]`;
+const USAGE = {
+	command: `Usage: /${PROJECT_MAP_COMMAND_NAME} <${PROJECT_MAP_SUB_ACTIONS.join("|")}>`,
+	draft: `Usage: /${PROJECT_MAP_COMMAND_NAME} draft`,
+	declare: `Usage: /${PROJECT_MAP_COMMAND_NAME} declare <capability-id> <surface>...`,
+	approve: `Usage: /${PROJECT_MAP_COMMAND_NAME} approve <actor>`,
+	status: `Usage: /${PROJECT_MAP_COMMAND_NAME} status`,
+	show: `Usage: /${PROJECT_MAP_COMMAND_NAME} show`,
+	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
+} as const;
 
 export interface ProjectMapCommandContext {
 	cwd: string;
@@ -90,9 +98,9 @@ export interface ProjectMapSubActionParse {
 
 export function parseProjectMapSubAction(args: string): ProjectMapSubActionParse {
 	const [head = "", ...rest] = args.trim().split(/\s+/);
-	if (head.length === 0) return { ok: false, action: null, argument: "", message: `A sub-action is required. ${USAGE}` };
+	if (head.length === 0) return { ok: false, action: null, argument: "", message: `A sub-action is required. ${USAGE.command}` };
 	if (!PROJECT_MAP_SUB_ACTIONS.includes(head as ProjectMapSubAction)) {
-		return { ok: false, action: null, argument: "", message: `Unknown sub-action "${head}". ${USAGE}` };
+		return { ok: false, action: null, argument: "", message: `Unknown sub-action "${head}". ${USAGE.command}` };
 	}
 	return { ok: true, action: head as ProjectMapSubAction, argument: rest.join(" ").trim(), message: "" };
 }
@@ -266,9 +274,49 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		return { action: "draft", wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 	}
 
+	if (parsed.action === "declare") {
+		const [capabilityId = "", ...surfaces] = parsed.argument.split(/\s+/);
+		const unreadable = unreadableArtifactRefusal(artifactPath);
+		if (unreadable !== null) {
+			ctx.ui.notify(unreadable.message);
+			return emptyReport("declare", [unreadable]);
+		}
+		const observed = readSource(artifactPath);
+		const read = readProjectMapFile(artifactPath);
+		if (read.map === null) {
+			ctx.ui.notify(`No map to declare surfaces for at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return emptyReport("declare", read.diagnostics);
+		}
+		const transition = declareProjectMapSurfaces({ map: read.map, capabilityId, surfaces });
+		if (!transition.ok || transition.map === null) {
+			ctx.ui.notify(`The surfaces cannot be declared yet.\n${transition.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: transition.diagnostics };
+		}
+		const declared = transition.map.capabilities.find((capability) => capability.id === capabilityId)?.surfaces ?? [];
+		const change = declared.length === 0 ? "not yet determined" : declared.join(", ");
+		ctx.ui.notify([describe(transition.map), "", `Declared surfaces for ${capabilityId}: ${change}.`].join("\n"));
+		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Declare Project Map surfaces?", `Replace the declared surfaces for ${capabilityId} in ${PROJECT_MAP_ARTIFACT_PATH} with ${change}?`) : false;
+		if (!confirmed) {
+			ctx.ui.notify("Surface declaration discarded; nothing was written.");
+			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
+		}
+		if (artifactMovedSince(artifactPath, observed)) {
+			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
+			ctx.ui.notify(message);
+			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [refusal(message, "$")] };
+		}
+		const written = writeProjectMapFile(artifactPath, transition.map);
+		if (!written.ok) {
+			ctx.ui.notify(`The surface declaration could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: written.diagnostics };
+		}
+		ctx.ui.notify(`Declared surfaces for ${capabilityId} and wrote to ${PROJECT_MAP_ARTIFACT_PATH}.`);
+		return { action: "declare", wrote: true, map: transition.map, assumptions: [], omissions: [], diagnostics: [] };
+	}
+
 	const actor = parsed.argument;
 	if (actor.length === 0) {
-		ctx.ui.notify(`Approval requires an actor identity, because an approval nobody can attribute is not auditable.\n${USAGE}`);
+		ctx.ui.notify(`Approval requires an actor identity, because an approval nobody can attribute is not auditable.\n${USAGE.approve}`);
 		return emptyReport("approve", [refusal("Approval requires an actor identity.", "$.approval.approvedBy")]);
 	}
 	const observed = readSource(artifactPath);
@@ -370,7 +418,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	};
 
 	pi.registerCommand(PROJECT_MAP_COMMAND_NAME, {
-		description: "Generate, inspect, approve, show, or hide the repository Project Map.",
+		description: "Generate, declare, inspect, approve, show, or hide the repository Project Map.",
 		handler: async (args, ctx) => {
 			const commandCtx = ctx as unknown as ProjectMapCommandContext;
 			await runProjectMapCommand(args, commandCtx, { onShow: () => { record(commandCtx).visibility = true; mount(commandCtx); }, onHide: () => { record(commandCtx).visibility = false; unmount(commandCtx); } });

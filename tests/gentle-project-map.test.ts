@@ -71,25 +71,13 @@ function artifactPath(directory: string): string {
 	return join(directory, PROJECT_MAP_ARTIFACT_PATH);
 }
 
-/**
- * Stands in for the human correcting the draft: declaring which product surfaces each
- * capability touches. The generator never infers them, so an approved map is only
- * reachable after this edit.
- */
-function declareEverySurface(directory: string): void {
-	const path = artifactPath(directory);
-	const map = JSON.parse(readFileSync(path, "utf8")) as { capabilities: { surfaces: string[] }[] };
-	for (const capability of map.capabilities) capability.surfaces = ["web"];
-	writeFileSync(path, `${JSON.stringify(map, null, 2)}\n`, "utf8");
-}
-
 function withRepository(run: (directory: string) => Promise<void> | void, overrides: Parameters<typeof repository>[0] = {}): Promise<void> {
 	const directory = repository(overrides);
 	return Promise.resolve(run(directory)).finally(() => rmSync(directory, { recursive: true, force: true }));
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "approve", "status", "show", "hide"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "declare", "approve", "status", "show", "hide"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -100,6 +88,10 @@ test("parses a known sub-action and rejects everything else", () => {
 	assert.equal(withArgument.ok, true);
 	assert.equal(withArgument.action, "approve");
 	assert.equal(withArgument.argument, "facundo");
+	const declaration = parseProjectMapSubAction("declare pm-2 web api");
+	assert.equal(declaration.ok, true);
+	assert.equal(declaration.action, "declare");
+	assert.equal(declaration.argument, "pm-2 web api");
 	const unknown = parseProjectMapSubAction("publish");
 	assert.equal(unknown.ok, false);
 	if (!unknown.ok) {
@@ -165,6 +157,67 @@ test("draft reports the assumptions and omissions it could not resolve", async (
 	}, { config: null, task: null });
 });
 
+test("declare persists a capability surface only after confirmation", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand(`declare ${capabilityId} web`, probe.ctx, { now: () => NOW });
+		assert.equal(report.action, "declare");
+		assert.equal(report.wrote, true);
+		assert.equal(probe.confirmations, 1);
+		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map?.capabilities[0]?.surfaces, ["web"]);
+		assert.ok(probe.notified.some((message) => message.includes("Declared surfaces for")));
+	});
+});
+
+test("declare refuses an unknown surface without writing", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand(`declare ${capabilityId} unknown`, probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.path === "$.capabilities[0].surfaces"));
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
+
+test("declare writes nothing when the human declines", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const probe = harness(directory, [false]);
+		const report = await runProjectMapCommand(`declare ${capabilityId} web`, probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 1);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
+
+test("declare refuses an approved map without writing", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
+		assert.equal((await runProjectMapCommand("approve facundo", harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand(`declare ${capabilityId} api`, probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.path === "$.approval.state"));
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
+
 test("approve refuses without an actor and writes nothing", async () => {
 	await withRepository(async (directory) => {
 		const seed = harness(directory, [true]);
@@ -180,11 +233,13 @@ test("approve refuses without an actor and writes nothing", async () => {
 	});
 });
 
-test("approve records the actor and the injected timestamp", async () => {
+test("draft then declare then approve records the actor and injected timestamp", async () => {
 	await withRepository(async (directory) => {
 		const seed = harness(directory, [true]);
-		await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
-		declareEverySurface(directory);
+		const drafted = await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
 
 		const probe = harness(directory, [true]);
 		const report = await runProjectMapCommand("approve facundo", probe.ctx, { now: () => NOW });
@@ -212,7 +267,9 @@ test("refuses to approve a machine-generated draft until the human declares surf
 		assert.ok(report.diagnostics.length > 0);
 		assert.ok(probe.notified.some((message) => message.includes("$.capabilities[0].surfaces")));
 
-		declareEverySurface(directory);
+		const capabilityId = generated.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
 		const accepted = harness(directory, [true]);
 		assert.equal((await runProjectMapCommand("approve facundo", accepted.ctx, { now: () => NOW })).wrote, true);
 	});
@@ -221,8 +278,10 @@ test("refuses to approve a machine-generated draft until the human declares surf
 test("approve writes nothing when the human declines", async () => {
 	await withRepository(async (directory) => {
 		const seed = harness(directory, [true]);
-		await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
-		declareEverySurface(directory);
+		const drafted = await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
 		const before = readFileSync(artifactPath(directory), "utf8");
 
 		const probe = harness(directory, [false]);
@@ -263,8 +322,10 @@ test("approve refuses an incomplete map and reports the exact path", async () =>
 test("approve refuses an already approved map", async () => {
 	await withRepository(async (directory) => {
 		const seed = harness(directory, [true]);
-		await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
-		declareEverySurface(directory);
+		const drafted = await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
 		const first = harness(directory, [true]);
 		assert.equal((await runProjectMapCommand("approve facundo", first.ctx, { now: () => NOW })).wrote, true);
 
@@ -337,8 +398,10 @@ test("reports an absent source as absent, not as unreadable", async () => {
 test("refuses to approve when the artifact changed between the read and the confirmation", async () => {
 	await withRepository(async (directory) => {
 		const seed = harness(directory, [true]);
-		await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
-		declareEverySurface(directory);
+		const drafted = await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
 		const before = readFileSync(artifactPath(directory), "utf8");
 
 		// The confirmation is where a second writer gets its window, so the race is simulated
@@ -369,13 +432,89 @@ test("refuses to write a draft when the artifact appeared while the human decide
 	});
 });
 
+test("refuses to declare when the artifact changed between the read and the confirmation", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		const before = readFileSync(artifactPath(directory), "utf8");
+
+		const probe = harness(directory);
+		probe.ctx.ui.confirm = async () => {
+			writeFileSync(artifactPath(directory), `${before}\n`, "utf8");
+			return true;
+		};
+		const report = await runProjectMapCommand(`declare ${capabilityId} web`, probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), `${before}\n`);
+	});
+});
+
+test("clears the declared surfaces when no surface is given", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web api`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
+		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map?.capabilities[0]?.surfaces, ["web", "api"]);
+
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand(`declare ${capabilityId}`, probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, true);
+		assert.equal(probe.confirmations, 1);
+		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map?.capabilities[0]?.surfaces, []);
+	});
+});
+
+test("never asks and never writes when there is nothing to declare against", async () => {
+	await withRepository(async (directory) => {
+		const absent = harness(directory, [true]);
+		const noArtifact = await runProjectMapCommand("declare anything web", absent.ctx, { now: () => NOW });
+		assert.equal(noArtifact.wrote, false);
+		assert.equal(absent.confirmations, 0);
+
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const unknown = harness(directory, [true]);
+		const report = await runProjectMapCommand(`declare not-a-capability web`, unknown.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.equal(unknown.confirmations, 0, "a refusal never reaches the prompt");
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes(capabilityId)), "the refusal names the ids the map does declare");
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
+
+test("never writes and never asks without a UI, for every action that can write", async () => {
+	await withRepository(async (directory) => {
+		const drafted = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		const capabilityId = drafted.map?.capabilities[0]?.id;
+		assert.ok(capabilityId);
+		// A surface must be declared first, or the approve iteration below would be refused
+		// as an incomplete map and would pass without ever reaching the UI guard it claims to test.
+		assert.equal((await runProjectMapCommand(`declare ${capabilityId} web`, harness(directory, [true]).ctx, { now: () => NOW })).wrote, true);
+		const before = readFileSync(artifactPath(directory), "utf8");
+
+		for (const args of ["draft", `declare ${capabilityId} api`, "approve facundo"]) {
+			const probe = harness(directory, [true]);
+			probe.ctx.hasUI = false;
+			const report = await runProjectMapCommand(args, probe.ctx, { now: () => NOW });
+			assert.equal(report.wrote, false, `expected ${args} to write nothing without a UI`);
+			assert.equal(probe.confirmations, 0, `expected ${args} to ask nothing without a UI`);
+		}
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
+
 test("refuses to write over an artifact it cannot read", async () => {
 	await withRepository(async (directory) => {
 		// A directory where the artifact is expected is unreadable, not absent. Conflating the
 		// two would make the staleness guard see null before and null after, and wave the write
 		// through over a file it never inspected.
 		mkdirSync(artifactPath(directory));
-		for (const args of ["draft", "approve facundo"]) {
+		for (const args of ["draft", "declare merchant-catalog web", "approve facundo"]) {
 			const probe = harness(directory, [true]);
 			const report = await runProjectMapCommand(args, probe.ctx, { now: () => NOW });
 			assert.equal(report.wrote, false, `expected ${args} to refuse`);
