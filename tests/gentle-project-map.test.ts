@@ -7,8 +7,10 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
 import gentleProjectMap, {
+	PROJECT_MAP_COLLAPSE_KEY_DEFAULT,
 	PROJECT_MAP_COMMAND_NAME,
 	PROJECT_MAP_SUB_ACTIONS,
+	parseProjectMapCollapseKey,
 	parseProjectMapSubAction,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
@@ -384,12 +386,16 @@ test("refuses to write over an artifact it cannot read", async () => {
 
 type LifecycleHandler = (event: unknown, ctx: unknown) => unknown;
 
-function projectMapExtension() {
+function projectMapExtension(env: NodeJS.ProcessEnv = {}) {
 	const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<unknown> }>();
+	const shortcuts = new Map<string, { handler(ctx: unknown): Promise<unknown> }>();
 	const handlers = new Map<string, LifecycleHandler[]>();
 	const pi = {
 		registerCommand(name: string, command: { handler(args: string, ctx: unknown): Promise<unknown> }) {
 			commands.set(name, command);
+		},
+		registerShortcut(key: string, shortcut: { handler(ctx: unknown): Promise<unknown> }) {
+			shortcuts.set(key, shortcut);
 		},
 		on(name: string, handler: LifecycleHandler) {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -398,8 +404,8 @@ function projectMapExtension() {
 	const fire = async (name: string, ctx: unknown) => {
 		for (const handler of handlers.get(name) ?? []) await handler({}, ctx);
 	};
-	gentleProjectMap(pi);
-	return { commands, fire };
+	gentleProjectMap(pi, env);
+	return { commands, shortcuts, fire };
 }
 
 function widgetContext(cwd: string, id: string) {
@@ -433,6 +439,100 @@ function writeReadyArtifact(directory: string): void {
 		capabilities: [],
 	}), "utf8");
 }
+
+function writeGroupedReadyArtifact(directory: string): void {
+	writeReadyArtifact(directory);
+	writeFileSync(artifactPath(directory), JSON.stringify({
+		version: "gentle-shell.project-map/v1",
+		project: { id: "example-shop", name: "Example Shop" },
+		approval: { state: "draft" },
+		foundations: [{ id: "tooling", outcome: "Tooling", state: "done", evidence: [] }],
+		capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" }],
+	}), "utf8");
+}
+
+test("resolves the Project Map collapse shortcut with default, override, and off", () => {
+	assert.equal(PROJECT_MAP_COLLAPSE_KEY_DEFAULT, "alt+m");
+	assert.equal(parseProjectMapCollapseKey({}), "alt+m");
+	assert.equal(parseProjectMapCollapseKey({ GENTLE_PI_PROJECT_MAP_KEY: "ctrl+m" }), "ctrl+m");
+	assert.equal(parseProjectMapCollapseKey({ GENTLE_PI_PROJECT_MAP_KEY: "" }), "alt+m");
+	assert.equal(parseProjectMapCollapseKey({ GENTLE_PI_PROJECT_MAP_KEY: "off" }), undefined);
+	assert.ok(projectMapExtension().shortcuts.has("alt+m"));
+	assert.ok(projectMapExtension({ GENTLE_PI_PROJECT_MAP_KEY: "ctrl+m" }).shortcuts.has("ctrl+m"));
+});
+
+test("the collapse shortcut toggles all groups only while the card is mounted", async () => {
+	await withRepository(async (directory) => {
+		writeGroupedReadyArtifact(directory);
+		const extension = projectMapExtension();
+		const probe = widgetContext(directory, "shortcut");
+		await extension.fire("session_start", probe.ctx);
+		const factory = probe.widgets.get("gentle-project-map")!;
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		factory(tui, { fg: (_color: string, text: string) => text });
+		const rail = () => sidebarState(tui).parts.get("project-map")!;
+		assert.match(rail().render(80).join("\n"), /▾ Foundations 1\/1/);
+		assert.match(rail().render(80).join("\n"), /▾ Product capabilities 1\/1/);
+		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
+		assert.match(rail().render(80).join("\n"), /▸ Foundations 1\/1/);
+		assert.match(rail().render(80).join("\n"), /▸ Product capabilities 1\/1/);
+		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
+		assert.match(rail().render(80).join("\n"), /▾ Foundations 1\/1/);
+		assert.match(rail().render(80).join("\n"), /▾ Product capabilities 1\/1/);
+		await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("hide", probe.ctx);
+		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
+		assert.ok(probe.notified.some((message) => message.includes("hidden")));
+	});
+});
+
+test("the card part receives a session toggle that changes only the clicked group", async () => {
+	await withRepository(async (directory) => {
+		writeReadyArtifact(directory);
+		writeFileSync(artifactPath(directory), JSON.stringify({
+			version: "gentle-shell.project-map/v1",
+			project: { id: "example-shop", name: "Example Shop" },
+			approval: { state: "draft" },
+			foundations: [{ id: "tooling", outcome: "Tooling", state: "done", evidence: [] }],
+			capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" }],
+		}), "utf8");
+		const extension = projectMapExtension();
+		const probe = widgetContext(directory, "part-toggle");
+		await extension.fire("session_start", probe.ctx);
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		const rail = sidebarState(tui).parts.get("project-map")!;
+		const lines = rail.render(80);
+		const header = lines.findIndex((line) => line.includes("Foundations"));
+		rail.handleMouse?.({ type: "click", button: "left", x: 2, y: header, screenX: 2, screenY: header, width: 80, height: lines.length, shift: false, alt: false, ctrl: false });
+		const body = rail.render(80).join("\n");
+		assert.match(body, /▸ Foundations 1\/1/);
+		assert.equal(body.includes("✓ tooling"), false);
+		assert.match(body, /▾ Product capabilities 1\/1/);
+		assert.ok(body.includes("✓ catalog"));
+	});
+});
+
+test("collapse survives a widget remount but is dropped at session shutdown without disk writes", async () => {
+	await withRepository(async (directory) => {
+		writeReadyArtifact(directory);
+		const extension = projectMapExtension();
+		const first = widgetContext(directory, "same-collapse");
+		const before = readFileSync(artifactPath(directory), "utf8");
+		await extension.fire("session_start", first.ctx);
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		first.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		await extension.shortcuts.get("alt+m")!.handler(first.ctx);
+		assert.match(sidebarState(tui).parts.get("project-map")!.render(80).join("\n"), /▸ Product capabilities/);
+		first.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		assert.match(sidebarState(tui).parts.get("project-map")!.render(80).join("\n"), /▸ Product capabilities/);
+		await extension.fire("session_shutdown", first.ctx);
+		const resumed = widgetContext(directory, "same-collapse");
+		await extension.fire("session_start", resumed.ctx);
+		resumed.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		assert.match(sidebarState(tui).parts.get("project-map")!.render(80).join("\n"), /▾ Product capabilities/);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	});
+});
 
 test("show and hide mount only for this session and do not write the artifact", async () => {
 	await withRepository(async (directory) => {

@@ -9,12 +9,16 @@ import {
 	type ProjectMapV1,
 } from "../lib/shell-project-map-schema.ts";
 import {
+	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	PROJECT_MAP_STATE_GLYPH,
 	projectMapCardDescriptor,
 	projectMapCardDigest,
 	projectMapCardState,
 	projectMapCoverage,
+	projectMapGroupFromHeader,
+	projectMapSummaryLine,
+	toggleProjectMapGroup,
 	type ProjectMapCardState,
 } from "../lib/shell-project-map-view.ts";
 
@@ -114,14 +118,40 @@ test("renders the approval state in the subtitle so a draft never reads as appro
 	assert.equal(approved.tone, "success");
 });
 
-test("renders one row per foundation and per capability with its glyph", () => {
+test("renders grouped rows with done indicators and lifecycle glyphs", () => {
 	const descriptor = projectMapCardDescriptor(ready(map()));
 	const body = descriptor.body.join("\n");
-	assert.ok(body.includes("Foundations"));
-	assert.ok(body.includes("Product capabilities"));
+	assert.ok(body.includes("▾ Foundations 1/1"));
+	assert.ok(body.includes("▾ Product capabilities 1/3"));
 	assert.ok(body.includes(`✓ repository-tooling`));
 	assert.ok(body.includes(`✓ merchant-catalog · Web · API`));
 	assert.ok(body.includes(`✕ checkout · Web`));
+});
+
+test("collapsing one group preserves the other group and its header", () => {
+	const state = ready(map());
+	const collapsed = toggleProjectMapGroup(PROJECT_MAP_EXPANDED, "foundations");
+	assert.deepEqual(collapsed, { foundations: true, capabilities: false });
+	const body = projectMapCardDescriptor(state, collapsed).body.join("\n");
+	assert.ok(body.includes("▸ Foundations 1/1"));
+	assert.equal(body.includes("repository-tooling"), false);
+	assert.ok(body.includes("▾ Product capabilities 1/3"));
+	assert.ok(body.includes("merchant-catalog"));
+	assert.deepEqual(toggleProjectMapGroup(collapsed, "capabilities"), { foundations: true, capabilities: true });
+});
+
+test("omits the foundations group when no foundation is declared", () => {
+	const body = projectMapCardDescriptor(ready(map({ foundations: [] }))).body.join("\n");
+	assert.equal(body.includes("Foundations"), false);
+	assert.ok(body.includes("▾ Product capabilities 1/3"));
+});
+
+test("reads a rendered group header back to its group and rejects content rows", () => {
+	assert.equal(projectMapGroupFromHeader("│ ▾ Foundations 1/1            │"), "foundations");
+	assert.equal(projectMapGroupFromHeader("│ ▸ Product capabilities 2/3  │"), "capabilities");
+	assert.equal(projectMapGroupFromHeader("  ✓ repository-tooling"), undefined);
+	assert.equal(projectMapGroupFromHeader("│ ✿ Project Map Example Shop · draft │"), undefined);
+	assert.equal(projectMapGroupFromHeader("│ ▾ Foundations"), undefined);
 });
 
 test("says a capability declares no surface instead of rendering an empty list", () => {
@@ -147,9 +177,12 @@ test("renders an undeclared surface as unknown and never as zero percent", () =>
 	assert.equal(coverageLine.includes("Security 0%"), false);
 });
 
-test("renders a declared surface with its share and its counts", () => {
+test("renders a declared surface with its share, counts, and declaring capabilities", () => {
 	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("Web 50% (1/2)"), `expected Web 50% (1/2), got ${body}`);
+	assert.ok(body.includes("Web 50% (1/2):"), `expected the Web explanation, got ${body}`);
+	assert.ok(body.includes("merchant-catalog ✓"), `expected the done declaring capability, got ${body}`);
+	assert.ok(body.includes("checkout ✕"), `expected the blocked declaring capability, got ${body}`);
+	assert.ok(body.includes("API 100% (1/1): merchant-catalog ✓"), `expected the API explanation, got ${body}`);
 });
 
 test("reports every surface of the frozen vocabulary exactly once", () => {
@@ -163,6 +196,8 @@ test("reports every surface of the frozen vocabulary exactly once", () => {
 test("keeps the digest stable when the card does not change and moves when it does", () => {
 	const base = projectMapCardDigest(ready(map()));
 	assert.equal(projectMapCardDigest(ready(map())), base);
+	assert.notEqual(projectMapCardDigest(ready(map()), { foundations: true, capabilities: false }), base, "a collapsed group changes the visible descriptor");
+	assert.equal(projectMapCardDigest(ready(map()), PROJECT_MAP_EXPANDED), base);
 
 	const restated = map({ capabilities: [...map().capabilities].reverse() });
 	// The reader canonicalizes artifacts, so reordered rows are only reachable through a
@@ -190,11 +225,33 @@ test("renders no overlay rows while the overlay is unavailable", () => {
 	}
 });
 
-test("never renders a line longer than the narrowest card width", () => {
-	const descriptor = projectMapCardDescriptor(ready(map()));
-	for (const line of [descriptor.title, descriptor.subtitle, ...descriptor.body]) {
-		assert.ok(line.length <= 60, `expected a line under 60 columns, got ${line.length}: ${line}`);
+test("keeps every descriptor body line within 60 columns, even with long identifiers", () => {
+	const long = map({
+		foundations: [{ id: `foundation-${"x".repeat(80)}`, outcome: "Tooling is declared.", state: "done", evidence: [] }],
+		capabilities: [{ ...map().capabilities[0], id: `capability-${"y".repeat(80)}`, surfaces: ["web"] }],
+	});
+	const descriptor = projectMapCardDescriptor(ready(long));
+	// The title and subtitle are not pre-wrapped: the subtitle carries the project name and
+	// renderCard clips it at render time, which the card suite covers at boundary widths.
+	for (const line of descriptor.body) {
+		assert.ok(line.length <= 60, `expected a body line under 60 columns, got ${line.length}: ${line}`);
 	}
+});
+
+test("summarizes completed foundations and capabilities", () => {
+	assert.equal(projectMapSummaryLine(map()), "1/1 foundations · 1/3 capabilities");
+});
+
+test("bounds long diagnostic messages like the ready body", () => {
+	const state: ProjectMapCardState = {
+		kind: "invalid",
+		path: PROJECT_MAP_ARTIFACT_PATH,
+		diagnostics: [{ code: "project-map/invalid-field", path: "$.project.name", message: "z".repeat(200), severity: "error" }],
+		overlay: PROJECT_MAP_OVERLAY_UNAVAILABLE,
+	};
+	const descriptor = projectMapCardDescriptor(state);
+	assert.ok(descriptor.body.length > 3, "a long message wraps into continuation lines");
+	for (const line of descriptor.body) assert.ok(line.length <= 60, `expected a body line under 60 columns, got ${line.length}: ${line}`);
 });
 
 test("classifies an unreadable artifact as empty rather than throwing", () => {

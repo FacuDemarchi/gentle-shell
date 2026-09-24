@@ -6,15 +6,20 @@ import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { renderCard } from "../lib/shell-card.ts";
 import {
+	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	projectMapCardDescriptor,
 	projectMapCardState,
+	toggleProjectMapGroup,
+	type ProjectMapCollapseState,
+	type ProjectMapGroup,
 } from "../lib/shell-project-map-view.ts";
 import {
 	PROJECT_MAP_RAIL_KEY,
 	projectMapCardBottom,
 	projectMapCardRail,
 	renderProjectMapCard,
+	type ProjectMapCardSession,
 } from "../lib/shell-project-map-card.ts";
 
 const theme = { fg: (_color: string, text: string) => text };
@@ -27,6 +32,19 @@ function map(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 		foundations: [{ id: "repository-tooling", outcome: "Tooling is declared.", state: "done" }],
 		capabilities: [{ id: "capability-with-an-unbreakable-identifier", outcome: "A deliberately long diagnostic-capable outcome.", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" }],
 		...overrides,
+	};
+}
+
+function session(initial: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): ProjectMapCardSession & { toggled: ProjectMapGroup[] } {
+	let current = initial;
+	const toggled: ProjectMapGroup[] = [];
+	return {
+		collapse: () => current,
+		toggle(group) {
+			toggled.push(group);
+			current = toggleProjectMapGroup(current, group);
+		},
+		toggled,
 	};
 }
 
@@ -87,7 +105,7 @@ test("clips every card line to the requested boundary width", () => {
 
 test("rail digest follows rendered diagnostics but ignores unrendered map fields", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
-		const rail = projectMapCardRail(path, theme);
+		const rail = projectMapCardRail(path, theme, session());
 		const before = rail.digest!();
 		writeFileSync(path, JSON.stringify(map({ project: { id: "changed-id", name: "Example Shop" } })), "utf8");
 		assert.equal(rail.digest!(), before);
@@ -103,11 +121,75 @@ test("rail digest follows rendered diagnostics but ignores unrendered map fields
 
 test("the rail is expanded while the bottom card is one collapsed body line", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
-		const rail = projectMapCardRail(path, theme);
+		const rail = projectMapCardRail(path, theme, session());
 		const bottom = projectMapCardBottom(path, theme);
 		assert.equal(PROJECT_MAP_RAIL_KEY, "project-map");
 		assert.ok(rail.render(48).length > 3);
 		assert.equal(bottom.render(48).length, 3);
+	});
+});
+
+test("the rail reads session collapse state and its digest follows a toggle", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session({ foundations: true, capabilities: false });
+		const rail = projectMapCardRail(path, theme, current);
+		assert.equal(rail.render(80).join("\n").includes("repository-tooling"), false);
+		const before = rail.digest!();
+		current.toggle("capabilities");
+		assert.notEqual(rail.digest!(), before);
+	});
+});
+
+test("a click on a group header toggles only that group", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const rail = projectMapCardRail(path, theme, current);
+		const lines = rail.render(80);
+		const header = lines.findIndex((line) => line.includes("Foundations"));
+		const row = lines.findIndex((line) => line.includes("repository-tooling"));
+		assert.deepEqual(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: header, screenX: 2, screenY: header, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), { handled: true, render: true });
+		assert.deepEqual(current.toggled, ["foundations"]);
+		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+		assert.equal(rail.handleMouse?.({ type: "press", button: "left", x: 2, y: header, screenX: 2, screenY: header, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: lines.length + 1, screenX: 2, screenY: lines.length + 1, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+		assert.deepEqual(current.toggled, ["foundations"]);
+	});
+});
+
+test("a project named like a group does not make the title clickable", () => {
+	withArtifact(JSON.stringify(map({ project: { id: "foundations", name: "▾ Foundations 1/1" } })), (path) => {
+		const current = session();
+		const rail = projectMapCardRail(path, theme, current);
+		const lines = rail.render(80);
+		assert.ok(lines[0]?.includes("Foundations"), "the subtitle carries the project name");
+		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: 0, screenX: 2, screenY: 0, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+		assert.deepEqual(current.toggled, []);
+	});
+});
+
+test("an invalid artifact diagnostic never becomes a group click target", () => {
+	withArtifact(JSON.stringify({ version: "▾ Foundations 1/1" }), (path) => {
+		const current = session();
+		const rail = projectMapCardRail(path, theme, current);
+		const lines = rail.render(80);
+		const row = lines.findIndex((line) => line.includes("▾ Foundations 1/1"));
+		assert.ok(row > 0, `the diagnostic renders the injected text: ${lines.join("\\n")}`);
+		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+		assert.deepEqual(current.toggled, []);
+	});
+});
+
+test("the bottom uses the summary line and stays non-interactive", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const bottom = projectMapCardBottom(path, theme);
+		assert.match(bottom.render(80).join("\n"), /1\/1 foundations · 1\/1 capabilities/);
+		assert.equal(bottom.handleMouse, undefined);
+	});
+});
+
+test("the rail shows the collapse hint when it fits", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		assert.match(projectMapCardRail(path, theme, session(), "alt+m").render(80)[0], /alt\+m/);
 	});
 });
 
