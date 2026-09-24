@@ -118,6 +118,7 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 Estimates: PM3-1 ≈ 420 lines (view library, its tests, the extension wiring, the layout slot, and the extension tests), PM3-2 ≈ 300, PM3-3 ≈ 400, PM3-4 ≈ 350, documentation ≈ 120. The unit total exceeds the 400-line review budget several times over, so it is implemented and reviewed as separate work-unit commits, each reporting its own measured size. PM3-1 is at the budget boundary and is split further if it measures over.
 
 ## Progress
+- 2026-09-23: PM3-1 split into PM3-1a and PM3-1b after measuring. The boundary is verifiability: everything that imports the TUI runtime is unverifiable in this clone, because `node_modules` is absent and every rendering suite in the repository fails for that reason (`shell-card`, `shell-todo`, `shell-sidebar-layout`, `gentle-todo`). PM3-1a is the pure view core, which imports no runtime and therefore runs; PM3-1b is the thin `renderCard` composition plus the shell wiring, which cannot run here and is recorded as such. Each half stays under the 400-line budget.
 - 2026-09-23: Unit planned after read-only exploration of both the uncommitted prototype in the sibling clone and the current rendering surfaces in this branch. Decisions on the prototype, the entry point, the staging, and surface collection accepted by the user as recommended. Task document created before the first source write. PM3-1 through PM3-5 pending.
 
 ## Next decision
