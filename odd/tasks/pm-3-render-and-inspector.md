@@ -71,6 +71,15 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 - The digest is derived from the rendered lines, so it changes exactly when the visible card changes.
 - The overlay input is accepted and empty; nothing renders from it until PM-4 supplies data.
 
+## PM3-1b design (fixed before the first source write)
+
+- `lib/shell-project-map-card.ts` owns the composition: artifact path → `projectMapCardState` → `projectMapCardDescriptor` → `renderCard(card, theme, width, { expanded })`. Width safety is inherited from `renderCard`, which clips and pads every line to exactly `width`.
+- The rail renders expanded and scrolls with the rail; the narrow-mode bottom renders the same card collapsed to one line, exactly like the Todo card's rail/bottom pair. Collapsing for space is not the collapse interaction, which stays in PM3-2.
+- `projectMapCardDigest` keeps its `(state)` signature and hashes the descriptor the card renders from (`title`, `subtitle`, `tone`, `body`). That closes the invalid-message drift, drops the false positive where a field the card never renders moved the digest, and leaves the existing digest tests compiling.
+- Visibility is session-scoped and data-dependent: a `ready` artifact mounts the card by default, and an empty or invalid artifact stays out of the rail until an explicit `show`. A map is navigation; a missing or broken artifact is a diagnostic and must not take rail space unasked.
+- `show` and `hide` are sub-actions of the existing command. `hide` disposes the registered rail part and clears the widget; nothing is written to disk.
+- Rail order becomes `["footer", "project-map", "agents", "todo"]`. A part that is not registered contributes no line and no separator, so the change is inert for every other card.
+
 ## Tasks
 
 - [x] **PM3-1a — Pure card core of the real map** (delivered 2026-09-23)
