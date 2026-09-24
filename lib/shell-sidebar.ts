@@ -6,6 +6,7 @@ const STATE = Symbol.for("gentle-pi.experimental-sidebar.state");
 export interface SidebarState {
 	active: boolean;
 	ownsHost?: () => boolean;
+	reveal?: (key: string, localLine: number) => void;
 	parts: Map<string, SidebarRail>;
 }
 

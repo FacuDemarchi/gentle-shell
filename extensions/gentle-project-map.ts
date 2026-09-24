@@ -29,11 +29,24 @@ import {
 export const PROJECT_MAP_COMMAND_NAME = "gentle:project-map";
 export const PROJECT_MAP_WIDGET_KEY = "gentle-project-map";
 export const PROJECT_MAP_COLLAPSE_KEY_DEFAULT = "alt+m";
+export const PROJECT_MAP_NEXT_KEY_DEFAULT = "alt+j";
+export const PROJECT_MAP_PREV_KEY_DEFAULT = "alt+k";
+
+function projectMapKey(value: string | undefined, fallback: string): string | undefined {
+	if (value === undefined || value === "") return fallback;
+	return value.toLowerCase() === "off" ? undefined : value;
+}
 
 export function parseProjectMapCollapseKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	const value = env.GENTLE_PI_PROJECT_MAP_KEY?.trim();
-	if (value === undefined || value === "") return PROJECT_MAP_COLLAPSE_KEY_DEFAULT;
-	return value.toLowerCase() === "off" ? undefined : value;
+	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_KEY?.trim(), PROJECT_MAP_COLLAPSE_KEY_DEFAULT);
+}
+
+export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_NEXT_KEY?.trim(), PROJECT_MAP_NEXT_KEY_DEFAULT);
+}
+
+export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
 export const PROJECT_MAP_SUB_ACTIONS = ["draft", "approve", "status", "show", "hide"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
@@ -298,18 +311,21 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 interface ProjectMapSessionRecord {
 	visibility: boolean | undefined;
 	collapse: ProjectMapCollapseState;
+	selection: string | undefined;
 }
 
 export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void {
 	const sessions = new Map<string, ProjectMapSessionRecord>();
 	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI }>();
 	const collapseKey = parseProjectMapCollapseKey(env);
+	const nextKey = parseProjectMapNextKey(env);
+	const prevKey = parseProjectMapPrevKey(env);
 	const sessionKey = (ctx: ProjectMapCommandContext) => ctx.sessionManager?.getSessionId() ?? "";
 	const record = (ctx: ProjectMapCommandContext): ProjectMapSessionRecord => {
 		const key = sessionKey(ctx);
 		const existing = sessions.get(key);
 		if (existing) return existing;
-		const created = { visibility: undefined, collapse: { ...PROJECT_MAP_EXPANDED } };
+		const created = { visibility: undefined, collapse: { ...PROJECT_MAP_EXPANDED }, selection: undefined };
 		sessions.set(key, created);
 		return created;
 	};
@@ -336,6 +352,11 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 		ctx.ui.setWidget(PROJECT_MAP_WIDGET_KEY, (tui, theme) => {
 			const session = {
 				collapse: () => record(ctx).collapse,
+				selection: () => record(ctx).selection,
+				select: (id: string | undefined) => {
+					record(ctx).selection = id;
+					refresh(ctx);
+				},
 				toggle: (group: ProjectMapGroup) => {
 					const current = record(ctx);
 					current.collapse = toggleProjectMapGroup(current.collapse, group);
@@ -372,6 +393,26 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 			},
 		});
 	}
+
+	const selectBy = (offset: -1 | 1) => async (ctx: unknown) => {
+		const commandCtx = ctx as ProjectMapCommandContext;
+		if (!mounted.has(sessionKey(commandCtx))) {
+			commandCtx.ui.notify("Project Map card is hidden for this session.");
+			return;
+		}
+		const map = readProjectMapFile(artifactPath(commandCtx)).map;
+		const capabilities = map?.capabilities ?? [];
+		const current = record(commandCtx);
+		if (capabilities.length > 0) {
+			const index = capabilities.findIndex((capability) => capability.id === current.selection);
+			const next = capabilities[index < 0 ? 0 : Math.max(0, Math.min(capabilities.length - 1, index + offset))]!;
+			current.selection = next.id;
+			if (current.collapse.capabilities) current.collapse = { ...current.collapse, capabilities: false };
+		}
+		refresh(commandCtx);
+	};
+	if (nextKey) pi.registerShortcut(nextKey as Parameters<ExtensionAPI["registerShortcut"]>[0], { description: "Select the next Project Map capability", handler: selectBy(1) });
+	if (prevKey) pi.registerShortcut(prevKey as Parameters<ExtensionAPI["registerShortcut"]>[0], { description: "Select the previous Project Map capability", handler: selectBy(-1) });
 
 	pi.on("session_start", (_event, ctx) => {
 		mount(ctx as unknown as ProjectMapCommandContext);
