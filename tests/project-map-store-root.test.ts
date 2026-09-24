@@ -47,9 +47,24 @@ test("linked worktrees resolve one common store root and repository identity", (
 
 test("derives the store identity from the canonical common directory", (t) => {
 	const f = fixture(t);
-	const resolved = resolveProjectMapStoreRoot(f.main);
-	assert.deepEqual(resolved.diagnostics, []);
-	assert.equal(resolved.repositoryId, resolveCanonicalGitRepositoryIdentitySync(f.main));
+	const gitEnvironment = Object.entries(process.env).filter(([key]) => key.toUpperCase().startsWith("GIT_"));
+	try {
+		for (const key of Object.keys(process.env)) {
+			if (key.toUpperCase().startsWith("GIT_")) delete process.env[key];
+		}
+		const expectedIdentity = resolveCanonicalGitRepositoryIdentitySync(f.main);
+		const expectedRoot = resolveProjectMapStoreRoot(f.main).root;
+		process.env.GIT_DIR = join(f.other, ".git");
+		const resolved = resolveProjectMapStoreRoot(f.main);
+		assert.deepEqual(resolved.diagnostics, []);
+		assert.equal(resolved.root, expectedRoot);
+		assert.equal(resolved.repositoryId, expectedIdentity);
+	} finally {
+		for (const key of Object.keys(process.env)) {
+			if (key.toUpperCase().startsWith("GIT_")) delete process.env[key];
+		}
+		Object.assign(process.env, Object.fromEntries(gitEnvironment));
+	}
 });
 
 test("an unrelated repository resolves a distinct root and identity", (t) => {
