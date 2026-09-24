@@ -154,8 +154,8 @@ test("refuses surface declarations on an approved map before every other check",
 	assert.equal(result.diagnostics.length, 1);
 	assert.equal(result.diagnostics[0]?.path, "$.approval.state");
 	assert.match(result.diagnostics[0]?.message ?? "", /draft-time action/);
-	assert.match(result.diagnostics[0]?.message ?? "", /returning it to draft/);
-	assert.match(result.diagnostics[0]?.message ?? "", /does not support/);
+	assert.match(result.diagnostics[0]?.message ?? "", /would replace the approved plan/);
+	assert.match(result.diagnostics[0]?.message ?? "", /no plan-preserving return to draft/);
 });
 
 test("refuses an empty capability id", () => {

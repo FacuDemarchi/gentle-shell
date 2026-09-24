@@ -54,21 +54,22 @@ Every generated map is a draft. The generator never marks a map approved, and it
 
 ## Command surface
 
-`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with five validated sub-actions:
+`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with six validated sub-actions:
 
 - `status` reads the artifact and reports its approval state and counts. It never writes.
-- `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation.
+- `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation. It replaces whatever the artifact held, an approved map included, so it is not a way to edit an approved plan in place.
+- `declare <capability-id> <surface>...` replaces that draft capability's declared surface list with exactly the supplied surfaces, then writes only after an explicit confirmation. With no surface it clears the list back to not yet determined.
 - `approve <actor>` reads the artifact, refuses when anything is incomplete, shows what it is about to record, and writes only after an explicit confirmation.
 - `show` displays the Project Map card for the current session without writing the artifact.
 - `hide` removes the Project Map card for the current session without writing the artifact.
 
-An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. The timestamp is injected rather than read from the clock, so the transition is testable.
+An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. A declaration refuses an unknown or repeated surface and names the frozen vocabulary; it also refuses an approved map, because declaration is a draft-time action and no plan-preserving return to draft exists. The transition takes its timestamp as an argument rather than reading the clock, so the tests inject it; the command is what supplies the current time.
 
 ## Sidebar card
 
 The Project Map card is a read-only rendering of the artifact. It distinguishes an empty artifact, an invalid artifact, a draft map, and an approved map; draft and approved are visible in the subtitle so a draft never reads as approved. A missing or unreadable artifact renders empty, while a malformed JSON artifact renders invalid with its diagnostic. Ready maps group Foundations (when declared) and Product capabilities. Each group header shows its done/total indicator and state: `▾ Foundations 2/3` is expanded and `▸ Product capabilities 6/12` is collapsed. Each capability row carries its lifecycle glyph and declared surfaces.
 
-Coverage counts only capabilities that declare a surface and are `done`. Each declared value explains the contributing capabilities and their glyphs, for example `Web 67% (2/3): auth ✓, search ✓, billing ✕`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
+Coverage counts every capability that declares a surface in its denominator, and only the `done` ones in its numerator. Each declared value explains the contributing capabilities and their glyphs, for example `Web 67% (2/3): auth ✓, search ✓, billing ✕`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
 
 In fullscreen, clicking a group header toggles that group alone. Clicking a capability selects it; clicking the selected row clears it. The selected row replaces its two-space indent with `▸ ` while preserving its lifecycle glyph. `alt+m` folds both groups when either is expanded and unfolds both when they are already folded. Set `GENTLE_PI_PROJECT_MAP_KEY` to bind a different shortcut; an empty value uses `alt+m` and `off` disables the shortcut. `alt+j` and `alt+k` move the capability selection forward and backward without wrapping, expanding a collapsed capabilities group when the selection moves onto a row it would hide; set `GENTLE_PI_PROJECT_MAP_NEXT_KEY` or `GENTLE_PI_PROJECT_MAP_PREV_KEY` to rebind them, with the same empty-value and `off` behavior. The collapse key is shown in the card top rule when it fits.
 
@@ -78,9 +79,15 @@ The rail digest is derived from the rendered descriptor (title, subtitle, tone, 
 
 Visibility, collapse, and selection have no persisted setting. A ready artifact is visible by default; an empty or invalid one stays out of the rail until `show`. `show` and `hide` apply only to the current session, and the next session recomputes visibility from the current artifact.
 
-### Known workflow gap
+### Surface declaration loop
 
-A generated draft always declares no surfaces, because the generator never infers them, and the approval gate requires them. So `/gentle:project-map draft` followed by `approve` cannot succeed on its own: the human must first declare each capability's surfaces in the artifact. Today that means editing `openspec/project-map.json` directly. The refusal names the exact path (`$.capabilities[n].surfaces`), and the gap is deliberate rather than hidden — inferring surfaces would manufacture the coverage the map exists to report honestly. A sub-action or an inspector that collects surfaces interactively belongs to the rendering unit.
+A generated draft always declares no surfaces, because the generator never infers them, and the approval gate requires them. Complete the draft before approval by declaring each capability through the command:
+
+1. Run `/gentle:project-map draft` and confirm the draft.
+2. Run `/gentle:project-map declare <capability-id> <surface>...` for every capability, confirm each resulting replacement, and use only the frozen surface vocabulary.
+3. Run `/gentle:project-map approve <actor>` once every capability has a declared surface.
+
+A declaration is set semantics: one invocation replaces the whole list, so there is no additive mode, removal operator, or `undeclare`. `/gentle:project-map declare <capability-id>` with no surface deliberately clears the list back to not yet determined, which a draft permits. Unknown and repeated surfaces are refused rather than silently deduplicated, and a declaration against an approved map is refused before any write. No plan-preserving return to draft exists: regenerating the draft is the only path back, and it replaces the plan the map had approved rather than reopening it. The approval refusal still names the exact incomplete path (`$.capabilities[n].surfaces`); the gap remains deliberate rather than hidden, because inferring surfaces would manufacture the coverage the map exists to report honestly.
 
 ## Approval transitions and persistence
 

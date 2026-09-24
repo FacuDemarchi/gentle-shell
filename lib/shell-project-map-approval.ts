@@ -82,7 +82,7 @@ export function declareProjectMapSurfaces(request: ProjectMapSurfaceDeclarationR
 		return {
 			ok: false,
 			map: null,
-			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.approval.state", "Declaring surfaces is a draft-time action; changing an approved plan requires returning it to draft, which this version does not support.")],
+			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.approval.state", "Declaring surfaces is a draft-time action; regenerating the draft would replace the approved plan, and no plan-preserving return to draft exists.")],
 		};
 	}
 	if (typeof request.capabilityId !== "string" || request.capabilityId.trim().length === 0) {
