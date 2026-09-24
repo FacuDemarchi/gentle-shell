@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES } from "../lib/project-map-store-schema.ts";
 import { ensureProjectMapStoreRoot, resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
+import { resolveCanonicalGitRepositoryIdentitySync } from "../lib/review-session-standing-permission.ts";
 
 function fixture(t: test.TestContext) {
 	const dir = realpathSync(mkdtempSync(join(tmpdir(), "project-map-store-root-")));
@@ -42,6 +43,13 @@ test("linked worktrees resolve one common store root and repository identity", (
 	assert.ok(main.commonDir);
 	assert.equal(relative(main.commonDir, main.root).startsWith(".."), false);
 	assert.notEqual(main.root, join(f.main, "gentle-ai", "project-map"));
+});
+
+test("derives the store identity from the canonical common directory", (t) => {
+	const f = fixture(t);
+	const resolved = resolveProjectMapStoreRoot(f.main);
+	assert.deepEqual(resolved.diagnostics, []);
+	assert.equal(resolved.repositoryId, resolveCanonicalGitRepositoryIdentitySync(f.main));
 });
 
 test("an unrelated repository resolves a distinct root and identity", (t) => {

@@ -122,6 +122,33 @@ test("enforces the claim lease shape and ordered renewal window", () => {
 	assert.deepEqual(paths(beforeAcquire), ["$.lease.renewal_after"]);
 });
 
+test("compares lease instants across offsets and fractional seconds", () => {
+	const mixedOffsetBeforeAcquire = validateProjectMapStoreValue("claim", record("claim", {
+		lease: { renewal_after: "2026-09-24T13:00:00+02:00", renew_by: "2026-09-24T14:00:00+02:00" },
+	}));
+	assert.deepEqual(paths(mixedOffsetBeforeAcquire), ["$.lease.renewal_after"]);
+
+	const validMixedOffset = validateProjectMapStoreValue("claim", record("claim", {
+		lease: { renewal_after: "2026-09-24T14:00:00.250+02:00", renew_by: "2026-09-24T10:00:01.500-02:00" },
+	}));
+	assert.deepEqual(validMixedOffset.diagnostics, []);
+	assert.ok(validMixedOffset.record);
+});
+
+test("reports lease missing and unknown fields at their nested paths", () => {
+	const missingRenewBy = record("claim");
+	delete (missingRenewBy.lease as Record<string, unknown>).renew_by;
+	const missingRenewalAfter = record("claim");
+	delete (missingRenewalAfter.lease as Record<string, unknown>).renewal_after;
+	const unknownLeaseField = validateProjectMapStoreValue("claim", record("claim", {
+		lease: { renewal_after: RENEW_AFTER, renew_by: RENEW_BY, unexpected: true },
+	}));
+
+	assert.deepEqual(paths(validateProjectMapStoreValue("claim", missingRenewBy)), ["$.lease.renew_by"]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("claim", missingRenewalAfter)), ["$.lease.renewal_after"]);
+	assert.deepEqual(paths(unknownLeaseField), ["$.lease.unexpected"]);
+});
+
 test("refuses readiness receipts that imply delivery authority", () => {
 	const result = validateProjectMapStoreValue("readiness-receipt", record("readiness-receipt", { authority: "commit" }));
 	assert.deepEqual(codes(result), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);

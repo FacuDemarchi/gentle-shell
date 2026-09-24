@@ -102,16 +102,16 @@ function invalid(diagnostics: ProjectMapStoreDiagnostic[], path: string, message
 	report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD, path, message);
 }
 
-function unknownFields(value: RecordValue, allowed: readonly string[], diagnostics: ProjectMapStoreDiagnostic[]): void {
+function unknownFields(value: RecordValue, allowed: readonly string[], diagnostics: ProjectMapStoreDiagnostic[], path = "$"): void {
 	const permitted = new Set(allowed);
 	for (const field of Object.keys(value).filter((field) => !permitted.has(field)).sort()) {
-		report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNKNOWN_FIELD, `$.${field}`, `Unknown field "${field}".`);
+		report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNKNOWN_FIELD, `${path}.${field}`, `Unknown field "${field}".`);
 	}
 }
 
-function required(value: RecordValue, fields: readonly string[], diagnostics: ProjectMapStoreDiagnostic[]): void {
+function required(value: RecordValue, fields: readonly string[], diagnostics: ProjectMapStoreDiagnostic[], path = "$"): void {
 	for (const field of fields) {
-		if (value[field] === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, `$.${field}`, `Missing required field "${field}".`);
+		if (value[field] === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, `${path}.${field}`, `Missing required field "${field}".`);
 	}
 }
 
@@ -154,13 +154,16 @@ function validateLease(value: unknown, acquiredAt: string | undefined, diagnosti
 		invalid(diagnostics, "$.lease", "Expected a lease object.");
 		return false;
 	}
-	unknownFields(value, ["renewal_after", "renew_by"], diagnostics);
-	required(value, ["renewal_after", "renew_by"], diagnostics);
+	unknownFields(value, ["renewal_after", "renew_by"], diagnostics, "$.lease");
+	required(value, ["renewal_after", "renew_by"], diagnostics, "$.lease");
 	const renewalAfter = value.renewal_after !== undefined && instant(value.renewal_after, "$.lease.renewal_after", diagnostics);
 	const renewBy = value.renew_by !== undefined && instant(value.renew_by, "$.lease.renew_by", diagnostics);
-	if (renewalAfter && acquiredAt !== undefined && value.renewal_after < acquiredAt) invalid(diagnostics, "$.lease.renewal_after", "Renewal may not precede acquisition.");
-	if (renewalAfter && renewBy && value.renew_by <= value.renewal_after) invalid(diagnostics, "$.lease.renew_by", "Renew-by must follow renewal-after.");
-	return renewalAfter && renewBy && (acquiredAt === undefined || value.renewal_after >= acquiredAt) && value.renew_by > value.renewal_after;
+	const renewalAfterMs = renewalAfter ? Date.parse(value.renewal_after as string) : Number.NaN;
+	const renewByMs = renewBy ? Date.parse(value.renew_by as string) : Number.NaN;
+	const acquiredAtMs = acquiredAt === undefined ? undefined : Date.parse(acquiredAt);
+	if (renewalAfter && acquiredAtMs !== undefined && renewalAfterMs < acquiredAtMs) invalid(diagnostics, "$.lease.renewal_after", "Renewal may not precede acquisition.");
+	if (renewalAfter && renewBy && renewByMs <= renewalAfterMs) invalid(diagnostics, "$.lease.renew_by", "Renew-by must follow renewal-after.");
+	return renewalAfter && renewBy && (acquiredAtMs === undefined || renewalAfterMs >= acquiredAtMs) && renewByMs > renewalAfterMs;
 }
 
 function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): ProjectMapStoreRecord {
