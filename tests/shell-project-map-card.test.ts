@@ -35,16 +35,24 @@ function map(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	};
 }
 
-function session(initial: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): ProjectMapCardSession & { toggled: ProjectMapGroup[] } {
+function session(initial: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): ProjectMapCardSession & { toggled: ProjectMapGroup[]; selected: Array<string | undefined> } {
 	let current = initial;
+	let selection: string | undefined;
 	const toggled: ProjectMapGroup[] = [];
+	const selected: Array<string | undefined> = [];
 	return {
 		collapse: () => current,
+		selection: () => selection,
 		toggle(group) {
 			toggled.push(group);
 			current = toggleProjectMapGroup(current, group);
 		},
+		select(id) {
+			selection = id;
+			selected.push(id);
+		},
 		toggled,
+		selected,
 	};
 }
 
@@ -153,6 +161,60 @@ test("a click on a group header toggles only that group", () => {
 		assert.equal(rail.handleMouse?.({ type: "press", button: "left", x: 2, y: header, screenX: 2, screenY: header, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
 		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: lines.length + 1, screenX: 2, screenY: lines.length + 1, width: 80, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
 		assert.deepEqual(current.toggled, ["foundations"]);
+	});
+});
+
+test("capability clicks select, clear, and reveal only the selected row", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const revealed: number[] = [];
+		const rail = projectMapCardRail(path, theme, current, undefined, (line) => revealed.push(line));
+		const lines = rail.render(20);
+		const row = lines.findIndex((line) => line.includes("capability-with"));
+		const click = () => rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 20, height: lines.length, shift: false, alt: false, ctrl: false });
+		assert.deepEqual(click(), { handled: true, render: true });
+		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier"]);
+		const selectedRow = rail.render(20).findIndex((line) => line.includes("▸ ✓"));
+		assert.deepEqual(revealed, [selectedRow], "reveal receives the rendered selected-row line");
+		assert.deepEqual(click(), { handled: true, render: true });
+		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier", undefined]);
+		assert.deepEqual(revealed, [selectedRow], "clearing selection has no selected row to reveal");
+		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: lines.length - 1, screenX: 2, screenY: lines.length - 1, width: 20, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+	});
+});
+
+test("a selection change made outside the rail reveals on the next render", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const revealed: number[] = [];
+		const rail = projectMapCardRail(path, theme, current, undefined, (line) => revealed.push(line));
+		rail.render(20);
+		assert.deepEqual(revealed, [], "the first render reveals nothing");
+		current.select("capability-with-an-unbreakable-identifier");
+		const selectedRow = rail.render(20).findIndex((line) => line.includes("▸ ✓"));
+		assert.deepEqual(revealed, [selectedRow], "the render after an external selection reveals its row");
+		rail.render(20);
+		assert.deepEqual(revealed, [selectedRow], "an unchanged selection does not reveal again");
+	});
+});
+
+test("every rendered line of a pre-bounded capability row selects it", () => {
+	const base = map();
+	const capability = (base.capabilities as Array<Record<string, unknown>>)[0]!;
+	const longId = `capability-${"x".repeat(53)}`;
+	assert.equal(longId.length, 64);
+	withArtifact(JSON.stringify(map({ capabilities: [{ ...capability, id: longId }] })), (path) => {
+		for (const offset of [0, 1, 2, 3]) {
+			const probe = session();
+			const rail = projectMapCardRail(path, theme, probe);
+			const lines = rail.render(46);
+			const tail = lines.findIndex((line) => line.includes("· Web"));
+			assert.ok(tail > 0, "the capability row renders its surfaces on its last line");
+			const y = tail - offset;
+			const result = rail.handleMouse?.({ type: "click", button: "left", x: 2, y, screenX: 2, screenY: y, width: 46, height: lines.length, shift: false, alt: false, ctrl: false });
+			assert.deepEqual(result, { handled: true, render: true }, `rendered line ${y} of the row is a target`);
+			assert.deepEqual(probe.selected, [longId], `rendered line ${y} selects the row's capability`);
+		}
 	});
 });
 

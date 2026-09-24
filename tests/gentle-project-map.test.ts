@@ -8,9 +8,13 @@ import { sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
 import gentleProjectMap, {
 	PROJECT_MAP_COLLAPSE_KEY_DEFAULT,
+	PROJECT_MAP_NEXT_KEY_DEFAULT,
+	PROJECT_MAP_PREV_KEY_DEFAULT,
 	PROJECT_MAP_COMMAND_NAME,
 	PROJECT_MAP_SUB_ACTIONS,
 	parseProjectMapCollapseKey,
+	parseProjectMapNextKey,
+	parseProjectMapPrevKey,
 	parseProjectMapSubAction,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
@@ -461,6 +465,18 @@ test("resolves the Project Map collapse shortcut with default, override, and off
 	assert.ok(projectMapExtension({ GENTLE_PI_PROJECT_MAP_KEY: "ctrl+m" }).shortcuts.has("ctrl+m"));
 });
 
+test("resolves Project Map selection shortcuts with defaults, overrides, and off", () => {
+	assert.equal(PROJECT_MAP_NEXT_KEY_DEFAULT, "alt+j");
+	assert.equal(PROJECT_MAP_PREV_KEY_DEFAULT, "alt+k");
+	assert.equal(parseProjectMapNextKey({}), "alt+j");
+	assert.equal(parseProjectMapPrevKey({}), "alt+k");
+	assert.equal(parseProjectMapNextKey({ GENTLE_PI_PROJECT_MAP_NEXT_KEY: "ctrl+j" }), "ctrl+j");
+	assert.equal(parseProjectMapPrevKey({ GENTLE_PI_PROJECT_MAP_PREV_KEY: "off" }), undefined);
+	const extension = projectMapExtension();
+	assert.ok(extension.shortcuts.has("alt+j"));
+	assert.ok(extension.shortcuts.has("alt+k"));
+});
+
 test("the collapse shortcut toggles all groups only while the card is mounted", async () => {
 	await withRepository(async (directory) => {
 		writeGroupedReadyArtifact(directory);
@@ -509,6 +525,43 @@ test("the card part receives a session toggle that changes only the clicked grou
 		assert.equal(body.includes("✓ tooling"), false);
 		assert.match(body, /▾ Product capabilities 1\/1/);
 		assert.ok(body.includes("✓ catalog"));
+	});
+});
+
+test("selection shortcuts clamp, expand capabilities, and reset at session shutdown", async () => {
+	await withRepository(async (directory) => {
+		writeGroupedReadyArtifact(directory);
+		const artifact = JSON.parse(readFileSync(artifactPath(directory), "utf8"));
+		artifact.capabilities = [
+			{ id: "alpha", outcome: "Alpha", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" },
+			{ id: "beta", outcome: "Beta", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" },
+		];
+		writeFileSync(artifactPath(directory), JSON.stringify(artifact), "utf8");
+		const extension = projectMapExtension();
+		const probe = widgetContext(directory, "selection");
+		await extension.fire("session_start", probe.ctx);
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		const body = () => sidebarState(tui).parts.get("project-map")!.render(80).join("\n");
+		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
+		assert.match(body(), /▸ ✓ alpha/);
+		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
+		assert.match(body(), /▸ ○ beta/);
+		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
+		assert.match(body(), /▸ ○ beta/, "next clamps at the end");
+		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
+		assert.match(body(), /▸ ✓ alpha/);
+		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
+		assert.match(body(), /▸ ✓ alpha/, "previous clamps at the start");
+		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
+		assert.match(body(), /▸ Product capabilities/);
+		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
+		assert.match(body(), /▾ Product capabilities/, "moving selection expands the hidden group");
+		await extension.fire("session_shutdown", probe.ctx);
+		const resumed = widgetContext(directory, "selection");
+		await extension.fire("session_start", resumed.ctx);
+		resumed.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+		assert.equal(sidebarState(tui).parts.get("project-map")!.render(80).join("\n").includes("▸ ✓"), false, "selection is session-scoped");
 	});
 });
 

@@ -20,6 +20,7 @@ export interface SidebarState {
 	statusHidden?: () => boolean;
 	/** True while a painting top header is the only status row of a narrow fullscreen terminal: the bottom Status bar steps aside. */
 	headerOwnsStatus?: () => boolean;
+	reveal?: (key: string, localLine: number) => void;
 	parts: Map<string, SidebarRail>;
 }
 

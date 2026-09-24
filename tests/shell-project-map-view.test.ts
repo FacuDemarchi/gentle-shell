@@ -12,6 +12,7 @@ import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	PROJECT_MAP_STATE_GLYPH,
+	projectMapCardBody,
 	projectMapCardDescriptor,
 	projectMapCardDigest,
 	projectMapCardState,
@@ -126,6 +127,47 @@ test("renders grouped rows with done indicators and lifecycle glyphs", () => {
 	assert.ok(body.includes(`✓ repository-tooling`));
 	assert.ok(body.includes(`✓ merchant-catalog · Web · API`));
 	assert.ok(body.includes(`✕ checkout · Web`));
+});
+
+test("structured card body records group headers and the selected capability row", () => {
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "checkout");
+	assert.deepEqual(body.headers, [{ line: 0, group: "foundations" }, { line: 2, group: "capabilities" }]);
+	assert.equal(body.selected, 5);
+	assert.match(body.lines[body.selected!], /^▸ ✕ checkout/, "selection replaces the indent while retaining the lifecycle glyph");
+});
+
+test("a pre-bounded capability row reports its whole body span", () => {
+	const longId = `capability-${"x".repeat(53)}`;
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED);
+	const target = body.capabilities[0]!;
+	assert.ok(target.height > 1, "the row spans several body lines");
+	assert.ok(body.lines[target.line]!.includes("✓"), "the span starts on the glyph line");
+	assert.ok(body.lines[target.line + target.height - 1]!.includes("Web"), "the span ends on the surfaces line");
+});
+
+test("inspector renders every field, empty lists, and static blockers without runtime data", () => {
+	const inspected = map({
+		foundations: [{ id: "tooling", outcome: "Tooling", state: "planned", evidence: [] }],
+		capabilities: [
+			{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" },
+			{ id: "checkout", outcome: "Complete a purchase.", foundationRefs: ["tooling"], dependsOn: ["catalog"], contracts: ["checkout-api"], featureDocs: ["odd/tasks/checkout.md"], surfaces: ["web"], state: "blocked" },
+		],
+	});
+	const body = projectMapCardDescriptor(ready(inspected), PROJECT_MAP_EXPANDED, "checkout").body.join("\n");
+	for (const text of ["Inspector", "✕ checkout", "Outcome: Complete a purchase.", "Surfaces: Web", "Foundations: tooling ○", "Dependencies: catalog ✓", "Contracts: checkout-api", "Feature documents: odd/tasks/checkout.md", "Static blockers: state is blocked, foundation tooling ○", "Runtime overlay: unavailable until PM-4."]) assert.ok(body.includes(text), `expected ${text}`);
+	assert.equal(body.includes("lease"), false, "runtime blockers are not invented");
+	const empty = projectMapCardDescriptor(ready(map()), PROJECT_MAP_EXPANDED, "shopping-cart").body.join("\n");
+	for (const field of ["Surfaces: none", "Foundations: none", "Dependencies: none", "Contracts: none", "Feature documents: none", "Static blockers: none"]) assert.ok(empty.includes(field), `expected ${field}`);
+});
+
+test("inspector content and selection move the digest within the body budget", () => {
+	const base = ready(map());
+	const selected = projectMapCardDigest(base, PROJECT_MAP_EXPANDED, "checkout");
+	assert.notEqual(selected, projectMapCardDigest(base), "selection adds the inspector to the descriptor");
+	const changed = map({ capabilities: [map().capabilities[0], map().capabilities[1], { ...map().capabilities[2], outcome: "A changed selected outcome." }] });
+	assert.notEqual(projectMapCardDigest(ready(changed), PROJECT_MAP_EXPANDED, "checkout"), selected, "selected inspector content moves the digest");
+	const long = map({ capabilities: [{ ...map().capabilities[0], outcome: "x".repeat(180), contracts: ["contract-" + "x".repeat(100)], featureDocs: ["odd/tasks/" + "y".repeat(100) + ".md"] }] });
+	for (const line of projectMapCardDescriptor(ready(long), PROJECT_MAP_EXPANDED, long.capabilities[0]!.id).body) assert.ok(line.length <= 60, `inspector line exceeds 60 columns: ${line}`);
 });
 
 test("collapsing one group preserves the other group and its header", () => {

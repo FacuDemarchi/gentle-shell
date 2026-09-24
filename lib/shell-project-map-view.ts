@@ -92,6 +92,16 @@ export type ProjectMapCardState =
 	| { kind: "invalid"; path: string; diagnostics: ProjectMapDiagnostic[]; overlay: ProjectMapOverlay }
 	| { kind: "ready"; path: string; map: ProjectMapV1; coverage: ProjectMapCoverageEntry[]; overlay: ProjectMapOverlay };
 
+export type ProjectMapSelection = string | undefined;
+
+export interface ProjectMapCardBody {
+	lines: string[];
+	headers: Array<{ line: number; group: ProjectMapGroup }>;
+	selected?: number;
+	/** Capability targets share the same body indices as the rendered descriptor. */
+	capabilities: Array<{ line: number; id: string; height: number }>;
+}
+
 export interface ProjectMapCardDescriptor {
 	title: string;
 	subtitle: string;
@@ -176,42 +186,88 @@ export function projectMapSummaryLine(map: ProjectMapV1): string {
 	return `${completed(map.foundations)}/${map.foundations.length} foundations · ${completed(map.capabilities)}/${map.capabilities.length} capabilities`;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): ProjectMapCardDescriptor {
+function inspectorLines(map: ProjectMapV1, selection: string): string[] {
+	const capability = map.capabilities.find((entry) => entry.id === selection);
+	if (capability === undefined) return [];
+	const foundations = new Map(map.foundations.map((entry) => [entry.id, entry]));
+	const capabilities = new Map(map.capabilities.map((entry) => [entry.id, entry]));
+	const listed = <T>(items: T[], render: (item: T) => string): string => items.length === 0 ? "none" : items.map(render).join(", ");
+	const staticBlockers: string[] = [];
+	if (capability.state === "blocked") staticBlockers.push("state is blocked");
+	for (const id of capability.foundationRefs) {
+		const foundation = foundations.get(id)!;
+		if (foundation.state !== "done") staticBlockers.push(`foundation ${id} ${PROJECT_MAP_STATE_GLYPH[foundation.state]}`);
+	}
+	for (const id of capability.dependsOn) {
+		const dependency = capabilities.get(id)!;
+		if (dependency.state !== "done") staticBlockers.push(`dependency ${id} ${PROJECT_MAP_STATE_GLYPH[dependency.state]}`);
+	}
+	return [
+		"Inspector",
+		`${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id}`,
+		`Outcome: ${capability.outcome}`,
+		`Surfaces: ${listed(capability.surfaces, (surface) => SURFACE_LABEL[surface])}`,
+		`Foundations: ${listed(capability.foundationRefs, (id) => `${id} ${PROJECT_MAP_STATE_GLYPH[foundations.get(id)!.state]}`)}`,
+		`Dependencies: ${listed(capability.dependsOn, (id) => `${id} ${PROJECT_MAP_STATE_GLYPH[capabilities.get(id)!.state]}`)}`,
+		`Contracts: ${listed(capability.contracts, (entry) => entry)}`,
+		`Feature documents: ${listed(capability.featureDocs, (entry) => entry)}`,
+		`Static blockers: ${listed(staticBlockers, (entry) => entry)}`,
+		"Runtime overlay: unavailable until PM-4.",
+	];
+}
+
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): ProjectMapCardBody {
+	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
+	const add = (line: string): number => {
+		const index = body.lines.length;
+		body.lines.push(...boundedLines(line));
+		return index;
+	};
 	if (state.kind === "empty") {
-		return {
-			title: "Project Map",
-			subtitle: "no map",
-			tone: "info",
-			body: [`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`, "Run /gentle:project-map draft to generate one."],
-		};
+		add(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`);
+		add("Run /gentle:project-map draft to generate one.");
+		return body;
 	}
 	if (state.kind === "invalid") {
-		const body = [
-			"The Project Map artifact is not valid:",
-			...state.diagnostics.slice(0, MAX_DIAGNOSTICS).map((diagnostic) => `  ${diagnostic.path}: ${diagnostic.message}`),
-			"Run /gentle:project-map status for the full report.",
-		];
-		return { title: "Project Map", subtitle: "invalid", tone: "error", body: body.flatMap((line) => boundedLines(line)) };
+		add("The Project Map artifact is not valid:");
+		for (const diagnostic of state.diagnostics.slice(0, MAX_DIAGNOSTICS)) add(`  ${diagnostic.path}: ${diagnostic.message}`);
+		add("Run /gentle:project-map status for the full report.");
+		return body;
 	}
 	const { map } = state;
-	const body: string[] = [];
 	if (map.foundations.length > 0) {
-		body.push(`${collapse.foundations ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.foundations} ${completed(map.foundations)}/${map.foundations.length}`);
-		if (!collapse.foundations) body.push(...map.foundations.map((foundation) => `  ${PROJECT_MAP_STATE_GLYPH[foundation.state]} ${foundation.id}`));
+		const line = add(`${collapse.foundations ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.foundations} ${completed(map.foundations)}/${map.foundations.length}`);
+		body.headers.push({ line, group: "foundations" });
+		if (!collapse.foundations) for (const foundation of map.foundations) add(`  ${PROJECT_MAP_STATE_GLYPH[foundation.state]} ${foundation.id}`);
 	}
-	body.push(`${collapse.capabilities ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.capabilities} ${completed(map.capabilities)}/${map.capabilities.length}`);
+	const capabilityHeader = add(`${collapse.capabilities ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.capabilities} ${completed(map.capabilities)}/${map.capabilities.length}`);
+	body.headers.push({ line: capabilityHeader, group: "capabilities" });
 	if (!collapse.capabilities) {
-		body.push(...map.capabilities.map((capability) => {
+		for (const capability of map.capabilities) {
 			const surfaces = capability.surfaces.length === 0 ? "no surface declared" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
-			return `  ${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id} · ${surfaces}`;
-		}));
+			const selected = capability.id === selection;
+			const line = add(`${selected ? "▸ " : "  "}${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id} · ${surfaces}`);
+			// A long identifier is pre-bounded into several body lines, and every one of them
+			// belongs to the row, so the target spans the whole run.
+			body.capabilities.push({ line, id: capability.id, height: body.lines.length - line });
+			if (selected) body.selected = line;
+		}
 	}
-	body.push("Coverage", ...coverageLines(map, state.coverage));
+	add("Coverage");
+	for (const line of coverageLines(map, state.coverage)) add(line);
+	for (const line of inspectorLines(map, selection ?? "")) add(line);
+	return body;
+}
+
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection).lines;
+	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
+	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
 		title: "Project Map",
-		subtitle: `${map.project.name} · ${map.approval.state}`,
-		tone: map.approval.state === "approved" ? "success" : "warning",
-		body: body.flatMap((line) => boundedLines(line)),
+		subtitle: `${state.map.project.name} · ${state.map.approval.state}`,
+		tone: state.map.approval.state === "approved" ? "success" : "warning",
+		body,
 	};
 }
 
@@ -219,7 +275,7 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): string {
-	const descriptor = projectMapCardDescriptor(state, collapse);
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): string {
+	const descriptor = projectMapCardDescriptor(state, collapse, selection);
 	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body })}`;
 }

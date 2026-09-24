@@ -157,6 +157,29 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 		scrollbarTrackStyle: (text) => theme.fg("border", text),
 		scrollbarThumbStyle: (text) => theme.fg("accent", text),
 	});
+	// A card renders inside the layout pass, before that frame's hits exist, so a reveal is a
+	// request for the frame being prepared: it is resolved against that frame's geometry when
+	// the prepare finishes, never against the previous frame's line offsets, and it is consumed
+	// by the first prepare that reaches the flush.
+	let pendingReveal: { key: string; localLine: number } | undefined;
+	const reveal = (key: string, localLine: number) => {
+		if (stopped || failed) return;
+		pendingReveal = { key, localLine };
+	};
+	state.reveal = reveal;
+	const flushReveal = () => {
+		const request = pendingReveal;
+		pendingReveal = undefined;
+		if (!request || stopped || failed) return;
+		const current = prepared;
+		if (!current?.active) return;
+		const hit = current.hits.find((candidate) => candidate.key === request.key && state.parts.get(request.key) === candidate.component);
+		if (!hit) return;
+		const requested = Number.isFinite(request.localLine) ? Math.floor(request.localLine) : 0;
+		const target = hit.startY + Math.max(0, Math.min(hit.height - 1, requested));
+		const viewportEnd = scroll.scrollTop + scroll.viewportHeight - 1;
+		if (target < scroll.scrollTop || target > viewportEnd) scroll.scrollTo(target);
+	};
 	const nativeMouse = scroll.handleMouse.bind(scroll);
 	const dispatchPartMouse = (event: TuiMouseEvent) => {
 		const current = prepared;
@@ -193,11 +216,13 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 		if (stopped || failed || host.mode !== "fullscreen") {
 			prepared = undefined;
 			headerLines = [];
+			pendingReveal = undefined;
 			return false;
 		}
 		const railEligible = width >= SIDEBAR_BREAKPOINT && placement() !== "bottom" && placement() !== "hidden";
 		if (!railEligible) {
 			prepared = undefined;
+			pendingReveal = undefined;
 			try {
 				const headerPart = state.parts.get("header");
 				headerLines = headerPlacement() === "top" && headerPart
@@ -218,6 +243,7 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 		if (unchanged) {
 			railLines = prepared.lines;
 			state.active = prepared.active;
+			flushReveal();
 			return prepared.active;
 		}
 		try {
@@ -271,6 +297,7 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 			headerLines = headerActive && headerPlacement() === "top" ? preparedHeaderLines : [];
 			prepared = { revision: cache.revision, width, mode: host.mode, headerPlacement: headerPlacement(), root, theme, parts, digests, contentWidth, active, lines: railLines, hits, headerLines, headerActive: headerLines.length > 0 };
 			state.active = active;
+			flushReveal();
 			return active;
 		} catch {
 			failed = true;
@@ -371,6 +398,7 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 	return () => {
 		stopped = true;
 		state.active = false;
+		if (state.reveal === reveal) state.reveal = undefined;
 		clearInterval(timer);
 		scroll.hideTransientScrollbar();
 		for (const cleanup of cleanups.reverse()) cleanup();
