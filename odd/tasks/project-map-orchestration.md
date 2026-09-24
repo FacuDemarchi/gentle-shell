@@ -194,6 +194,7 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Keep actions hidden or disabled unless their own dependencies and authority are available.
 
 - [ ] **PM-4 — Build the shared cross-worktree coordination store**
+  - Planned 2026-09-24 in `odd/tasks/pm-4-coordination-store.md`, with the user's decisions: store root under the canonical Git common directory, generation as a `{generation, epoch}` tuple, segmented layout, 10s heartbeat / 60s stale, corruption refused on read with auto-reset only on proven emptiness, and the whole model (claims, leases, heartbeats, session bindings, blockers, readiness receipts) delivered as six slices of their own.
   - Resolve canonical Git common-directory identity and store runtime state there.
   - Implement schemas, atomic compare/update behavior, generation counters, bounded history, and corruption refusal.
   - Model claims, leases, heartbeats, session bindings, blockers, and readiness receipts.
@@ -301,7 +302,7 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 
 ## Next decision
 
-PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is the next unit in the dependency graph. It still requires its own authorization, exploration, and task document; none of that is implied by PM-3's closure, and PM-5 through PM-9 remain behind it.
+PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is planned in `odd/tasks/pm-4-coordination-store.md`: six slices, each under the review budget, the first (PM4-1, schema and canonical root) next. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
 
 Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
 
