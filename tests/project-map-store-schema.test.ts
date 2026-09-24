@@ -53,6 +53,9 @@ test("exports the frozen store vocabulary", () => {
 		INVALID_FIELD: "project-map-store/invalid-field",
 		INVALID_JSON: "project-map-store/invalid-json",
 		UNREADABLE_STORE: "project-map-store/unreadable-store",
+		STALE_GENERATION: "project-map-store/stale-generation",
+		STORE_CORRUPTED: "project-map-store/store-corrupted",
+		STORE_EXISTS: "project-map-store/store-exists",
 	});
 });
 

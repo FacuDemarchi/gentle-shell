@@ -11,6 +11,9 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	INVALID_FIELD: "project-map-store/invalid-field",
 	INVALID_JSON: "project-map-store/invalid-json",
 	UNREADABLE_STORE: "project-map-store/unreadable-store",
+	STALE_GENERATION: "project-map-store/stale-generation",
+	STORE_CORRUPTED: "project-map-store/store-corrupted",
+	STORE_EXISTS: "project-map-store/store-exists",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 
