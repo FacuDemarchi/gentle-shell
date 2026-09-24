@@ -202,13 +202,24 @@ export function isSafeFeatureDocumentPath(value: string): boolean {
  * it normalizes rolled-over calendar dates such as `2026-02-30` into March, so every
  * component is range-checked against the calendar it claims to be in.
  */
+function daysInMonth(year: number, month: number): number {
+	const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+	return [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+/**
+ * Reports whether a string is a real ISO-8601 instant. `Date.parse` alone is not enough:
+ * it normalizes rolled-over calendar dates such as `2026-02-30` into March, so every
+ * component is range-checked against the calendar it claims to be in. The calendar check
+ * is arithmetic rather than a `Date` round-trip because `Date.UTC` maps years 0 through 99
+ * onto 1900 through 1999, which would reject valid instants such as `0050-01-01T00:00:00Z`.
+ */
 export function isIsoInstant(value: string): boolean {
 	const match = ISO_INSTANT.exec(value);
 	if (!match) return false;
 	const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
 	if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false;
-	const utc = new Date(Date.UTC(year, month - 1, day));
-	if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return false;
+	if (day < 1 || day > daysInMonth(year, month)) return false;
 	return !Number.isNaN(Date.parse(value));
 }
 

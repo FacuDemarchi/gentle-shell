@@ -292,11 +292,22 @@ test("produces extracted capabilities that the schema accepts as a draft", () =>
 });
 
 test("does not read a block scalar body as configuration", () => {
-	const result = generateProjectMapDraft({
+	// A block scalar body that WOULD be read as a nested entry if the skip were missing. The
+	// omission about an uninterpretable configuration is the observable proof: without the
+	// indentation skip the body yields an entry, so the omission never fires.
+	const onlyScalar = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: ["section:", "  notes: |", "    fake: value", ""].join("\n"),
+	});
+	assert.ok(onlyScalar.map);
+	assert.ok(joined(onlyScalar.omissions).includes("carries no simple key/value entry"));
+
+	// The same skip must not swallow real configuration that follows the scalar.
+	const afterScalar = generateProjectMapDraft({
 		packageJson: manifest(),
 		openspecConfig: ["context: |", "  apply: not a section", "  test_command: not a command", "apply:", "  test_command: \"pnpm test\"", ""].join("\n"),
 	});
-	assert.equal(result.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
+	assert.equal(afterScalar.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
 });
 
 test("requires a usable script command, not merely a key", () => {
