@@ -3,8 +3,11 @@ import test from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { TUI } from "@earendil-works/pi-tui";
+import { sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
-import {
+import gentleProjectMap, {
+	PROJECT_MAP_COMMAND_NAME,
 	PROJECT_MAP_SUB_ACTIONS,
 	parseProjectMapSubAction,
 	runProjectMapCommand,
@@ -80,7 +83,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "approve", "status"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "approve", "status", "show", "hide"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -376,5 +379,128 @@ test("refuses to write over an artifact it cannot read", async () => {
 			);
 			assert.equal(statSync(artifactPath(directory)).isDirectory(), true);
 		}
+	});
+});
+
+type LifecycleHandler = (event: unknown, ctx: unknown) => unknown;
+
+function projectMapExtension() {
+	const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<unknown> }>();
+	const handlers = new Map<string, LifecycleHandler[]>();
+	const pi = {
+		registerCommand(name: string, command: { handler(args: string, ctx: unknown): Promise<unknown> }) {
+			commands.set(name, command);
+		},
+		on(name: string, handler: LifecycleHandler) {
+			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+		},
+	} as Parameters<typeof gentleProjectMap>[0];
+	const fire = async (name: string, ctx: unknown) => {
+		for (const handler of handlers.get(name) ?? []) await handler({}, ctx);
+	};
+	gentleProjectMap(pi);
+	return { commands, fire };
+}
+
+function widgetContext(cwd: string, id: string) {
+	const widgets = new Map<string, ((tui: unknown, theme: unknown) => { dispose?(): void }) | undefined>();
+	const calls: Array<[string, unknown, unknown]> = [];
+	const notified: string[] = [];
+	const ctx = {
+		cwd,
+		hasUI: true,
+		sessionManager: { getSessionId: () => id },
+		ui: {
+			notify(message: string) { notified.push(message); },
+			confirm: async () => true,
+			setWidget(key: string, value: ((tui: unknown, theme: unknown) => { dispose?(): void }) | undefined, options?: unknown) {
+				calls.push([key, value, options]);
+				if (value === undefined) widgets.delete(key);
+				else widgets.set(key, value);
+			},
+		},
+	};
+	return { ctx, widgets, calls, notified };
+}
+
+function writeReadyArtifact(directory: string): void {
+	mkdirSync(join(directory, "openspec"), { recursive: true });
+	writeFileSync(artifactPath(directory), JSON.stringify({
+		version: "gentle-shell.project-map/v1",
+		project: { id: "example-shop", name: "Example Shop" },
+		approval: { state: "draft" },
+		foundations: [],
+		capabilities: [],
+	}), "utf8");
+}
+
+test("show and hide mount only for this session and do not write the artifact", async () => {
+	await withRepository(async (directory) => {
+		const extension = projectMapExtension();
+		const probe = widgetContext(directory, "show-hide");
+		const command = extension.commands.get(PROJECT_MAP_COMMAND_NAME)!;
+		const before = readdirSync(directory).sort();
+		await extension.fire("session_start", probe.ctx);
+		assert.equal(probe.widgets.has("gentle-project-map"), false, "a missing map stays hidden by default");
+
+		await command.handler("show", probe.ctx);
+		assert.deepEqual(probe.calls.at(-1)?.[2], { placement: "belowEditor" });
+		const factory = probe.widgets.get("gentle-project-map");
+		assert.ok(factory, "show mounts the widget immediately");
+		const tui = { terminal: {} } as unknown as TUI;
+		sidebarPart(tui, "todo", { render: () => [], invalidate() {} });
+		factory!(tui, { fg: (_color: string, text: string) => text });
+		assert.equal(sidebarState(tui).parts.has("project-map"), true);
+		await command.handler("hide", probe.ctx);
+		assert.equal(probe.widgets.has("gentle-project-map"), false, "hide clears the widget immediately");
+		assert.equal(sidebarState(tui).parts.has("project-map"), false, "hide unregisters the Project Map rail part");
+		assert.equal(sidebarState(tui).parts.has("todo"), true, "hide preserves sibling rail parts");
+		assert.equal(probe.calls.at(-1)?.[1], undefined);
+		assert.deepEqual(readdirSync(directory).sort(), before, "show and hide do not write to disk");
+		assert.ok(probe.notified.some((message) => message.includes("shown")));
+		assert.ok(probe.notified.some((message) => message.includes("hidden")));
+	});
+});
+
+test("effective visibility follows the artifact until an explicit session choice", async () => {
+	await withRepository(async (directory) => {
+		const extension = projectMapExtension();
+		const ready = widgetContext(directory, "ready");
+		writeReadyArtifact(directory);
+		await extension.fire("session_start", ready.ctx);
+		assert.ok(ready.widgets.has("gentle-project-map"), "a ready map mounts by default");
+
+		const invalidDirectory = repository();
+		try {
+			writeFileSync(artifactPath(invalidDirectory), "{", "utf8");
+			const invalid = widgetContext(invalidDirectory, "invalid");
+			await extension.fire("session_start", invalid.ctx);
+			assert.equal(invalid.widgets.has("gentle-project-map"), false, "an invalid map stays hidden by default");
+			await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("show", invalid.ctx);
+			assert.ok(invalid.widgets.has("gentle-project-map"), "show overrides invalid visibility for this session");
+		} finally {
+			rmSync(invalidDirectory, { recursive: true, force: true });
+		}
+	});
+});
+
+test("session shutdown drops an explicit visibility choice", async () => {
+	await withRepository(async (directory) => {
+		const extension = projectMapExtension();
+		const first = widgetContext(directory, "same-session");
+		await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("show", first.ctx);
+		const factory = first.widgets.get("gentle-project-map");
+		assert.ok(factory);
+		const tui = { terminal: {} } as unknown as TUI;
+		sidebarPart(tui, "todo", { render: () => [], invalidate() {} });
+		factory!(tui, { fg: (_color: string, text: string) => text });
+		assert.equal(sidebarState(tui).parts.has("project-map"), true);
+		await extension.fire("session_shutdown", first.ctx);
+		assert.equal(sidebarState(tui).parts.has("project-map"), false, "shutdown unregisters the Project Map rail part");
+		assert.equal(sidebarState(tui).parts.has("todo"), true, "shutdown preserves sibling rail parts");
+
+		const resumed = widgetContext(directory, "same-session");
+		await extension.fire("session_start", resumed.ctx);
+		assert.equal(resumed.widgets.has("gentle-project-map"), false, "the missing artifact is not shown after the choice is dropped");
 	});
 });

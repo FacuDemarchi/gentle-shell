@@ -54,13 +54,25 @@ Every generated map is a draft. The generator never marks a map approved, and it
 
 ## Command surface
 
-`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with three validated sub-actions:
+`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with five validated sub-actions:
 
 - `status` reads the artifact and reports its approval state and counts. It never writes.
 - `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation.
 - `approve <actor>` reads the artifact, refuses when anything is incomplete, shows what it is about to record, and writes only after an explicit confirmation.
+- `show` displays the Project Map card for the current session without writing the artifact.
+- `hide` removes the Project Map card for the current session without writing the artifact.
 
 An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. The timestamp is injected rather than read from the clock, so the transition is testable.
+
+## Sidebar card
+
+The Project Map card is a read-only rendering of the artifact. It distinguishes an empty artifact, an invalid artifact, a draft map, and an approved map; draft and approved are visible in the subtitle so a draft never reads as approved. A missing or unreadable artifact renders empty, while a malformed JSON artifact renders invalid with its diagnostic. Ready maps show Product capabilities and Coverage rows, and show Foundations only when the map declares foundations. Each capability row carries its lifecycle glyph and declared surfaces.
+
+Coverage counts only capabilities that declare a surface and are `done`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
+
+The rail digest is derived from the rendered descriptor (title, subtitle, tone, and body), so it moves when the descriptor moves. Width-dependent clipping happens inside `renderCard`, with width already part of the section cache key. In fullscreen, the card occupies the `project-map` rail slot between Status and TODO. Below the sidebar breakpoint and in regular mode, the same card appears collapsed below the editor.
+
+Visibility has no persisted setting. A ready artifact is visible by default; an empty or invalid one stays out of the rail until `show`. `show` and `hide` apply only to the current session, and the next session recomputes visibility from the current artifact.
 
 ### Known workflow gap
 

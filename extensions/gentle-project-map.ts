@@ -1,8 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { approveProjectMap, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
+import { projectMapCardPart, projectMapCardVisible } from "../lib/shell-project-map-card.ts";
+import type { CardTheme } from "../lib/shell-card.ts";
+import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
 	readProjectMapFile,
@@ -17,7 +21,8 @@ import {
 // writer, provisions no worktree, and authorizes no commit, push, or merge.
 
 export const PROJECT_MAP_COMMAND_NAME = "gentle:project-map";
-export const PROJECT_MAP_SUB_ACTIONS = ["draft", "approve", "status"] as const;
+export const PROJECT_MAP_WIDGET_KEY = "gentle-project-map";
+export const PROJECT_MAP_SUB_ACTIONS = ["draft", "approve", "status", "show", "hide"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
 const USAGE = `Usage: /${PROJECT_MAP_COMMAND_NAME} <${PROJECT_MAP_SUB_ACTIONS.join("|")}> [actor]`;
@@ -28,6 +33,10 @@ export interface ProjectMapCommandContext {
 	ui: {
 		notify: (message: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
+		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
+	};
+	sessionManager?: {
+		getSessionId: () => string | undefined;
 	};
 }
 
@@ -42,6 +51,8 @@ export interface ProjectMapCommandReport {
 
 export interface ProjectMapCommandOptions {
 	now?: () => Date;
+	onShow?: () => void;
+	onHide?: () => void;
 }
 
 export interface ProjectMapSubActionParse {
@@ -172,6 +183,18 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	const artifactPath = join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
 	const now = options.now ?? (() => new Date());
 
+	if (parsed.action === "show") {
+		options.onShow?.();
+		ctx.ui.notify("Project Map card shown for this session.");
+		return emptyReport("show");
+	}
+
+	if (parsed.action === "hide") {
+		options.onHide?.();
+		ctx.ui.notify("Project Map card hidden for this session.");
+		return emptyReport("hide");
+	}
+
 	if (parsed.action === "status") {
 		const read = readProjectMapFile(artifactPath);
 		if (read.map === null) {
@@ -260,10 +283,45 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 }
 
 export default function gentleProjectMap(pi: ExtensionAPI): void {
+	const visibility = new Map<string, boolean>();
+	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI }>();
+	const sessionKey = (ctx: ProjectMapCommandContext) => ctx.sessionManager?.getSessionId() ?? "";
+	const artifactPath = (ctx: ProjectMapCommandContext) => join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
+	const effectiveVisibility = (ctx: ProjectMapCommandContext) => visibility.get(sessionKey(ctx)) ?? projectMapCardVisible(artifactPath(ctx));
+	const unmount = (ctx: ProjectMapCommandContext) => {
+		const key = sessionKey(ctx);
+		const current = mounted.get(key);
+		current?.part.dispose?.();
+		ctx.ui.setWidget?.(PROJECT_MAP_WIDGET_KEY, undefined);
+		if (current) invalidateSidebar(current.tui);
+		mounted.delete(key);
+	};
+	const mount = (ctx: ProjectMapCommandContext) => {
+		if (!effectiveVisibility(ctx) || !ctx.ui.setWidget) return;
+		const key = sessionKey(ctx);
+		const path = artifactPath(ctx);
+		ctx.ui.setWidget(PROJECT_MAP_WIDGET_KEY, (tui, theme) => {
+			const part = projectMapCardPart(tui, path, theme);
+			mounted.set(key, { part, tui });
+			return part;
+		}, { placement: "belowEditor" });
+	};
+
 	pi.registerCommand(PROJECT_MAP_COMMAND_NAME, {
-		description: "Generate, inspect, or approve the repository Project Map.",
+		description: "Generate, inspect, approve, show, or hide the repository Project Map.",
 		handler: async (args, ctx) => {
-			await runProjectMapCommand(args, ctx as unknown as ProjectMapCommandContext, {});
+			const commandCtx = ctx as unknown as ProjectMapCommandContext;
+			await runProjectMapCommand(args, commandCtx, { onShow: () => { visibility.set(sessionKey(commandCtx), true); mount(commandCtx); }, onHide: () => { visibility.set(sessionKey(commandCtx), false); unmount(commandCtx); } });
 		},
+	});
+
+	pi.on("session_start", (_event, ctx) => {
+		mount(ctx as unknown as ProjectMapCommandContext);
+	});
+
+	pi.on("session_shutdown", (_event, ctx) => {
+		const commandCtx = ctx as unknown as ProjectMapCommandContext;
+		unmount(commandCtx);
+		visibility.delete(sessionKey(commandCtx));
 	});
 }
