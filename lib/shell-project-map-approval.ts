@@ -1,10 +1,12 @@
 import { writeJsonFileAtomicallySync } from "./agent-profiles.ts";
 import {
 	PROJECT_MAP_DIAGNOSTIC_CODES,
+	PROJECT_MAP_SURFACES,
 	isIsoInstant,
 	serializeProjectMap,
 	validateProjectMap,
 	type ProjectMapDiagnostic,
+	type ProjectMapSurface,
 	type ProjectMapV1,
 } from "./shell-project-map-schema.ts";
 
@@ -18,6 +20,12 @@ export interface ProjectMapApprovalOutcome {
 	ok: boolean;
 	map: ProjectMapV1 | null;
 	diagnostics: ProjectMapDiagnostic[];
+}
+
+export interface ProjectMapSurfaceDeclarationRequest {
+	map: ProjectMapV1;
+	capabilityId: string;
+	surfaces: string[];
 }
 
 export interface ProjectMapWriteOutcome {
@@ -57,6 +65,61 @@ export function approveProjectMap(request: ProjectMapApprovalRequest): ProjectMa
 	const candidate: ProjectMapV1 = {
 		...map,
 		approval: { state: "approved", approvedAt: request.approvedAt, approvedBy: request.approvedBy.trim() },
+	};
+	const validated = validateProjectMap(candidate);
+	if (validated.map === null) return { ok: false, map: null, diagnostics: validated.diagnostics };
+	return { ok: true, map: validated.map, diagnostics: validated.diagnostics };
+}
+
+/**
+ * Replaces one draft capability's declared surfaces. A declaration is intentionally a
+ * whole-list statement: accepting a repeated value would hide a typo in the plan the
+ * human is being asked to make explicit.
+ */
+export function declareProjectMapSurfaces(request: ProjectMapSurfaceDeclarationRequest): ProjectMapApprovalOutcome {
+	const map = request.map;
+	if (map.approval.state === "approved") {
+		return {
+			ok: false,
+			map: null,
+			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.approval.state", "Declaring surfaces is a draft-time action; changing an approved plan requires returning it to draft, which this version does not support.")],
+		};
+	}
+	if (typeof request.capabilityId !== "string" || request.capabilityId.trim().length === 0) {
+		return {
+			ok: false,
+			map: null,
+			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.capabilities", "Declaring surfaces requires a non-empty capability id.")],
+		};
+	}
+	const capabilityIndex = map.capabilities.findIndex((capability) => capability.id === request.capabilityId);
+	if (capabilityIndex < 0) {
+		const ids = map.capabilities.map((capability) => capability.id).join(", ") || "none";
+		return {
+			ok: false,
+			map: null,
+			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, "$.capabilities", `No capability named "${request.capabilityId}" is declared; this map declares: ${ids}.`)],
+		};
+	}
+	const seen = new Set<string>();
+	let invalidSurface = false;
+	for (const surface of request.surfaces) {
+		if (!PROJECT_MAP_SURFACES.includes(surface as (typeof PROJECT_MAP_SURFACES)[number]) || seen.has(surface)) {
+			invalidSurface = true;
+			break;
+		}
+		seen.add(surface);
+	}
+	if (invalidSurface) {
+		return {
+			ok: false,
+			map: null,
+			diagnostics: [refusal(PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD, `$.capabilities[${capabilityIndex}].surfaces`, `Surfaces must be unique entries from the supported vocabulary: ${PROJECT_MAP_SURFACES.join(", ")}.`)],
+		};
+	}
+	const candidate: ProjectMapV1 = {
+		...map,
+		capabilities: map.capabilities.map((capability, index) => index === capabilityIndex ? { ...capability, surfaces: [...request.surfaces] as ProjectMapSurface[] } : capability),
 	};
 	const validated = validateProjectMap(candidate);
 	if (validated.map === null) return { ok: false, map: null, diagnostics: validated.diagnostics };
