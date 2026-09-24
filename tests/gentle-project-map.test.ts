@@ -290,3 +290,66 @@ test("only ever writes the artifact path", async () => {
 		assert.equal(readFileSync(join(directory, "package.json"), "utf8"), manifestBefore);
 	});
 });
+
+test("reports an unreadable source as unreadable rather than absent", async () => {
+	await withRepository(async (directory) => {
+		// A directory where the manifest is expected fails with EISDIR, not ENOENT, so the
+		// source exists and cannot be read. Reporting that as "absent" would send the operator
+		// looking for a missing file that is right there.
+		rmSync(join(directory, "package.json"));
+		mkdirSync(join(directory, "package.json"));
+
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(
+			report.omissions.some((omission) => omission.includes("package.json") && omission.includes("could not be read")),
+			`expected an unreadable omission, got ${JSON.stringify(report.omissions)}`,
+		);
+	});
+});
+
+test("reports an absent source as absent, not as unreadable", async () => {
+	await withRepository(async (directory) => {
+		rmSync(join(directory, "package.json"));
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		assert.ok(report.omissions.some((omission) => omission.includes("package.json") && omission.includes("absent")));
+		assert.equal(report.omissions.some((omission) => omission.includes("could not be read")), false);
+	});
+});
+
+test("refuses to approve when the artifact changed between the read and the confirmation", async () => {
+	await withRepository(async (directory) => {
+		const seed = harness(directory, [true]);
+		await runProjectMapCommand("draft", seed.ctx, { now: () => NOW });
+		declareEverySurface(directory);
+		const before = readFileSync(artifactPath(directory), "utf8");
+
+		// The confirmation is where a second writer gets its window, so the race is simulated
+		// exactly there instead of by racing threads.
+		const probe = harness(directory);
+		probe.ctx.ui.confirm = async () => {
+			writeFileSync(artifactPath(directory), `${before}\n`, "utf8");
+			return true;
+		};
+		const report = await runProjectMapCommand("approve facundo", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), `${before}\n`);
+	});
+});
+
+test("refuses to write a draft when the artifact appeared while the human decided", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory);
+		probe.ctx.ui.confirm = async () => {
+			writeFileSync(artifactPath(directory), "someone else got here first\n", "utf8");
+			return true;
+		};
+		const report = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), "someone else got here first\n");
+	});
+});

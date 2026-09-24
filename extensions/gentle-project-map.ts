@@ -64,36 +64,59 @@ function emptyReport(action: ProjectMapSubAction | null, diagnostics: ProjectMap
 }
 
 function readText(path: string): string | undefined {
+	const read = readSource(path);
+	return read.ok ? read.text : undefined;
+}
+
+type SourceRead = { ok: true; text: string } | { ok: false; reason: "absent" | "unreadable" };
+
+/**
+ * Distinguishes a source that is not there from one that is there and cannot be read.
+ * Conflating them sends the operator looking for a missing file that is right in front of
+ * them, so `ENOENT` and a missing parent mean absent while anything else means unreadable.
+ */
+function readSource(path: string): SourceRead {
 	try {
-		return readFileSync(path, "utf8");
-	} catch {
-		return undefined;
+		return { ok: true, text: readFileSync(path, "utf8") };
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException | null)?.code;
+		return { ok: false, reason: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreadable" };
 	}
 }
 
-function readRepositorySources(cwd: string): { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] } {
+function readArtifactText(path: string): string | null {
+	const read = readSource(path);
+	return read.ok ? read.text : null;
+}
+
+function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
+	const omissions: string[] = [];
 	const sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] } = {};
-	const manifestText = readText(join(cwd, "package.json"));
-	if (manifestText !== undefined) {
+	const manifest = readSource(join(cwd, "package.json"));
+	if (manifest.ok) {
 		try {
-			sources.packageJson = JSON.parse(manifestText);
+			sources.packageJson = JSON.parse(manifest.text);
 		} catch {
-			// A manifest that is not JSON is left absent, and the generator reports the omission.
+			omissions.push("package.json could not be parsed as JSON, so the project identity could not be derived from it.");
 		}
+	} else if (manifest.reason === "unreadable") {
+		omissions.push("package.json exists but could not be read, so the project identity could not be derived from it.");
 	}
-	const config = readText(join(cwd, "openspec", "config.yaml"));
-	if (config !== undefined) sources.openspecConfig = config;
+	const config = readSource(join(cwd, "openspec", "config.yaml"));
+	if (config.ok) sources.openspecConfig = config.text;
+	else if (config.reason === "unreadable") omissions.push("openspec/config.yaml exists but could not be read, so no quality gate could be derived from it.");
 	const tasksRoot = join(cwd, "odd", "tasks");
 	if (existsSync(tasksRoot)) {
 		const documents: { path: string; text: string }[] = [];
 		for (const name of readdirSync(tasksRoot).sort()) {
 			if (!name.endsWith(".md")) continue;
-			const text = readText(join(tasksRoot, name));
-			if (text !== undefined) documents.push({ path: `odd/tasks/${name}`, text });
+			const document = readSource(join(tasksRoot, name));
+			if (document.ok) documents.push({ path: `odd/tasks/${name}`, text: document.text });
+			else if (document.reason === "unreadable") omissions.push(`odd/tasks/${name} exists but could not be read, so it contributed no capability.`);
 		}
 		sources.oddTaskDocuments = documents;
 	}
-	return sources;
+	return { sources, omissions };
 }
 
 function describe(map: ProjectMapV1): string {
@@ -127,25 +150,33 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 
 	if (parsed.action === "draft") {
-		const generated = generateProjectMapDraft(readRepositorySources(ctx.cwd));
+		const observed = readArtifactText(artifactPath);
+		const repository = readRepositorySources(ctx.cwd);
+		const generated = generateProjectMapDraft(repository.sources);
+		const omissions = [...repository.omissions, ...generated.omissions];
 		if (generated.map === null) {
-			ctx.ui.notify(`A draft could not be generated.\n${generated.omissions.join("\n")}`);
-			return { action: "draft", wrote: false, map: null, assumptions: generated.assumptions, omissions: generated.omissions, diagnostics: [refusal("The draft could not be generated.")] };
+			ctx.ui.notify(`A draft could not be generated.\n${omissions.join("\n")}`);
+			return { action: "draft", wrote: false, map: null, assumptions: generated.assumptions, omissions, diagnostics: [refusal("The draft could not be generated.")] };
 		}
-		const summary = [describe(generated.map), "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...generated.omissions.map((entry) => `- ${entry}`)].join("\n");
+		const summary = [describe(generated.map), "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...omissions.map((entry) => `- ${entry}`)].join("\n");
 		ctx.ui.notify(summary);
 		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.`) : false;
 		if (!confirmed) {
 			ctx.ui.notify("Draft discarded; nothing was written.");
-			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions: generated.omissions, diagnostics: [] };
+			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
+		}
+		if (readArtifactText(artifactPath) !== observed) {
+			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
+			ctx.ui.notify(message);
+			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [refusal(message, "$")] };
 		}
 		const written = writeProjectMapFile(artifactPath, generated.map);
 		if (!written.ok) {
 			ctx.ui.notify(`The draft could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions: generated.omissions, diagnostics: written.diagnostics };
+			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: written.diagnostics };
 		}
 		ctx.ui.notify(`Wrote a draft map to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "draft", wrote: true, map: generated.map, assumptions: generated.assumptions, omissions: generated.omissions, diagnostics: [] };
+		return { action: "draft", wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 	}
 
 	const actor = parsed.argument;
@@ -153,6 +184,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		ctx.ui.notify(`Approval requires an actor identity, because an approval nobody can attribute is not auditable.\n${USAGE}`);
 		return emptyReport("approve", [refusal("Approval requires an actor identity.", "$.approval.approvedBy")]);
 	}
+	const observed = readArtifactText(artifactPath);
 	const read = readProjectMapFile(artifactPath);
 	if (read.map === null) {
 		ctx.ui.notify(`No map to approve at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
@@ -169,6 +201,11 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	if (!confirmed) {
 		ctx.ui.notify("Approval discarded; nothing was written.");
 		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
+	}
+	if (readArtifactText(artifactPath) !== observed) {
+		const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
+		ctx.ui.notify(message);
+		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [refusal(message, "$")] };
 	}
 	const written = writeProjectMapFile(artifactPath, transition.map);
 	if (!written.ok) {
