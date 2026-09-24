@@ -60,7 +60,7 @@ function readHistoryFiles(root: string): { files: HistoryFile[]; diagnostics: Pr
 			files.push({ path, entry: null });
 			continue;
 		}
-		files.push({ path, entry: { path, descriptor: parsed.record } });
+		files.push({ path, entry: { path, descriptor: parsed.record as ProjectMapStoreDescriptorV1 } });
 	}
 	return { files, diagnostics };
 }

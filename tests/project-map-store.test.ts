@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
 	initializeProjectMapStore,
 	readProjectMapStoreDescriptor,
 } from "../lib/project-map-store.ts";
+import * as projectMapStore from "../lib/project-map-store.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, type ProjectMapStoreDescriptorV1 } from "../lib/project-map-store-schema.ts";
 
 const REPOSITORY_ID = `sha256:${"a".repeat(64)}`;
@@ -200,5 +201,118 @@ test("does not prune history when a swap fails after archiving", () => {
 			.map((name) => Number.parseInt(name.split("-", 1)[0], 10))
 			.sort((left, right) => left - right);
 		assert.deepEqual(generations, Array.from({ length: 21 }, (_, generation) => generation));
+	});
+});
+
+test("classifies a valid non-canonical descriptor as corrupted and refuses advancement", () => {
+	withRoot((root) => {
+		const descriptor = initialize(root);
+		writeFileSync(join(root, "store.json"), JSON.stringify(descriptor), "utf8");
+		const read = readProjectMapStoreDescriptor(root);
+		assert.equal(read.status, "corrupted");
+		assert.deepEqual(read.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED]);
+		const advanced = advance(root, descriptor);
+		assert.equal(advanced.descriptor, null);
+		assert.deepEqual(advanced.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED]);
+	});
+});
+
+test("proves a fresh store root is empty", () => {
+	withRoot((root) => {
+		const result = projectMapStore.storeIsProvablyEmpty(root);
+		assert.deepEqual(result, { empty: true, diagnostics: [] });
+	});
+});
+
+test("finds claim, heartbeat, and quarantine evidence in a store root", () => {
+	withRoot((root) => {
+		const claims = join(root, "claims");
+		mkdirSync(claims);
+		writeFileSync(join(claims, "capability.json"), "{}", "utf8");
+		assert.equal(projectMapStore.storeIsProvablyEmpty(root).empty, false);
+		rmSync(claims, { recursive: true });
+
+		const heartbeats = join(root, "heartbeats");
+		mkdirSync(heartbeats);
+		writeFileSync(join(heartbeats, "session.json"), "{}", "utf8");
+		assert.equal(projectMapStore.storeIsProvablyEmpty(root).empty, false);
+		rmSync(heartbeats, { recursive: true });
+
+		writeFileSync(join(root, "store.corrupt.2026-09-24T12-00-00-000Z.json"), "evidence", "utf8");
+		assert.equal(projectMapStore.storeIsProvablyEmpty(root).empty, false);
+	});
+});
+
+test("fails closed when a record directory cannot be read", () => {
+	withRoot((root) => {
+		writeFileSync(join(root, "claims"), "not a directory", "utf8");
+		const result = projectMapStore.storeIsProvablyEmpty(root);
+		assert.equal(result.empty, false);
+		assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE]);
+	});
+});
+
+test("refuses initialization over claim evidence without changing the root", () => {
+	withRoot((root) => {
+		const claims = join(root, "claims");
+		mkdirSync(claims);
+		const claim = join(claims, "capability.json");
+		writeFileSync(claim, "evidence", "utf8");
+		const result = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT });
+		assert.equal(result.descriptor, null);
+		assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
+		assert.equal(readFileSync(claim, "utf8"), "evidence");
+		assert.deepEqual(readdirSync(root), ["claims"]);
+	});
+});
+
+test("quarantines byte-identical evidence without overwriting an existing destination", () => {
+	withRoot((root) => {
+		const source = join(root, "store.json");
+		const bytes = "{ invalid evidence\n";
+		const now = "2026-09-24T12:00:00.000Z";
+		const destination = join(root, "store.corrupt.2026-09-24T12-00-00-000Z.json");
+		writeFileSync(source, bytes, "utf8");
+		const quarantined = projectMapStore.quarantineProjectMapStore({ root, now });
+		assert.equal(quarantined.quarantined, destination);
+		assert.deepEqual(quarantined.diagnostics, []);
+		assert.equal(existsSync(source), false);
+		assert.equal(readFileSync(destination, "utf8"), bytes);
+		const second = projectMapStore.quarantineProjectMapStore({ root, now });
+		assert.equal(second.quarantined, null);
+		assert.deepEqual(second.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.QUARANTINE_EXISTS]);
+		assert.equal(readFileSync(destination, "utf8"), bytes);
+	});
+});
+
+test("requires removal of quarantined evidence before initialization", () => {
+	withRoot((root) => {
+		const now = "2026-09-24T12:00:00.000Z";
+		const source = join(root, "store.json");
+		writeFileSync(source, "{ invalid evidence\n", "utf8");
+		const quarantined = projectMapStore.quarantineProjectMapStore({ root, now });
+		assert.ok(quarantined.quarantined);
+		const blocked = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT });
+		assert.equal(blocked.descriptor, null);
+		assert.deepEqual(blocked.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
+		assert.match(blocked.diagnostics[0].message, /store\.corrupt\.2026-09-24T12-00-00-000Z\.json/);
+		rmSync(quarantined.quarantined!);
+		assert.ok(initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT }).descriptor);
+	});
+});
+
+test("refuses quarantine for a missing descriptor or invalid instant without moving evidence", () => {
+	withRoot((root) => {
+		const missing = projectMapStore.quarantineProjectMapStore({ root, now: CREATED_AT });
+		assert.equal(missing.quarantined, null);
+		assert.deepEqual(missing.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE]);
+
+		const source = join(root, "store.json");
+		writeFileSync(source, "evidence", "utf8");
+		const invalid = projectMapStore.quarantineProjectMapStore({ root, now: "not-an-instant" });
+		assert.equal(invalid.quarantined, null);
+		assert.deepEqual(invalid.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.equal(invalid.diagnostics[0].path, "$.now");
+		assert.equal(readFileSync(source, "utf8"), "evidence");
 	});
 });
