@@ -72,37 +72,37 @@ approval?: {
 
 ## Tasks
 
-- [ ] **PM2-1 — Approval contract in the versioned map**
+- [x] **PM2-1 — Approval contract in the versioned map**
   - Export the approval state vocabulary, the `ProjectMapApprovalV1` type, and `PROJECT_MAP_ARTIFACT_PATH`.
   - Add `approval` to `ProjectMapV1`, `canonicalizeProjectMap`, and `serializeProjectMap` in canonical position, with the fail-safe `draft` default.
   - Reject an approved map without audit fields, and a draft carrying them, with exact `$`-rooted paths.
   - Relax `surfaces` to allow an empty list only while `approval.state === "draft"`; require a non-empty list on every capability once approved.
   - Pin the amendment in the existing schema test file so the previous unconditional rule cannot silently return.
 
-- [ ] **PM2-2 — Deterministic draft generation from structured sources**
+- [x] **PM2-2 — Deterministic draft generation from structured sources**
   - Read `package.json` and `openspec/config.yaml`, interpreting only the simple top-level `key: value` lines of the latter.
   - Assemble a `ProjectMapV1` that is always `approval.state === "draft"`, with capabilities as `planned` unless structured evidence says otherwise.
   - Return `{ map, assumptions, omissions }`, where omissions name every source that could not be interpreted and every required field the generator could not fill.
   - Guarantee determinism: identical input produces byte-identical serialized output.
 
-- [ ] **PM2-3 — ODD work-unit extraction**
+- [x] **PM2-3 — ODD work-unit extraction**
   - Extract capability candidates from the roadmap's `- [ ] **PM-N — Title**` work units and from `odd/tasks/*.md` headings.
   - Map a checked box to `done` and an unchecked box to `planned`, and record the mapping as an assumption rather than as verified progress.
   - Report every prose-only source that cannot be interpreted as an explicit omission.
 
-- [ ] **PM2-4 — Approval transition and atomic persistence**
+- [x] **PM2-4 — Approval transition and atomic persistence**
   - Implement the `draft` to `approved` transition with injected actor identity and timestamp, refusing an already-approved map, an invalid map, and an incomplete surface list.
   - Persist through `serializeProjectMap` and `writeJsonFileAtomicallySync` (`lib/agent-profiles.ts:521`); never write a partial artifact.
   - Prove that approval touches exactly one path — the artifact — and starts no writer, worktree, or source mutation.
   - Fail closed: a write failure leaves the previous artifact intact and reports the failure instead of claiming approval.
 
-- [ ] **PM2-5 — Command surface**
+- [x] **PM2-5 — Command surface**
   - Register `/gentle:project-map` with validated sub-actions `draft`, `approve`, and `status`; reject an unknown sub-action by listing the valid ones.
   - Show capabilities, coverage, assumptions, and omissions before asking for confirmation, and write only after an explicit confirmation.
   - Report a declined confirmation and a failed write honestly; never claim a transition that did not happen.
   - Cover the handler with a mocked `ExtensionContext`; never instantiate the interactive TUI.
 
-- [ ] **PM2-6 — Documentation and verification**
+- [x] **PM2-6 — Documentation and verification**
   - Document the approval block, the draft and approved lifecycles, the artifact path constant, and the assumptions and omissions report in `docs/project-map.md`.
   - Focused test files green; full suite and typecheck attempted and their unavailability recorded honestly.
 
@@ -130,7 +130,10 @@ Measured correction-round estimates: PM-2a ≈ 200 lines (schema and its tests),
 - 2026-09-23: PM2-4 delivered the approval transition and atomic persistence. Persisting a valid draft is deliberately allowed, because a draft state that cannot be written does not exist; the completeness gate lives in the approval transition, not in the writer. Review scope is now an explicit per-commit `baseRef`, because the accumulated branch exceeded the native reviewer context budget.
 - 2026-09-23: A second consolidated fix commit closed the four informational findings from the PM2-4 review. Two were real defects (the ISO-8601 check rejected years below 100 because `Date.UTC` maps them onto 1900-1999) and two were tests that could not fail. Both were verified by neutralising the fix and watching the test go red, which is the only proof a regression test is worth keeping.
 - 2026-09-23: PM2-5 delivered the `/gentle:project-map` command surface with `draft`, `approve <actor>`, and `status`. **Workflow gap found and documented:** a generated draft always declares no surfaces, so `draft` followed by `approve` cannot succeed until the human declares them in the artifact. The refusal names the exact path, and collecting surfaces interactively is deferred to the rendering unit rather than guessed at here.
+- 2026-09-23: PM2-5 measured 497 changed lines, over the 400-line budget. One honest slicing pass found no cohesive split: the module shares its sub-action parser and the test file shares one harness, so splitting would either duplicate the scaffolding or produce a commit that does not build. The overage is reported rather than hidden, and it is the unit's only size exception.
+- 2026-09-23: PM2-6 recorded the final verification. Focused suites are green at 95/95. The full suite runs 1,827 tests with 1,712 passing and the same 99 failures the repository had before this unit; those 99 are environmental, and the only error codes present are `ERR_MODULE_NOT_FOUND` and the `ERR_ASSERTION` of a spawned child that cannot load the missing SDK. The unit added 73 tests and changed no passing test to failing. The typecheck gate cannot run in this clone: `scripts/check-types.mjs` reports that it cannot resolve the TypeScript compiler.
+- 2026-09-23: Two informational findings remain open from the PM2-5 review: `R3-source-read-failure` (`extensions/gentle-project-map.ts:87-89`), where an unreadable source is reported as an absent one, and `R3-stale-approval` (`extensions/gentle-project-map.ts:168-173`), where the artifact is read, confirmed, and written without re-checking that it did not change in between.
 - 2026-09-23: The unit's pull request is blocked by repository policy: every PR must link an issue carrying `status:approved`, and no approved issue covers this work. Issue #1396 was opened as the prerequisite. Labels could not be applied through the API because an external contributor lacks `AddLabelsToLabelable`; a maintainer must apply `status:needs-review` and, later, `status:approved`.
 
 ## Next decision
-Implementation of PM2-1 may begin. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
+PM-2 is closed: all six tasks are complete, every stage is committed and reviewed, and the unit sits on the stable base v3.7.0. The next decisions belong to the user: fix the two open informational findings, start PM-3, or publish. Publishing is blocked until a maintainer applies `status:approved` to issue #1396, and the change exceeds the 400-line review budget several times over, so it must ship as chained PRs whose strategy the user chooses.
