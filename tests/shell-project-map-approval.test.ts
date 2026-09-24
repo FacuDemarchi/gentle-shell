@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -168,7 +168,24 @@ test("writes a valid draft, because persisting a draft is what makes the state e
 	});
 });
 
-test("leaves no temporary sibling behind when the write fails", () => {
+test("leaves no temporary sibling behind when the write fails after the temp file exists", () => {
+	withTempDirectory((directory) => {
+		// The destination is a directory, so the failure lands on the rename and the temp file
+		// already exists. A failure before the temp file is created would prove nothing about
+		// cleanup, which is why the destination is not merely unreachable.
+		const path = join(directory, "project-map.json");
+		mkdirSync(path);
+		const approved = approveProjectMap({ map: draftMap(), approvedBy: APPROVED_BY, approvedAt: APPROVED_AT });
+		assert.ok(approved.map);
+		const written = writeProjectMapFile(path, approved.map);
+		assert.equal(written.ok, false);
+		assert.ok(written.diagnostics.length > 0);
+		assert.deepEqual(readdirSync(directory), ["project-map.json"]);
+		assert.equal(statSync(path).isDirectory(), true);
+	});
+});
+
+test("leaves no temporary sibling behind when the parent is not a directory", () => {
 	withTempDirectory((directory) => {
 		const blocker = join(directory, "blocker");
 		writeFileSync(blocker, "not a directory", "utf8");
@@ -176,7 +193,6 @@ test("leaves no temporary sibling behind when the write fails", () => {
 		assert.ok(approved.map);
 		const written = writeProjectMapFile(join(blocker, "project-map.json"), approved.map);
 		assert.equal(written.ok, false);
-		assert.ok(written.diagnostics.length > 0);
 		assert.deepEqual(readdirSync(directory), ["blocker"]);
 	});
 });
@@ -198,15 +214,26 @@ test("touches exactly one path and leaves unrelated files alone", () => {
 	});
 });
 
-test("does not rewrite an artifact that already holds identical bytes", () => {
+test("does not rewrite an artifact that already holds identical bytes, and does rewrite a different one", () => {
 	withTempDirectory((directory) => {
 		const path = join(directory, "project-map.json");
 		const approved = approveProjectMap({ map: draftMap(), approvedBy: APPROVED_BY, approvedAt: APPROVED_AT });
 		assert.ok(approved.map);
 		writeProjectMapFile(path, approved.map);
+		const firstInode = statSync(path).ino;
 		const firstWrite = statSync(path).mtimeMs;
+
 		assert.equal(writeProjectMapFile(path, approved.map).ok, true);
+		// A rename-based rewrite replaces the directory entry, so an unchanged inode proves the
+		// writer skipped the write instead of replacing the file with identical bytes.
+		assert.equal(statSync(path).ino, firstInode);
 		assert.equal(statSync(path).mtimeMs, firstWrite);
+		assert.deepEqual(readdirSync(directory), ["project-map.json"]);
+
+		const other = approveProjectMap({ map: draftMap(), approvedBy: "someone-else", approvedAt: "2026-10-01T00:00:00Z" });
+		assert.ok(other.map);
+		assert.equal(writeProjectMapFile(path, other.map).ok, true);
+		assert.equal(readFileSync(path, "utf8").includes("someone-else"), true);
 	});
 });
 

@@ -780,3 +780,15 @@ test("exports the feature-document path predicate the draft generator reuses", (
 		assert.equal(isSafeFeatureDocumentPath(unsafe), false, `expected ${unsafe} to be unsafe`);
 	}
 });
+
+test("accepts ISO instants whose year is below 100", () => {
+	// Date.UTC maps years 0-99 onto 1900-1999, so a Date round-trip would reject these.
+	for (const approvedAt of ["0050-01-01T00:00:00Z", "0001-12-31T23:59:59Z", "0099-02-28T00:00:00Z"]) {
+		const result = validateProjectMap(approvedMap({ approval: { state: "approved", approvedAt, approvedBy: "facundo" } }));
+		assert.deepEqual(result.diagnostics, [], `expected ${approvedAt} to be accepted`);
+	}
+	// The calendar check still rejects a real overflow in the same range.
+	const overflow = validateProjectMap(approvedMap({ approval: { state: "approved", approvedAt: "0050-02-30T00:00:00Z", approvedBy: "facundo" } }));
+	assert.equal(overflow.map, null);
+	assert.deepEqual(paths(overflow), ["$.approval.approvedAt"]);
+});
