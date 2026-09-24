@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeJsonFileAtomicallySync } from "./agent-profiles.ts";
 import { appendProjectMapStoreHistory, pruneProjectMapStoreHistory } from "./project-map-store-history.ts";
-import { qualifiedNodeFsLockPlatformV1 } from "./review-lock.ts";
+import { conservativeOwnerDeathProofV1, qualifiedNodeFsLockPlatformV1, type ReviewLockOwnerV1 } from "./review-lock.ts";
+import { canonicalJsonV1, domainHashV1 } from "./review-canonical.ts";
 import { isIsoInstant } from "./shell-project-map-schema.ts";
 import {
 	PROJECT_MAP_STORE_DIAGNOSTIC_CODES,
@@ -55,6 +56,20 @@ export interface AdvanceProjectMapStoreOptions {
 	now: string;
 }
 
+export const PROJECT_MAP_STORE_LOCK_STALE_MS = 30_000;
+
+interface ProjectMapStoreLockOwner {
+	token: string;
+	pid: number;
+	owner_hash: string;
+	acquired_at: string;
+}
+
+interface ProjectMapStoreLockHandle {
+	path: string;
+	owner: ProjectMapStoreLockOwner;
+}
+
 interface DescriptorFileRead extends ProjectMapStoreDescriptorReadResult {
 	bytes: string | null;
 }
@@ -67,6 +82,10 @@ interface StoreEmptinessInspection extends ProjectMapStoreEmptinessResult {
 
 function descriptorPath(root: string): string {
 	return join(root, "store.json");
+}
+
+function storeLockPath(root: string): string {
+	return join(root, "store.lock");
 }
 
 function diagnostic(code: ProjectMapStoreDiagnostic["code"], message: string): ProjectMapStoreDiagnostic {
@@ -125,6 +144,137 @@ function unreadableDirectoryDiagnostic(path: string): ProjectMapStoreDiagnostic 
 	return diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, `Store directory "${path}" could not be read.`);
 }
 
+function storeLockedDiagnostic(): ProjectMapStoreDiagnostic {
+	return diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED, "Project-map store lock is active or ambiguous.");
+}
+
+function fsyncFile(path: string): void {
+	const descriptor = openSync(path, "r+");
+	try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+}
+
+function fsyncDirectory(path: string): void {
+	if (!statSync(path).isDirectory() || process.platform === "win32") return;
+	const descriptor = openSync(path, "r");
+	try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
+}
+
+function createStoreLockOwner(now: string): ProjectMapStoreLockOwner {
+	const token = randomBytes(32).toString("hex");
+	const pid = process.pid;
+	return { token, pid, acquired_at: now, owner_hash: domainHashV1("project-map-store-lock-owner", { token, pid, acquired_at: now }) };
+}
+
+function parseStoreLockOwner(path: string): ProjectMapStoreLockOwner | null {
+	try {
+		const owner = JSON.parse(readFileSync(path, "utf8")) as Partial<ProjectMapStoreLockOwner>;
+		if (
+			typeof owner.token !== "string"
+			|| !/^[0-9a-f]{64}$/.test(owner.token)
+			|| !Number.isSafeInteger(owner.pid)
+			|| owner.pid <= 0
+			|| typeof owner.owner_hash !== "string"
+			|| typeof owner.acquired_at !== "string"
+			|| !isIsoInstant(owner.acquired_at)
+			|| owner.owner_hash !== domainHashV1("project-map-store-lock-owner", { token: owner.token, pid: owner.pid, acquired_at: owner.acquired_at })
+		) return null;
+		return owner as ProjectMapStoreLockOwner;
+	} catch {
+		return null;
+	}
+}
+
+function writeStoreLockOwner(path: string, owner: ProjectMapStoreLockOwner): boolean {
+	try {
+		const ownerPath = join(path, "owner.json");
+		writeFileSync(ownerPath, canonicalJsonV1(owner), { mode: 0o600, flag: "wx" });
+		fsyncFile(ownerPath);
+		fsyncDirectory(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function acquireProjectMapStoreLock(root: string, now: string): { handle: ProjectMapStoreLockHandle | null; diagnostics: ProjectMapStoreDiagnostic[] } {
+	const path = storeLockPath(root);
+	try {
+		mkdirSync(root, { recursive: true, mode: 0o700 });
+	} catch {
+		return { handle: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store root could not be created for locking.")] };
+	}
+	const owner = createStoreLockOwner(now);
+	try {
+		mkdirSync(path, { mode: 0o700 });
+		if (!writeStoreLockOwner(path, owner)) return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+		return { handle: { path, owner }, diagnostics: [] };
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return { handle: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store lock could not be acquired.")] };
+	}
+	const observed = parseStoreLockOwner(join(path, "owner.json"));
+	if (observed === null || !conservativeOwnerDeathProofV1(observed as unknown as ReviewLockOwnerV1) || Date.parse(now) - Date.parse(observed.acquired_at) < PROJECT_MAP_STORE_LOCK_STALE_MS) {
+		return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+	}
+	const quarantineRoot = join(root, "locks-quarantine");
+	const stale = join(quarantineRoot, `stale-${observed.owner_hash}-${observed.token}`);
+	try {
+		mkdirSync(quarantineRoot, { recursive: true, mode: 0o700 });
+		qualifiedNodeFsLockPlatformV1().moveNoReplace(path, stale);
+	} catch {
+		return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+	}
+	try {
+		mkdirSync(path, { mode: 0o700 });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+		return { handle: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store lock could not be acquired.")] };
+	}
+	if (!writeStoreLockOwner(path, owner)) return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+	return { handle: { path, owner }, diagnostics: [] };
+}
+
+function releaseProjectMapStoreLock(root: string, handle: ProjectMapStoreLockHandle): ProjectMapStoreDiagnostic[] {
+	const observed = parseStoreLockOwner(join(handle.path, "owner.json"));
+	if (observed === null || observed.token !== handle.owner.token || observed.owner_hash !== handle.owner.owner_hash || observed.pid !== process.pid) return [storeLockedDiagnostic()];
+	const quarantineRoot = join(root, "locks-quarantine");
+	const released = join(quarantineRoot, `released-${handle.owner.token}`);
+	try {
+		mkdirSync(quarantineRoot, { recursive: true, mode: 0o700 });
+		qualifiedNodeFsLockPlatformV1().moveNoReplace(handle.path, released);
+	} catch {
+		return [storeLockedDiagnostic()];
+	}
+	const moved = parseStoreLockOwner(join(released, "owner.json"));
+	if (moved === null || moved.token !== handle.owner.token || moved.owner_hash !== handle.owner.owner_hash || moved.pid !== process.pid) {
+		try { qualifiedNodeFsLockPlatformV1().moveNoReplace(released, handle.path); } catch {}
+		return [storeLockedDiagnostic()];
+	}
+	try {
+		rmSync(released, { recursive: true, force: false });
+		fsyncDirectory(quarantineRoot);
+		return [];
+	} catch {
+		return [storeLockedDiagnostic()];
+	}
+}
+
+function mutateWithProjectMapStoreLock(root: string, now: string, mutate: () => ProjectMapStoreMutationResult): ProjectMapStoreMutationResult {
+	const acquired = acquireProjectMapStoreLock(root, now);
+	if (acquired.handle === null) return { descriptor: null, diagnostics: acquired.diagnostics };
+	let result: ProjectMapStoreMutationResult;
+	try {
+		result = mutate();
+	} catch {
+		result = { descriptor: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store mutation could not be completed.")] };
+	}
+	const releaseDiagnostics = releaseProjectMapStoreLock(root, acquired.handle);
+	if (releaseDiagnostics.length === 0) return result;
+	return {
+		descriptor: result.descriptor,
+		diagnostics: [...result.diagnostics, ...releaseDiagnostics.map((entry) => result.descriptor === null ? entry : { ...entry, severity: "warning" as const })],
+	};
+}
+
 function inspectStoreEmptiness(root: string): StoreEmptinessInspection {
 	let rootEntries: string[];
 	try {
@@ -167,7 +317,7 @@ export function readProjectMapStoreDescriptor(root: string): ProjectMapStoreDesc
 	return result;
 }
 
-export function initializeProjectMapStore(options: InitializeProjectMapStoreOptions): ProjectMapStoreMutationResult {
+function initializeProjectMapStoreUnlocked(options: InitializeProjectMapStoreOptions): ProjectMapStoreMutationResult {
 	try {
 		const existing = readDescriptorFile(options.root);
 		if (existing.status === "ready") return { descriptor: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_EXISTS, "Store descriptor already exists.")] };
@@ -189,6 +339,10 @@ export function initializeProjectMapStore(options: InitializeProjectMapStoreOpti
 	} catch {
 		return { descriptor: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store descriptor could not be initialized.")] };
 	}
+}
+
+export function initializeProjectMapStore(options: InitializeProjectMapStoreOptions): ProjectMapStoreMutationResult {
+	return mutateWithProjectMapStoreLock(options.root, options.now, () => initializeProjectMapStoreUnlocked(options));
 }
 
 export function quarantineProjectMapStore(options: { root: string; now: string }): ProjectMapStoreQuarantineResult {
@@ -216,7 +370,7 @@ export function quarantineProjectMapStore(options: { root: string; now: string }
 	}
 }
 
-export function advanceProjectMapStore(options: AdvanceProjectMapStoreOptions): ProjectMapStoreMutationResult {
+function advanceProjectMapStoreUnlocked(options: AdvanceProjectMapStoreOptions): ProjectMapStoreMutationResult {
 	try {
 		const observed = readDescriptorFile(options.root);
 		if (observed.status !== "ready" || observed.descriptor === null || observed.bytes === null) {
@@ -243,4 +397,8 @@ export function advanceProjectMapStore(options: AdvanceProjectMapStoreOptions): 
 	} catch {
 		return { descriptor: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store descriptor could not be advanced.")] };
 	}
+}
+
+export function advanceProjectMapStore(options: AdvanceProjectMapStoreOptions): ProjectMapStoreMutationResult {
+	return mutateWithProjectMapStoreLock(options.root, options.now, () => advanceProjectMapStoreUnlocked(options));
 }

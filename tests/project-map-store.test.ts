@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +11,7 @@ import {
 	readProjectMapStoreDescriptor,
 } from "../lib/project-map-store.ts";
 import * as projectMapStore from "../lib/project-map-store.ts";
+import { canonicalJsonV1, domainHashV1 } from "../lib/review-canonical.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, type ProjectMapStoreDescriptorV1 } from "../lib/project-map-store-schema.ts";
 
 const REPOSITORY_ID = `sha256:${"a".repeat(64)}`;
@@ -29,6 +31,54 @@ function withRoot(run: (root: string) => void): void {
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
+}
+
+async function withAsyncRoot(run: (root: string) => Promise<void>): Promise<void> {
+	const root = mkdtempSync(join(tmpdir(), "project-map-store-"));
+	try {
+		await run(root);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}
+
+interface StoreLockOwner {
+	token: string;
+	pid: number;
+	owner_hash: string;
+	acquired_at: string;
+}
+
+function createStoreLockOwner(token: string, pid: number, acquiredAt: string): StoreLockOwner {
+	return {
+		token,
+		pid,
+		owner_hash: domainHashV1("project-map-store-lock-owner", { token, pid, acquired_at: acquiredAt }),
+		acquired_at: acquiredAt,
+	};
+}
+
+function writeStoreLockOwner(root: string, owner: StoreLockOwner): string {
+	const lockPath = join(root, "store.lock");
+	mkdirSync(lockPath, { recursive: true, mode: 0o700 });
+	const bytes = canonicalJsonV1(owner);
+	writeFileSync(join(lockPath, "owner.json"), bytes, { mode: 0o600 });
+	return bytes;
+}
+
+function runStoreChild(source: string, args: string[]): ReturnType<typeof spawn> {
+	return spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, ...args], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function waitForChildExit(child: ReturnType<typeof spawn>): Promise<{ stdout: string; stderr: string; code: number | null }> {
+	return new Promise((resolve, reject) => {
+		let stdout = "";
+		let stderr = "";
+		child.stdout!.on("data", (chunk: Buffer) => { stdout += chunk; });
+		child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk; });
+		child.once("error", reject);
+		child.once("exit", (code) => resolve({ stdout, stderr, code }));
+	});
 }
 
 function initialize(root: string): ProjectMapStoreDescriptorV1 {
@@ -187,16 +237,14 @@ test("does not prune history when a swap fails after archiving", () => {
 			assert.ok(result.descriptor);
 			descriptor = result.descriptor;
 		}
-		mkdirSync(join(root, "history"), { recursive: true });
-		chmodSync(root, 0o500);
-		let result: ReturnType<typeof advanceProjectMapStore>;
-		try {
-			result = advance(root, descriptor, "2026-09-24T23:59:59Z");
-		} finally {
-			chmodSync(root, 0o700);
-		}
-		assert.equal(result!.descriptor, null);
-		assert.ok(result!.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
+		// The swap is failed after the archive on purpose: the successor carries an updated_at the
+		// store schema refuses, so the superseded descriptor is archived and the new one is never
+		// written, and the prune that only runs after a successful swap must not run. This replaced
+		// a read-only-root fixture, which under the PM4-2c lock fails at lock acquisition and never
+		// reaches the archive at all (the previous version kept passing for the wrong reason).
+		const result = advance(root, descriptor, "not-an-instant");
+		assert.equal(result.descriptor, null);
+		assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD && diagnostic.path === "$.updated_at"));
 		const generations = readdirSync(join(root, "history"))
 			.map((name) => Number.parseInt(name.split("-", 1)[0], 10))
 			.sort((left, right) => left - right);
@@ -262,7 +310,7 @@ test("refuses initialization over claim evidence without changing the root", () 
 		assert.equal(result.descriptor, null);
 		assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
 		assert.equal(readFileSync(claim, "utf8"), "evidence");
-		assert.deepEqual(readdirSync(root), ["claims"]);
+		assert.deepEqual(readdirSync(root).sort(), ["claims", "locks-quarantine"]);
 	});
 });
 
@@ -314,5 +362,125 @@ test("refuses quarantine for a missing descriptor or invalid instant without mov
 		assert.deepEqual(invalid.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
 		assert.equal(invalid.diagnostics[0].path, "$.now");
 		assert.equal(readFileSync(source, "utf8"), "evidence");
+	});
+});
+
+test("exports the fixed project-map store lock stale threshold", () => {
+	assert.equal((projectMapStore as Record<string, unknown>).PROJECT_MAP_STORE_LOCK_STALE_MS, 30_000);
+});
+
+test("refuses a live cross-process lock holder without changing store bytes", async () => {
+	await withAsyncRoot(async (root) => {
+		const descriptor = initialize(root);
+		const before = readFileSync(join(root, "store.json"), "utf8");
+		const expected = { generation: descriptor.generation, epoch: descriptor.epoch, predecessor: digest(before) };
+		const holder = runStoreChild(`
+			import { mkdirSync, writeFileSync } from "node:fs";
+			import { join } from "node:path";
+			import { canonicalJsonV1, domainHashV1 } from "./lib/review-canonical.ts";
+			const [root, acquiredAt] = process.argv.slice(-2);
+			const token = "${"a".repeat(64)}";
+			const owner = { token, pid: process.pid, acquired_at: acquiredAt };
+			owner.owner_hash = domainHashV1("project-map-store-lock-owner", owner);
+			mkdirSync(join(root, "store.lock"), { mode: 0o700 });
+			writeFileSync(join(root, "store.lock", "owner.json"), canonicalJsonV1(owner), { mode: 0o600, flag: "wx" });
+			console.log("held");
+			setInterval(() => {}, 1_000);
+		`, [root, UPDATED_AT]);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				let output = "";
+				holder.stdout!.on("data", (chunk: Buffer) => {
+					output += chunk;
+					if (output.includes("held\n")) resolve();
+				});
+				holder.once("error", reject);
+				holder.once("exit", (code) => reject(new Error(`holder exited before acquiring lock: ${code}`)));
+			});
+			const result = advanceProjectMapStore({ root, expected, now: UPDATED_AT });
+			assert.equal(result.descriptor, null);
+			assert.ok(result.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED));
+			assert.equal(readFileSync(join(root, "store.json"), "utf8"), before);
+		} finally {
+			holder.kill();
+			await waitForChildExit(holder);
+		}
+	});
+});
+
+test("allows exactly one concurrent writer with the same frozen expectation", async () => {
+	await withAsyncRoot(async (root) => {
+		const descriptor = initialize(root);
+		const expected = { generation: descriptor.generation, epoch: descriptor.epoch, predecessor: digest(readFileSync(join(root, "store.json"), "utf8")) };
+		const writer = `
+			import { advanceProjectMapStore } from "./lib/project-map-store.ts";
+			const [root, expectedText, now] = process.argv.slice(-3);
+			const result = advanceProjectMapStore({ root, expected: JSON.parse(expectedText), now });
+			console.log(JSON.stringify({ descriptor: result.descriptor !== null, codes: result.diagnostics.map((entry) => entry.code) }));
+		`;
+		const args = [root, JSON.stringify(expected), UPDATED_AT];
+		const [first, second] = await Promise.all([
+			waitForChildExit(runStoreChild(writer, args)),
+			waitForChildExit(runStoreChild(writer, args)),
+		]);
+		assert.equal(first.code, 0, first.stderr);
+		assert.equal(second.code, 0, second.stderr);
+		const results = [first, second].map((entry) => JSON.parse(entry.stdout) as { descriptor: boolean; codes: string[] });
+		assert.equal(results.filter((entry) => entry.descriptor).length, 1);
+		assert.ok(results.find((entry) => !entry.descriptor)?.codes.some((code) => code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED || code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STALE_GENERATION));
+		assert.equal(readProjectMapStoreDescriptor(root).descriptor?.generation, 1);
+	});
+});
+
+test("breaks only a stale lock with a provably dead owner and preserves its bytes", async () => {
+	await withAsyncRoot(async (root) => {
+		const exited = runStoreChild("process.exit(0);", []);
+		await waitForChildExit(exited);
+		const acquiredAt = "2026-09-24T12:00:00Z";
+		const owner = createStoreLockOwner("b".repeat(64), exited.pid!, acquiredAt);
+		const ownerBytes = writeStoreLockOwner(root, owner);
+		const result = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: "2026-09-24T12:00:30Z" });
+		assert.ok(result.descriptor);
+		assert.equal(readFileSync(join(root, "locks-quarantine", `stale-${owner.owner_hash}-${owner.token}`, "owner.json"), "utf8"), ownerBytes);
+	});
+});
+
+test("does not break a fresh dead lock or an old lock owned by this process", async () => {
+	await withAsyncRoot(async (root) => {
+		const exited = runStoreChild("process.exit(0);", []);
+		await waitForChildExit(exited);
+		writeStoreLockOwner(root, createStoreLockOwner("c".repeat(64), exited.pid!, UPDATED_AT));
+		const fresh = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: UPDATED_AT });
+		assert.equal(fresh.descriptor, null);
+		assert.ok(fresh.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED));
+		rmSync(join(root, "store.lock"), { recursive: true, force: true });
+		writeStoreLockOwner(root, createStoreLockOwner("d".repeat(64), process.pid, CREATED_AT));
+		const own = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: "2026-09-24T12:01:00Z" });
+		assert.equal(own.descriptor, null);
+		assert.ok(own.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED));
+	});
+});
+
+test("refuses malformed lock ownership without touching the lock directory", () => {
+	withRoot((root) => {
+		const lock = join(root, "store.lock");
+		mkdirSync(lock, { mode: 0o700 });
+		const owner = join(lock, "owner.json");
+		writeFileSync(owner, "{ invalid", "utf8");
+		const result = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT });
+		assert.equal(result.descriptor, null);
+		assert.ok(result.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED));
+		assert.equal(readFileSync(owner, "utf8"), "{ invalid");
+		assert.equal(existsSync(lock), true);
+	});
+});
+
+test("successful mutations release the project-map store lock", () => {
+	withRoot((root) => {
+		const descriptor = initialize(root);
+		assert.equal(existsSync(join(root, "store.lock")), false);
+		const advanced = advance(root, descriptor);
+		assert.ok(advanced.descriptor);
+		assert.equal(existsSync(join(root, "store.lock")), false);
 	});
 });
