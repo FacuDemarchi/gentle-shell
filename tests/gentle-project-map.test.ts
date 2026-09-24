@@ -414,6 +414,7 @@ test("refuses to approve when the artifact changed between the read and the conf
 		const report = await runProjectMapCommand("approve facundo", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, false);
 		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.ok(probe.notified.some((message) => message.includes(PROJECT_MAP_ARTIFACT_PATH) && message.includes("changed")));
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), `${before}\n`);
 	});
 });
@@ -428,6 +429,7 @@ test("refuses to write a draft when the artifact appeared while the human decide
 		const report = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, false);
 		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.ok(probe.notified.some((message) => message.includes(PROJECT_MAP_ARTIFACT_PATH) && message.includes("changed")));
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), "someone else got here first\n");
 	});
 });
@@ -447,6 +449,7 @@ test("refuses to declare when the artifact changed between the read and the conf
 		const report = await runProjectMapCommand(`declare ${capabilityId} web`, probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, false);
 		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
+		assert.ok(probe.notified.some((message) => message.includes(PROJECT_MAP_ARTIFACT_PATH) && message.includes("changed")));
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), `${before}\n`);
 	});
 });

@@ -249,6 +249,25 @@ test("the bottom uses the summary line and stays non-interactive", () => {
 	});
 });
 
+test("the bottom renders one descriptor line for empty and invalid artifacts", () => {
+	withArtifact(null, (empty) => {
+		const bottom = projectMapCardBottom(empty, theme);
+		const lines = bottom.render(80);
+		assert.equal(lines.length, 3);
+		assert.ok(lines[1]?.includes("No Project Map at openspec/project-map.json"));
+		assert.ok(lines[1]?.includes("…"), "the collapsed body marks omitted descriptor lines");
+		assert.equal(bottom.handleMouse, undefined);
+	});
+	withArtifact(JSON.stringify({ version: "gentle-shell.project-map/v1", project: { id: "example-shop", name: "" }, capabilities: [] }), (invalid) => {
+		const bottom = projectMapCardBottom(invalid, theme);
+		const lines = bottom.render(80);
+		assert.equal(lines.length, 3);
+		assert.ok(lines[1]?.includes("The Project Map artifact is not valid:"));
+		assert.equal(lines[1]?.includes("$.project.name"), false);
+		assert.equal(bottom.handleMouse, undefined);
+	});
+});
+
 test("the rail shows the collapse hint when it fits", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		assert.match(projectMapCardRail(path, theme, session(), "alt+m").render(80)[0], /alt\+m/);

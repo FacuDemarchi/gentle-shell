@@ -98,6 +98,21 @@ test("classifies malformed JSON as invalid and renders its diagnostic", () => {
 	});
 });
 
+test("caps invalid diagnostics at three and points to the full report", () => {
+	withArtifact(JSON.stringify({ version: PROJECT_MAP_SCHEMA_V1, claim: "session-42", x: true, project: { name: "" }, foundations: [], capabilities: [] }), (path) => {
+		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);
+		assert.equal(state.kind, "invalid");
+		if (state.kind !== "invalid") return;
+		assert.ok(state.diagnostics.length > 3, "the artifact produces more diagnostics than the card may render");
+		const rendered = state.diagnostics.slice(0, 3).map((diagnostic) => `  ${diagnostic.path}: ${diagnostic.message}`);
+		const fourth = `  ${state.diagnostics[3]!.path}: ${state.diagnostics[3]!.message}`;
+		const descriptor = projectMapCardDescriptor(state);
+		assert.deepEqual(descriptor.body.slice(1, -1), rendered);
+		assert.equal(descriptor.body.includes(fourth), false);
+		assert.equal(descriptor.body.at(-1), "Run /gentle:project-map status for the full report.");
+	});
+});
+
 test("classifies a valid artifact as ready and carries the map", () => {
 	withArtifact(`${JSON.stringify(map(), null, 2)}\n`, (path) => {
 		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);
