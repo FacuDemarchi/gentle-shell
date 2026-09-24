@@ -9,7 +9,7 @@ import {
 	validateProjectMap,
 	type ProjectMapV1,
 } from "../lib/shell-project-map-schema.ts";
-import { approveProjectMap, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
+import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 
 const APPROVED_AT = "2026-09-23T12:00:00Z";
 const APPROVED_BY = "facundo";
@@ -122,6 +122,65 @@ test("returns a map the validator accepts", () => {
 	const validated = validateProjectMap(result.map);
 	assert.deepEqual(validated.diagnostics, []);
 	assert.deepEqual(validated.map, result.map);
+});
+
+test("declares exactly the requested surfaces without mutating the draft", () => {
+	const draft = draftMap();
+	const before = JSON.parse(JSON.stringify(draft)) as ProjectMapV1;
+	const result = declareProjectMapSurfaces({ map: draft, capabilityId: "merchant-catalog", surfaces: ["security"] });
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.diagnostics, []);
+	assert.deepEqual(result.map?.capabilities[0]?.surfaces, ["security"]);
+	assert.deepEqual(draft, before);
+});
+
+test("clears a draft capability back to undetermined surfaces", () => {
+	const result = declareProjectMapSurfaces({ map: draftMap(), capabilityId: "merchant-catalog", surfaces: [] });
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.map?.capabilities[0]?.surfaces, []);
+});
+
+test("canonicalizes declared surfaces into the frozen vocabulary order", () => {
+	const result = declareProjectMapSurfaces({ map: draftMap(), capabilityId: "merchant-catalog", surfaces: ["tests", "web", "productUx"] });
+	assert.equal(result.ok, true);
+	assert.deepEqual(result.map?.capabilities[0]?.surfaces, ["productUx", "web", "tests"]);
+});
+
+test("refuses surface declarations on an approved map before every other check", () => {
+	const approved = draftMap({ approval: { state: "approved", approvedAt: APPROVED_AT, approvedBy: APPROVED_BY } });
+	const result = declareProjectMapSurfaces({ map: approved, capabilityId: "", surfaces: ["not-a-surface"] });
+	assert.equal(result.ok, false);
+	assert.equal(result.map, null);
+	assert.equal(result.diagnostics.length, 1);
+	assert.equal(result.diagnostics[0]?.path, "$.approval.state");
+	assert.match(result.diagnostics[0]?.message ?? "", /draft-time action/);
+	assert.match(result.diagnostics[0]?.message ?? "", /returning it to draft/);
+	assert.match(result.diagnostics[0]?.message ?? "", /does not support/);
+});
+
+test("refuses an empty capability id", () => {
+	const result = declareProjectMapSurfaces({ map: draftMap(), capabilityId: "   ", surfaces: ["unknown"] });
+	assert.equal(result.ok, false);
+	assert.equal(result.map, null);
+	assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.path), ["$.capabilities"]);
+});
+
+test("refuses a capability id the map does not declare and names its ids", () => {
+	const result = declareProjectMapSurfaces({ map: draftMap(), capabilityId: "missing", surfaces: ["unknown"] });
+	assert.equal(result.ok, false);
+	assert.equal(result.map, null);
+	assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.path), ["$.capabilities"]);
+	assert.match(result.diagnostics[0]?.message ?? "", /merchant-catalog/);
+});
+
+test("refuses unknown and repeated declared surfaces by naming the frozen vocabulary", () => {
+	for (const surfaces of [["unknown"], ["web", "web"]]) {
+		const result = declareProjectMapSurfaces({ map: draftMap(), capabilityId: "merchant-catalog", surfaces });
+		assert.equal(result.ok, false, `expected refusal for ${JSON.stringify(surfaces)}`);
+		assert.equal(result.map, null);
+		assert.deepEqual(result.diagnostics.map((diagnostic) => diagnostic.path), ["$.capabilities[0].surfaces"]);
+		assert.match(result.diagnostics[0]?.message ?? "", /productUx, web, api, data, security, operations, tests/);
+	}
 });
 
 test("writes the artifact and reports its path", () => {
