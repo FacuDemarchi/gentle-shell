@@ -80,6 +80,14 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 - Narrow bottom: one compact summary line (`2/3 foundations · 6/12 capabilities`) instead of the first group header.
 - The digest is derived from the descriptor built with the collapse state, so a toggle re-renders the map section and nothing else.
 
+## PM3-3 design (fixed before the first source write)
+
+- Selection is a session-scoped capability id. Shortcuts `alt+j` and `alt+k` (env `GENTLE_PI_PROJECT_MAP_NEXT_KEY` and `GENTLE_PI_PROJECT_MAP_PREV_KEY`, `off` disables either) move it over the capabilities in canonical order and clamp at the ends; the first move with nothing selected selects the first capability. Clicking a capability row selects it, and clicking the selected row clears it. Moving to a capability whose group is collapsed expands that group: a selection the card cannot show is not a selection.
+- The selected row is marked at column 0 with `▸ ` in the accent role, replacing that row's two-space indent, so the lifecycle glyph keeps column 2 and the group headers keep their own glyph.
+- Inspector: an `Inspector` section appended to the body after Coverage whenever a capability is selected. It renders the id, the outcome, the state, the declared surfaces, the referenced foundations and dependencies with their state glyphs, the contracts, and the feature documents. Blockers are static only — the blocked state, a non-done dependency, or a non-done foundation — and runtime blockers are reported as unavailable until PM-4, never fabricated.
+- Viewport: the descriptor exposes its structured body (lines, group-header body indices, selected-row body index) so click targets and the reveal target come from the same structure instead of scanning rendered text; the card converts a body index to a rendered line by wrapping height. `lib/shell-sidebar-layout.ts` gains a reveal bridge on `sidebarState` that `installSidebar` sets and its disposer clears: it scrolls the rail with `ScrollView.scrollTo` only when the target line is outside the viewport. A rail part cannot take keyboard focus without stealing typing from the editor, so navigation stays on global shortcuts and clicks.
+- Out of scope: opening a Pi session for a capability (PM-7), runtime claims and blockers (PM-4 and PM-5), and any inspector action that mutates the artifact.
+
 ## PM3-1b design (fixed before the first source write)
 
 - `lib/shell-project-map-card.ts` owns the composition: artifact path → `projectMapCardState` → `projectMapCardDescriptor` → `renderCard(card, theme, width, { expanded })`. Width safety is inherited from `renderCard`, which clips and pads every line to exactly `width`.
