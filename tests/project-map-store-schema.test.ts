@@ -56,6 +56,9 @@ test("exports the frozen store vocabulary", () => {
 		STALE_GENERATION: "project-map-store/stale-generation",
 		STORE_CORRUPTED: "project-map-store/store-corrupted",
 		STORE_EXISTS: "project-map-store/store-exists",
+		STORE_NOT_EMPTY: "project-map-store/store-not-empty",
+		QUARANTINE_EXISTS: "project-map-store/quarantine-exists",
+		STORE_LOCKED: "project-map-store/store-locked",
 	});
 });
 
