@@ -41,7 +41,7 @@ The roadmap's central claim is that the map is the project's navigation surface,
 - The card must never overflow its width. `lib/shell-sidebar-layout.ts` deactivates the whole sidebar when any rail line exceeds the content width, so an overflowing card is not a cosmetic bug: it silently removes the sidebar.
 - The rail must declare `digest?(): string` so the existing per-section cache re-renders the map independently of Status and TODO updates.
 - Single writer; no parallel writes.
-- `pnpm` and `node_modules` are absent in this worktree, so the full suite and the typecheck gate cannot run here; focused `node --test` runs and an explicit limitation note are the substitute evidence.
+- ~~`pnpm` and `node_modules` are absent in this worktree, so the full suite and the typecheck gate cannot run here; focused `node --test` runs and an explicit limitation note are the substitute evidence.~~ Superseded 2026-09-23 (see Progress): `node_modules` and `.gentle-ai` are installed in this worktree, so focused suites, the rendering suites, the full suite, and `node scripts/check-types.mjs` all run here.
 
 ## Authorized edit surfaces
 - `odd/tasks/pm-3-render-and-inspector.md`
@@ -73,14 +73,19 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 
 ## Tasks
 
-- [ ] **PM3-1 — Read-only card of the real map**
-  - Read the artifact through the schema's own reader and classify the result as empty, invalid, or ready.
-  - Render Foundations, Product capabilities, and Coverage through `renderCard`, with a glyph per state and the approval state in the subtitle.
+- [x] **PM3-1a — Pure card core of the real map** (delivered 2026-09-23)
+  - Read the artifact through the schema's own reader and classify the result as empty, invalid, or ready. — `lib/shell-project-map-view.ts`
   - Compute per-surface coverage from capability state, and render an undeclared surface as unknown.
-  - Export a digest derived from the rendered lines.
-  - Register the `project-map` rail between Status and Agents, mounted only while shown, with the same component as the narrow-mode bottom so the card stays visible below the editor when the sidebar is inactive.
-  - Add `show` and `hide` sub-actions that are session-scoped and write nothing to disk.
-  - Cover the empty, invalid, draft, and approved states, width safety at boundary widths, the digest, and the sub-action validation.
+  - Render Foundations, Product capabilities, and Coverage as card lines, with a glyph per state and the approval state in the subtitle. — `projectMapCardDescriptor`
+  - Cover the empty, invalid, draft, and approved states, width safety at the narrowest card, and the digest. — `tests/shell-project-map-view.test.ts`, 16 tests
+  - Evidence: commits `21b4dce7` (pure data core) and `33eb4500` (silence the type-checker gate without union narrowing), reviewed and approved; `node --experimental-strip-types --test tests/shell-project-map-view.test.ts tests/gentle-project-map.test.ts` → 34/34 pass, 0 fail.
+
+- [ ] **PM3-1b — Card composition and shell wiring**
+  - `lib/shell-project-map-card.ts`: compose `projectMapCardDescriptor` through `renderCard`, and derive the digest from the rendered lines so it cannot drift from what the card shows (closes the R3 finding recorded in Progress).
+  - Register the `project-map` rail between the `footer` and `agents` sections (the plan's "Status" is that footer), mounted only while shown, with the same component as the narrow-mode bottom so the card stays visible below the editor when the sidebar is inactive.
+  - Add `show` and `hide` sub-actions that are session-scoped and write nothing to disk, and keep rejecting an unknown sub-action by listing the valid ones.
+  - Cover the composition at boundary widths, the rail ordering, the digest re-render, the narrow-mode bottom, and the sub-action validation. — `tests/shell-project-map-card.test.ts`, `tests/gentle-project-map.test.ts`, `tests/shell-sidebar-layout.test.ts`
+  - Update `docs/project-map.md` and `docs/gentle-shell.md` with the card, its states, and the sub-actions; PM3-5 still owns the unit-level documentation and verification.
 
 - [ ] **PM3-2 — Coverage explanations and grouping**
   - Explain each coverage value in terms of the capabilities behind it, so a percentage is never the only thing on screen.
@@ -118,8 +123,11 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 Estimates: PM3-1 ≈ 420 lines (view library, its tests, the extension wiring, the layout slot, and the extension tests), PM3-2 ≈ 300, PM3-3 ≈ 400, PM3-4 ≈ 350, documentation ≈ 120. The unit total exceeds the 400-line review budget several times over, so it is implemented and reviewed as separate work-unit commits, each reporting its own measured size. PM3-1 is at the budget boundary and is split further if it measures over.
 
 ## Progress
+- 2026-09-23: The verifiability premise of the PM3-1 split is void. `node_modules` and `.gentle-ai` are installed in this worktree (`npx --yes pnpm@11.1.1 install --frozen-lockfile`, then `node scripts/install-gentle-ai.mjs`), so PM3-1b is fully verifiable here: the focused suites, the rendering suites (`shell-card`, `shell-todo`, `shell-sidebar-layout`, `gentle-todo`), the full suite, and `node scripts/check-types.mjs` all run. The split stays as a work-unit boundary — each half is independently reviewable and under the 400-line budget — not as an excuse for unverified code.
+- 2026-09-23: PM3-1a closed. Commits `21b4dce7` and `33eb4500`; `tests/shell-project-map-view.test.ts` holds 16 tests and the view plus command suites pass 34/34 with 0 failures on the current tree. PM3-1b scoped as the next work unit.
+- 2026-09-23: One review finding carried into PM3-1b. `projectMapCardDigest` keys the invalid state on `code@path` only (`lib/shell-project-map-view.ts:170`) while the card renders `path: message`, so two invalid artifacts that differ only in a diagnostic message render differently and digest identically: the section cache would keep painting the stale card. The card contract already requires the digest to be derived from the rendered lines, so PM3-1b implements that instead of extending the key, which removes the whole drift class.
 - 2026-09-23: PM3-1 split into PM3-1a and PM3-1b after measuring. The boundary is verifiability: everything that imports the TUI runtime is unverifiable in this clone, because `node_modules` is absent and every rendering suite in the repository fails for that reason (`shell-card`, `shell-todo`, `shell-sidebar-layout`, `gentle-todo`). PM3-1a is the pure view core, which imports no runtime and therefore runs; PM3-1b is the thin `renderCard` composition plus the shell wiring, which cannot run here and is recorded as such. Each half stays under the 400-line budget.
 - 2026-09-23: Unit planned after read-only exploration of both the uncommitted prototype in the sibling clone and the current rendering surfaces in this branch. Decisions on the prototype, the entry point, the staging, and surface collection accepted by the user as recommended. Task document created before the first source write. PM3-1 through PM3-5 pending.
 
 ## Next decision
-Implementation of PM3-1 may begin. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
+PM3-1a is closed; PM3-1b is the next implementation step. Commit, push, and PR remain separate decisions and require explicit authorization; native review remains a separate user-owned choice.
