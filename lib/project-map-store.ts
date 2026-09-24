@@ -148,6 +148,10 @@ function storeLockedDiagnostic(): ProjectMapStoreDiagnostic {
 	return diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED, "Project-map store lock is active or ambiguous.");
 }
 
+function invalidFieldDiagnostic(path: string, message: string): ProjectMapStoreDiagnostic {
+	return { code: PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD, path, message, severity: "error" };
+}
+
 function fsyncFile(path: string): void {
 	const descriptor = openSync(path, "r+");
 	try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
@@ -259,6 +263,10 @@ function releaseProjectMapStoreLock(root: string, handle: ProjectMapStoreLockHan
 }
 
 function mutateWithProjectMapStoreLock(root: string, now: string, mutate: () => ProjectMapStoreMutationResult): ProjectMapStoreMutationResult {
+	// The acquired_at this lock persists is validated by every later reader, so an invalid
+	// instant must be refused before the lock exists: otherwise release cannot recognize its
+	// own owner and the malformed lock permanently refuses every later mutation.
+	if (!isIsoInstant(now)) return { descriptor: null, diagnostics: [invalidFieldDiagnostic("$.now", "Expected an ISO-8601 instant.")] };
 	const acquired = acquireProjectMapStoreLock(root, now);
 	if (acquired.handle === null) return { descriptor: null, diagnostics: acquired.diagnostics };
 	let result: ProjectMapStoreMutationResult;
@@ -347,10 +355,7 @@ export function initializeProjectMapStore(options: InitializeProjectMapStoreOpti
 
 export function quarantineProjectMapStore(options: { root: string; now: string }): ProjectMapStoreQuarantineResult {
 	if (!isIsoInstant(options.now)) {
-		return {
-			quarantined: null,
-			diagnostics: [{ code: PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD, path: "$.now", message: "Expected an ISO-8601 instant.", severity: "error" }],
-		};
+		return { quarantined: null, diagnostics: [invalidFieldDiagnostic("$.now", "Expected an ISO-8601 instant.")] };
 	}
 	const source = descriptorPath(options.root);
 	const destination = join(options.root, `store.corrupt.${options.now.replace(/[:.]/g, "-")}.json`);
