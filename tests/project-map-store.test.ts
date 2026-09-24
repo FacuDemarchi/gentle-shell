@@ -229,7 +229,7 @@ test("uses the injected clock for each successor updated_at", () => {
 	});
 });
 
-test("does not prune history when a swap fails after archiving", () => {
+test("archives and prunes nothing when a mutation is refused", () => {
 	withRoot((root) => {
 		let descriptor = initialize(root);
 		for (let generation = 1; generation <= 20; generation += 1) {
@@ -237,18 +237,38 @@ test("does not prune history when a swap fails after archiving", () => {
 			assert.ok(result.descriptor);
 			descriptor = result.descriptor;
 		}
-		// The swap is failed after the archive on purpose: the successor carries an updated_at the
-		// store schema refuses, so the superseded descriptor is archived and the new one is never
-		// written, and the prune that only runs after a successful swap must not run. This replaced
-		// a read-only-root fixture, which under the PM4-2c lock fails at lock acquisition and never
-		// reaches the archive at all (the previous version kept passing for the wrong reason).
-		const result = advance(root, descriptor, "not-an-instant");
-		assert.equal(result.descriptor, null);
-		assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD && diagnostic.path === "$.updated_at"));
-		const generations = readdirSync(join(root, "history"))
-			.map((name) => Number.parseInt(name.split("-", 1)[0], 10))
-			.sort((left, right) => left - right);
-		assert.deepEqual(generations, Array.from({ length: 21 }, (_, generation) => generation));
+		// The swap-failure-after-archive path is no longer reachable through inputs: the PM4-2c
+		// lock shares the store root's write permission and an invalid instant is refused before
+		// the archive. This pins the reachable half instead: a refused mutation archives nothing
+		// and prunes nothing, and the store stays where it was.
+		const before = readdirSync(join(root, "history")).sort();
+		const refused = advanceProjectMapStore({
+			root,
+			expected: { generation: 0, epoch: EPOCH, predecessor: digest("stale") },
+			now: "2026-09-24T23:59:59Z",
+		});
+		assert.equal(refused.descriptor, null);
+		assert.deepEqual(refused.diagnostics.map((diagnostic) => diagnostic.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STALE_GENERATION]);
+		assert.deepEqual(readdirSync(join(root, "history")).sort(), before);
+		assert.equal(readProjectMapStoreDescriptor(root).descriptor?.generation, 20);
+	});
+});
+
+test("refuses an invalid instant before the lock and stays usable afterwards", () => {
+	withRoot((root) => {
+		const descriptor = initialize(root);
+		const before = readFileSync(join(root, "store.json"), "utf8");
+		const invalid = advance(root, descriptor, "not-an-instant");
+		assert.equal(invalid.descriptor, null);
+		assert.ok(invalid.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD && diagnostic.path === "$.now"));
+		assert.equal(existsSync(join(root, "store.lock")), false);
+		assert.equal(readFileSync(join(root, "store.json"), "utf8"), before);
+		const initialized = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: "not-an-instant" });
+		assert.equal(initialized.descriptor, null);
+		assert.equal(existsSync(join(root, "store.lock")), false);
+		const recovered = advance(root, descriptor, UPDATED_AT);
+		assert.ok(recovered.descriptor);
+		assert.equal(recovered.descriptor?.generation, 1);
 	});
 });
 
