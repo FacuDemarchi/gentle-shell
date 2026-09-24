@@ -1,0 +1,175 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import {
+	PROJECT_MAP_STORE_DIAGNOSTIC_CODES,
+	PROJECT_MAP_STORE_RECORD_KINDS,
+	PROJECT_MAP_STORE_SCHEMA_V1,
+	canonicalizeProjectMapStoreValue,
+	parseProjectMapStoreValue,
+	readProjectMapStoreValueFile,
+	serializeProjectMapStoreValue,
+	validateProjectMapStoreValue,
+	type ProjectMapStoreRecordKind,
+} from "../lib/project-map-store-schema.ts";
+
+const UUID = "123e4567-e89b-12d3-a456-426614174000";
+const LATER_UUID = "123e4567-e89b-12d3-a456-426614174001";
+const AT = "2026-09-24T12:00:00Z";
+const RENEW_AFTER = "2026-09-24T12:00:10Z";
+const RENEW_BY = "2026-09-24T12:01:00Z";
+const DIGEST = `sha256:${"a".repeat(64)}`;
+
+function record(kind: ProjectMapStoreRecordKind, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	const common = { schema: PROJECT_MAP_STORE_SCHEMA_V1, kind };
+	const records: Record<ProjectMapStoreRecordKind, Record<string, unknown>> = {
+		descriptor: { ...common, repository_id: DIGEST, generation: 0, epoch: UUID, predecessor: null, created_at: AT, updated_at: AT },
+		claim: { ...common, capability_id: "project-map", session_id: "session-1", acquired_at: AT, lease: { renewal_after: RENEW_AFTER, renew_by: RENEW_BY } },
+		heartbeat: { ...common, session_id: "session-1", pid: 1, incarnation: UUID, beat_at: AT },
+		"session-binding": { ...common, session_id: "session-1", pid: 1, incarnation: UUID, workspace_root: "/workspace", bound_at: AT },
+		blocker: { ...common, capability_id: "project-map", reason: "Needs review", raised_by: "session-1", raised_at: AT },
+		"readiness-receipt": { ...common, capability_id: "project-map", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
+	};
+	return { ...records[kind], ...overrides };
+}
+
+function codes(result: { diagnostics: { code: string }[] }): string[] {
+	return result.diagnostics.map((diagnostic) => diagnostic.code);
+}
+
+function paths(result: { diagnostics: { path: string }[] }): string[] {
+	return result.diagnostics.map((diagnostic) => diagnostic.path);
+}
+
+test("exports the frozen store vocabulary", () => {
+	assert.equal(PROJECT_MAP_STORE_SCHEMA_V1, "gentle-shell.project-map-store/v1");
+	assert.deepEqual([...PROJECT_MAP_STORE_RECORD_KINDS], ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "readiness-receipt"]);
+	assert.deepEqual(PROJECT_MAP_STORE_DIAGNOSTIC_CODES, {
+		UNSUPPORTED_SCHEMA_VERSION: "project-map-store/unsupported-schema-version",
+		UNKNOWN_FIELD: "project-map-store/unknown-field",
+		MISSING_FIELD: "project-map-store/missing-field",
+		INVALID_FIELD: "project-map-store/invalid-field",
+		INVALID_JSON: "project-map-store/invalid-json",
+		UNREADABLE_STORE: "project-map-store/unreadable-store",
+	});
+});
+
+test("accepts every frozen record shape and retains the kind envelope through serialization", () => {
+	for (const kind of PROJECT_MAP_STORE_RECORD_KINDS) {
+		const validated = validateProjectMapStoreValue(kind, record(kind));
+		assert.deepEqual(validated.diagnostics, [], kind);
+		assert.ok(validated.record, kind);
+		assert.equal(validated.record.kind, kind);
+		const reparsed = parseProjectMapStoreValue(kind, serializeProjectMapStoreValue(kind, validated.record).record as string);
+		assert.deepEqual(reparsed.diagnostics, [], kind);
+		assert.equal(reparsed.record?.kind, kind);
+	}
+});
+
+test("accepts migration-safe unresolved blocker defaults", () => {
+	const result = validateProjectMapStoreValue("blocker", record("blocker"));
+	assert.deepEqual(result.diagnostics, []);
+	assert.deepEqual(Object.keys(result.record as object), ["schema", "kind", "capability_id", "reason", "raised_by", "raised_at"]);
+});
+
+test("refuses unsupported versions and missing, unknown, or mismatched kinds", () => {
+	const version = validateProjectMapStoreValue("claim", record("claim", { schema: "gentle-shell.project-map-store/v2" }));
+	assert.deepEqual(codes(version), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNSUPPORTED_SCHEMA_VERSION]);
+	assert.deepEqual(paths(version), ["$.schema"]);
+
+	const missing = record("claim");
+	delete missing.kind;
+	const missingKind = validateProjectMapStoreValue("claim", missing);
+	assert.deepEqual(codes(missingKind), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(missingKind), ["$.kind"]);
+
+	const mismatch = validateProjectMapStoreValue("claim", record("descriptor", { kind: "lease" }));
+	assert.deepEqual(codes(mismatch), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(mismatch), ["$.kind"]);
+
+	const other = validateProjectMapStoreValue("claim", record("descriptor"));
+	assert.deepEqual(codes(other), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(other), ["$.kind"]);
+});
+
+test("reports unknown and missing fields in deterministic discovery order", () => {
+	const value = record("claim", { unexpected: true });
+	delete value.session_id;
+	delete value.acquired_at;
+	const result = validateProjectMapStoreValue("claim", value);
+	assert.deepEqual(codes(result), [
+		PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNKNOWN_FIELD,
+		PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD,
+		PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD,
+	]);
+	assert.deepEqual(paths(result), ["$.unexpected", "$.session_id", "$.acquired_at"]);
+});
+
+test("enforces descriptor generation epoch and predecessor fields", () => {
+	const result = validateProjectMapStoreValue("descriptor", record("descriptor", { repository_id: "sha256:short", generation: -1, epoch: "no", predecessor: "sha256:bad" }));
+	assert.deepEqual(codes(result), Array(4).fill(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.deepEqual(paths(result), ["$.repository_id", "$.generation", "$.epoch", "$.predecessor"]);
+});
+
+test("enforces the claim lease shape and ordered renewal window", () => {
+	const malformed = validateProjectMapStoreValue("claim", record("claim", { lease: { renewal_after: RENEW_BY, renew_by: RENEW_AFTER } }));
+	assert.deepEqual(codes(malformed), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(malformed), ["$.lease.renew_by"]);
+
+	const beforeAcquire = validateProjectMapStoreValue("claim", record("claim", { lease: { renewal_after: "2026-09-24T11:59:59Z", renew_by: RENEW_BY } }));
+	assert.deepEqual(paths(beforeAcquire), ["$.lease.renewal_after"]);
+});
+
+test("refuses readiness receipts that imply delivery authority", () => {
+	const result = validateProjectMapStoreValue("readiness-receipt", record("readiness-receipt", { authority: "commit" }));
+	assert.deepEqual(codes(result), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(result), ["$.authority"]);
+});
+
+test("enforces record field rules and paired blocker resolution", () => {
+	const heartbeat = validateProjectMapStoreValue("heartbeat", record("heartbeat", { session_id: "", pid: 0, incarnation: LATER_UUID.replace("1", "x"), beat_at: "tomorrow" }));
+	assert.deepEqual(paths(heartbeat), ["$.session_id", "$.pid", "$.incarnation", "$.beat_at"]);
+
+	const blocker = validateProjectMapStoreValue("blocker", record("blocker", { resolved_at: AT }));
+	assert.deepEqual(codes(blocker), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(blocker), ["$.resolution"]);
+});
+
+test("canonicalizes byte-identically regardless of insertion order", () => {
+	const first = record("readiness-receipt");
+	const second = { authority: "none", evidence: ["node --test"], verified: ["tests"], issued_at: AT, capability_id: "project-map", kind: "readiness-receipt", schema: PROJECT_MAP_STORE_SCHEMA_V1 };
+	const one = serializeProjectMapStoreValue("readiness-receipt", first);
+	const two = serializeProjectMapStoreValue("readiness-receipt", second);
+	assert.deepEqual(one.diagnostics, []);
+	assert.deepEqual(two.diagnostics, []);
+	assert.equal(one.record, two.record);
+	assert.deepEqual(Object.keys(canonicalizeProjectMapStoreValue("readiness-receipt", second).record as object), ["schema", "kind", "capability_id", "issued_at", "verified", "evidence", "authority"]);
+});
+
+test("distinguishes invalid JSON from an unreadable store file", () => {
+	const directory = mkdtempSync(join(tmpdir(), "project-map-store-schema-"));
+	try {
+		const broken = join(directory, "broken.json");
+		writeFileSync(broken, "{ not json", "utf8");
+		const invalid = readProjectMapStoreValueFile("claim", broken);
+		assert.deepEqual(codes(invalid), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_JSON]);
+		const missing = readProjectMapStoreValueFile("claim", join(directory, "missing.json"));
+		assert.deepEqual(codes(missing), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("never throws on malformed values and hostile prototypes", () => {
+	const hostile = Object.create(null) as Record<string, unknown>;
+	hostile.schema = PROJECT_MAP_STORE_SCHEMA_V1;
+	hostile.kind = "claim";
+	for (const value of [undefined, null, 1, [], hostile]) {
+		assert.doesNotThrow(() => validateProjectMapStoreValue("claim", value));
+		assert.doesNotThrow(() => canonicalizeProjectMapStoreValue("claim", value));
+		assert.doesNotThrow(() => serializeProjectMapStoreValue("claim", value));
+	}
+	for (const value of [undefined, null, 1, {}]) assert.doesNotThrow(() => parseProjectMapStoreValue("claim", value as string));
+});
