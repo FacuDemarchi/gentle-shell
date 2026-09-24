@@ -1,7 +1,7 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { assertManagedStorePathV1 } from "./review-repository.ts";
-import { resolveCanonicalGitRepositoryIdentitySync } from "./review-session-standing-permission.ts";
 import { resolveSessionWorktreeWithGit } from "./session-worktree-registry.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, type ProjectMapStoreDiagnostic } from "./project-map-store-schema.ts";
 
@@ -25,8 +25,7 @@ export function resolveProjectMapStoreRoot(cwd: string): ProjectMapStoreRootResu
 	try {
 		const worktree = resolveSessionWorktreeWithGit(cwd, cwd);
 		if (!worktree) return refusal("Git repository identity could not be resolved.");
-		const repositoryId = resolveCanonicalGitRepositoryIdentitySync(cwd);
-		if (!repositoryId) return refusal("Git repository identity could not be resolved.");
+		const repositoryId = `sha256:${createHash("sha256").update(worktree.commonDir).digest("hex")}`;
 		const root = assertManagedStorePathV1(worktree.commonDir, join(worktree.commonDir, "gentle-ai", "project-map"));
 		return { root, commonDir: worktree.commonDir, repositoryId, diagnostics: [] };
 	} catch {
