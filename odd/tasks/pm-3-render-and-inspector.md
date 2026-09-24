@@ -71,6 +71,15 @@ glyphs: done ✓   active ◉   review ◉   ready ○   blocked ✕   planned �
 - The digest is derived from the rendered lines, so it changes exactly when the visible card changes.
 - The overlay input is accepted and empty; nothing renders from it until PM-4 supplies data.
 
+## PM3-2 design (fixed before the first source write)
+
+- Groups: `Foundations` and `Product capabilities` become collapsible groups. Each header carries a compact indicator of done over total (`▾ Foundations 2/3`, `▸ Product capabilities 6/12`) and the collapse glyph (`▾` expanded, `▸` collapsed). An empty foundations list renders no group; the capabilities group always renders.
+- Collapse state: `{ foundations: boolean; capabilities: boolean }` per session, in memory, dropped on session shutdown, exactly like visibility; `true` means collapsed.
+- Interaction: one configurable shortcut folds and unfolds both groups at once — fold all when any group is expanded, unfold all otherwise — following the Todo and Agents precedent of an env-overridable key plus a top-rule hint. Clicking a group header in the rail toggles that group alone; the narrow bottom stays a non-interactive summary. Hover styling, per-row selection, and viewport behavior stay out (PM3-3).
+- Coverage explanations: every declared surface renders its value and the capabilities behind it with their state glyph (`Web 67% (2/3): auth ✓, search ✓, billing ✕`), pre-wrapped at the existing coverage budget so the descriptor keeps its 60-column bound; an undeclared surface still renders `—`.
+- Narrow bottom: one compact summary line (`2/3 foundations · 6/12 capabilities`) instead of the first group header.
+- The digest is derived from the descriptor built with the collapse state, so a toggle re-renders the map section and nothing else.
+
 ## PM3-1b design (fixed before the first source write)
 
 - `lib/shell-project-map-card.ts` owns the composition: artifact path → `projectMapCardState` → `projectMapCardDescriptor` → `renderCard(card, theme, width, { expanded })`. Width safety is inherited from `renderCard`, which clips and pads every line to exactly `width`.
