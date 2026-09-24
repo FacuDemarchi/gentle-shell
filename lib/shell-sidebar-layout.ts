@@ -179,7 +179,7 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme): () => void {
 			const preparedHeaderLines = [...(headerPart?.render(Math.max(0, width - HEADER_RIGHT_INSET)) ?? [])];
 			const headerActive = headerPart !== undefined && preparedHeaderLines.some((line) => line.trim() !== "");
 			const contentWidth = scroll.getContentWidth(RAIL_WIDTH);
-			const sections = ["footer", "agents", "todo"].map((key) => {
+			const sections = ["footer", "project-map", "agents", "todo"].map((key) => {
 				const component = state.parts.get(key);
 				if (!component) {
 					sectionCache.delete(key);

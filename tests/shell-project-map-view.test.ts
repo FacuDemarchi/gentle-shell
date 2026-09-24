@@ -15,6 +15,7 @@ import {
 	projectMapCardDigest,
 	projectMapCardState,
 	projectMapCoverage,
+	type ProjectMapCardState,
 } from "../lib/shell-project-map-view.ts";
 
 function map(overrides: Partial<ProjectMapV1> = {}): ProjectMapV1 {
@@ -77,6 +78,18 @@ test("classifies an invalid artifact as invalid and shows the diagnostic path", 
 		const descriptor = projectMapCardDescriptor(state);
 		assert.equal(descriptor.tone, "error");
 		assert.ok(descriptor.body.join("\n").includes("$.project.name"), "expected the diagnostic path in the card");
+	});
+});
+
+test("classifies malformed JSON as invalid and renders its diagnostic", () => {
+	withArtifact("{", (path) => {
+		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);
+		assert.equal(state.kind, "invalid");
+		const diagnostics = (state as { diagnostics?: Array<{ code: string; message: string }> }).diagnostics;
+		assert.ok(diagnostics?.some((diagnostic) => diagnostic.code === "project-map/invalid-json"));
+		const descriptor = projectMapCardDescriptor(state);
+		assert.equal(descriptor.tone, "error");
+		assert.ok(descriptor.body.join("\n").includes(diagnostics?.[0]?.message ?? ""));
 	});
 });
 
@@ -152,7 +165,9 @@ test("keeps the digest stable when the card does not change and moves when it do
 	assert.equal(projectMapCardDigest(ready(map())), base);
 
 	const restated = map({ capabilities: [...map().capabilities].reverse() });
-	assert.equal(projectMapCardDigest(ready(restated)), base, "canonical order must not move the digest");
+	// The reader canonicalizes artifacts, so reordered rows are only reachable through a
+	// hand-constructed state; the digest follows the render for every input.
+	assert.notEqual(projectMapCardDigest(ready(restated)), base, "rendered row order must move the digest");
 
 	const changed = map({ capabilities: [{ ...map().capabilities[0], state: "blocked" }, map().capabilities[1], map().capabilities[2]] });
 	assert.notEqual(projectMapCardDigest(ready(changed)), base);
@@ -193,4 +208,17 @@ test("classifies an unreadable artifact as empty rather than throwing", () => {
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test("digest follows the rendered descriptor rather than invalid codes or unrendered fields", () => {
+	const invalid = (message: string): ProjectMapCardState => ({
+		kind: "invalid",
+		path: PROJECT_MAP_ARTIFACT_PATH,
+		diagnostics: [{ code: "project-map/invalid-field", path: "$.project.name", message, severity: "error" }],
+		overlay: PROJECT_MAP_OVERLAY_UNAVAILABLE,
+	});
+	assert.notEqual(projectMapCardDigest(invalid("Expected a project name.")), projectMapCardDigest(invalid("Project name cannot be blank.")));
+
+	const base = projectMapCardDigest(ready(map()));
+	assert.equal(projectMapCardDigest(ready(map({ project: { id: "another-id", name: "Example Shop" } }))), base);
 });

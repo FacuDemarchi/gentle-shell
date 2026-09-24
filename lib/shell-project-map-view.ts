@@ -2,7 +2,6 @@ import {
 	PROJECT_MAP_ARTIFACT_PATH,
 	PROJECT_MAP_SURFACES,
 	readProjectMapFile,
-	serializeProjectMap,
 	type ProjectMapDiagnostic,
 	type ProjectMapState,
 	type ProjectMapSurface,
@@ -81,10 +80,10 @@ export function projectMapCoverage(map: ProjectMapV1): ProjectMapCoverageEntry[]
 export function projectMapCardState(path: string, overlay: ProjectMapOverlay = PROJECT_MAP_OVERLAY_UNAVAILABLE): ProjectMapCardState {
 	const read = readProjectMapFile(path);
 	if (read.map === null) {
-		// An artifact that cannot be read and one that is not there both leave the card with
-		// nothing to show, and the difference is what `status` reports in full.
-		const fatal = read.diagnostics.filter((diagnostic) => diagnostic.code === "project-map/unreadable-artifact" || diagnostic.code === "project-map/invalid-json");
-		if (fatal.length === read.diagnostics.length) return { kind: "empty", path, overlay };
+		// A missing or unreadable artifact leaves the card empty. An artifact that was read but
+		// rejected, including malformed JSON, remains invalid so its diagnostic stays visible.
+		const unreadable = read.diagnostics.length > 0 && read.diagnostics.every((diagnostic) => diagnostic.code === "project-map/unreadable-artifact");
+		if (unreadable) return { kind: "empty", path, overlay };
 		return { kind: "invalid", path, diagnostics: read.diagnostics, overlay };
 	}
 	return { kind: "ready", path, map: read.map, coverage: projectMapCoverage(read.map), overlay };
@@ -161,12 +160,10 @@ export function projectMapCardDescriptor(state: ProjectMapCardState): ProjectMap
 }
 
 /**
- * A stable digest of what the card shows. Width and theme are already part of the layout's
- * section cache key, so this only has to move when the content does, and canonicalizing the
- * map keeps a reordered artifact from looking like a change.
+ * A stable digest of the descriptor the card renders. Width and theme are already part of the
+ * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
 export function projectMapCardDigest(state: ProjectMapCardState): string {
-	if (state.kind === "empty") return "project-map/empty";
-	if (state.kind === "invalid") return `project-map/invalid:${state.diagnostics.map((diagnostic) => `${diagnostic.code}@${diagnostic.path}`).join("|")}`;
-	return `project-map/ready:${serializeProjectMap(state.map)}`;
+	const descriptor = projectMapCardDescriptor(state);
+	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body })}`;
 }

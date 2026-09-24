@@ -91,6 +91,15 @@ test("rail orders unified Status, agents, TODO without standalone changes", (t) 
 	assert.deepEqual(rail(f).render(50).map((line) => line.trim()), ["✿ Gentle Shell ✿", "", "Status", "", "agents", "", "todo"]);
 });
 
+test("rail orders Project Map between Status and Agents when it is registered", (t) => {
+	const f = fixture();
+	for (const key of ["todo", "agents", "project-map"]) {
+		sidebarPart(f.tui, key, { render: () => [key], invalidate() {} });
+	}
+	t.after(installSidebar(f.tui, theme));
+	assert.deepEqual(rail(f).render(50).map((line) => line.trim()).filter(Boolean), ["✿ Gentle Shell ✿", "Status", "project-map", "agents", "todo"]);
+});
+
 test("branding belongs to scroll content before Status, never transcript or narrow bottom", (t) => {
 	const f = fixture();
 	t.after(installSidebar(f.tui, theme));
