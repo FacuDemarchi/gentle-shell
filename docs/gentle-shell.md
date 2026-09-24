@@ -199,7 +199,9 @@ Every subagent is its own `pi --mode rpc` child process, so the terminal never r
 
 ### Gentle Project Map
 
-The Project Map card renders the repository's versioned map as Product capabilities and Coverage, with Foundations only when the map declares them. It renders a missing or unreadable artifact as empty and malformed JSON as invalid with its diagnostic; its subtitle distinguishes draft from approved. A ready artifact appears by default; use `/gentle:project-map show` to show an empty or invalid map for the current session, and `/gentle:project-map hide` to remove it again. Those choices are in memory only and are discarded on session shutdown. In narrow or regular mode the same card remains visible below the editor as a one-line collapsed card.
+The Project Map card renders the repository's versioned map as collapsible Foundations (when declared) and Product capabilities groups, plus Coverage. Group headers show their completion indicator (`▾ Foundations 2/3`, `▸ Product capabilities 6/12`); clicking a header in the fullscreen rail toggles that group alone. Coverage names every capability behind a declared value with its state glyph (`Web 67% (2/3): auth ✓, search ✓, billing ✕`); an undeclared surface remains `—`. It renders a missing or unreadable artifact as empty and malformed JSON as invalid with its diagnostic; its subtitle distinguishes draft from approved.
+
+`alt+m` folds both groups when either is expanded, or unfolds both once all are folded. `GENTLE_PI_PROJECT_MAP_KEY` rebinds it; an empty value keeps `alt+m`, and `off` disables the shortcut. The key appears in the card top rule where it fits. A ready artifact appears by default; use `/gentle:project-map show` to show an empty or invalid map for the current session, and `/gentle:project-map hide` to remove it again. Visibility and collapse choices are in memory only and are discarded on session shutdown. In narrow or regular mode the same card remains visible below the editor as a non-interactive one-line `foundations · capabilities` completion summary.
 
 ### Gentle Todo
 

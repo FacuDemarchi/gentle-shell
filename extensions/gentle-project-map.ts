@@ -13,6 +13,12 @@ import {
 	type ProjectMapDiagnostic,
 	type ProjectMapV1,
 } from "../lib/shell-project-map-schema.ts";
+import {
+	PROJECT_MAP_EXPANDED,
+	toggleProjectMapGroup,
+	type ProjectMapCollapseState,
+	type ProjectMapGroup,
+} from "../lib/shell-project-map-view.ts";
 
 // Project Map: the repository-owned definition of what the product is, kept below
 // Status. This extension owns only the human entry point — generating a draft,
@@ -22,6 +28,13 @@ import {
 
 export const PROJECT_MAP_COMMAND_NAME = "gentle:project-map";
 export const PROJECT_MAP_WIDGET_KEY = "gentle-project-map";
+export const PROJECT_MAP_COLLAPSE_KEY_DEFAULT = "alt+m";
+
+export function parseProjectMapCollapseKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	const value = env.GENTLE_PI_PROJECT_MAP_KEY?.trim();
+	if (value === undefined || value === "") return PROJECT_MAP_COLLAPSE_KEY_DEFAULT;
+	return value.toLowerCase() === "off" ? undefined : value;
+}
 export const PROJECT_MAP_SUB_ACTIONS = ["draft", "approve", "status", "show", "hide"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
@@ -282,18 +295,38 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	return { action: "approve", wrote: true, map: transition.map, assumptions: [], omissions: [], diagnostics: [] };
 }
 
-export default function gentleProjectMap(pi: ExtensionAPI): void {
-	const visibility = new Map<string, boolean>();
+interface ProjectMapSessionRecord {
+	visibility: boolean | undefined;
+	collapse: ProjectMapCollapseState;
+}
+
+export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void {
+	const sessions = new Map<string, ProjectMapSessionRecord>();
 	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI }>();
+	const collapseKey = parseProjectMapCollapseKey(env);
 	const sessionKey = (ctx: ProjectMapCommandContext) => ctx.sessionManager?.getSessionId() ?? "";
+	const record = (ctx: ProjectMapCommandContext): ProjectMapSessionRecord => {
+		const key = sessionKey(ctx);
+		const existing = sessions.get(key);
+		if (existing) return existing;
+		const created = { visibility: undefined, collapse: { ...PROJECT_MAP_EXPANDED } };
+		sessions.set(key, created);
+		return created;
+	};
 	const artifactPath = (ctx: ProjectMapCommandContext) => join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
-	const effectiveVisibility = (ctx: ProjectMapCommandContext) => visibility.get(sessionKey(ctx)) ?? projectMapCardVisible(artifactPath(ctx));
+	const effectiveVisibility = (ctx: ProjectMapCommandContext) => record(ctx).visibility ?? projectMapCardVisible(artifactPath(ctx));
+	const refresh = (ctx: ProjectMapCommandContext) => {
+		const current = mounted.get(sessionKey(ctx));
+		if (!current) return;
+		invalidateSidebar(current.tui);
+		(current.tui as unknown as { requestRender?: () => void }).requestRender?.();
+	};
 	const unmount = (ctx: ProjectMapCommandContext) => {
 		const key = sessionKey(ctx);
 		const current = mounted.get(key);
 		current?.part.dispose?.();
 		ctx.ui.setWidget?.(PROJECT_MAP_WIDGET_KEY, undefined);
-		if (current) invalidateSidebar(current.tui);
+		if (current) refresh(ctx);
 		mounted.delete(key);
 	};
 	const mount = (ctx: ProjectMapCommandContext) => {
@@ -301,7 +334,15 @@ export default function gentleProjectMap(pi: ExtensionAPI): void {
 		const key = sessionKey(ctx);
 		const path = artifactPath(ctx);
 		ctx.ui.setWidget(PROJECT_MAP_WIDGET_KEY, (tui, theme) => {
-			const part = projectMapCardPart(tui, path, theme);
+			const session = {
+				collapse: () => record(ctx).collapse,
+				toggle: (group: ProjectMapGroup) => {
+					const current = record(ctx);
+					current.collapse = toggleProjectMapGroup(current.collapse, group);
+					refresh(ctx);
+				},
+			};
+			const part = projectMapCardPart(tui, path, theme, session, collapseKey);
 			mounted.set(key, { part, tui });
 			return part;
 		}, { placement: "belowEditor" });
@@ -311,9 +352,26 @@ export default function gentleProjectMap(pi: ExtensionAPI): void {
 		description: "Generate, inspect, approve, show, or hide the repository Project Map.",
 		handler: async (args, ctx) => {
 			const commandCtx = ctx as unknown as ProjectMapCommandContext;
-			await runProjectMapCommand(args, commandCtx, { onShow: () => { visibility.set(sessionKey(commandCtx), true); mount(commandCtx); }, onHide: () => { visibility.set(sessionKey(commandCtx), false); unmount(commandCtx); } });
+			await runProjectMapCommand(args, commandCtx, { onShow: () => { record(commandCtx).visibility = true; mount(commandCtx); }, onHide: () => { record(commandCtx).visibility = false; unmount(commandCtx); } });
 		},
 	});
+
+	if (collapseKey) {
+		pi.registerShortcut(collapseKey as Parameters<ExtensionAPI["registerShortcut"]>[0], {
+			description: "Collapse or expand the Project Map groups",
+			handler: async (ctx) => {
+				const commandCtx = ctx as unknown as ProjectMapCommandContext;
+				if (!mounted.has(sessionKey(commandCtx))) {
+					commandCtx.ui.notify("Project Map card is hidden for this session.");
+					return;
+				}
+				const current = record(commandCtx);
+				const allCollapsed = current.collapse.foundations && current.collapse.capabilities;
+				current.collapse = allCollapsed ? { ...PROJECT_MAP_EXPANDED } : { foundations: true, capabilities: true };
+				refresh(commandCtx);
+			},
+		});
+	}
 
 	pi.on("session_start", (_event, ctx) => {
 		mount(ctx as unknown as ProjectMapCommandContext);
@@ -322,6 +380,6 @@ export default function gentleProjectMap(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, ctx) => {
 		const commandCtx = ctx as unknown as ProjectMapCommandContext;
 		unmount(commandCtx);
-		visibility.delete(sessionKey(commandCtx));
+		sessions.delete(sessionKey(commandCtx));
 	});
 }

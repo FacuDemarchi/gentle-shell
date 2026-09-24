@@ -22,6 +22,41 @@ export const PROJECT_MAP_STATE_GLYPH: Record<ProjectMapState, string> = {
 	planned: "○",
 };
 
+export const PROJECT_MAP_GROUPS = ["foundations", "capabilities"] as const;
+export type ProjectMapGroup = (typeof PROJECT_MAP_GROUPS)[number];
+
+/** Also the click target text: the card reads a rendered header back with the same label. */
+export const PROJECT_MAP_GROUP_LABEL: Record<ProjectMapGroup, string> = {
+	foundations: "Foundations",
+	capabilities: "Product capabilities",
+};
+
+const GROUP_HEADER = /[▾▸] (Foundations|Product capabilities) \d+\/\d+/;
+
+/**
+ * Reads a rendered group header back to the group it names. The header format lives here, next
+ * to the code that writes it, so a click target cannot drift from the rendered text; content
+ * rows cannot match because capability and foundation identifiers are lowercase kebab-case.
+ */
+export function projectMapGroupFromHeader(line: string): ProjectMapGroup | undefined {
+	const match = GROUP_HEADER.exec(line);
+	if (match === null) return undefined;
+	return PROJECT_MAP_GROUPS.find((group) => PROJECT_MAP_GROUP_LABEL[group] === match[1]);
+}
+
+/** `true` hides the rows while retaining the group header. */
+export interface ProjectMapCollapseState {
+	foundations: boolean;
+	capabilities: boolean;
+}
+
+export const PROJECT_MAP_EXPANDED: ProjectMapCollapseState = { foundations: false, capabilities: false };
+
+/** Return a new state so session owners can retain or replace it safely. */
+export function toggleProjectMapGroup(collapse: ProjectMapCollapseState, group: ProjectMapGroup): ProjectMapCollapseState {
+	return { ...collapse, [group]: !collapse[group] };
+}
+
 const SURFACE_LABEL: Record<ProjectMapSurface, string> = {
 	productUx: "Product/UX",
 	web: "Web",
@@ -33,7 +68,7 @@ const SURFACE_LABEL: Record<ProjectMapSurface, string> = {
 };
 
 const MAX_DIAGNOSTICS = 3;
-const COVERAGE_BUDGET = 44;
+const COVERAGE_BUDGET = 58;
 
 /**
  * Runtime coordination state: active claims, leases, heartbeats, session bindings, and
@@ -94,29 +129,54 @@ export function projectMapCardState(path: string, overlay: ProjectMapOverlay = P
  * would wrap them anyway, but a pre-wrapped line keeps the descriptor honest about its own
  * width and makes the bound testable without the runtime.
  */
-function coverageLines(coverage: ProjectMapCoverageEntry[]): string[] {
+function boundedLines(text: string, budget = 60): string[] {
+	if (text.length <= budget) return [text];
+	const lines: string[] = [];
+	let remaining = text;
+	while (remaining.length > budget) {
+		const boundary = remaining.lastIndexOf(" ", budget);
+		const cut = boundary > 0 ? boundary : budget;
+		lines.push(remaining.slice(0, cut).trimEnd());
+		remaining = remaining.slice(cut).trimStart();
+	}
+	return [...lines, remaining];
+}
+
+function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[]): string[] {
 	const parts = coverage.map((entry) => {
 		const label = SURFACE_LABEL[entry.surface];
 		if (entry.declared === 0) return `${label} —`;
 		const share = Math.round((entry.done / entry.declared) * 100);
-		return `${label} ${share}% (${entry.done}/${entry.declared})`;
+		const capabilities = map.capabilities
+			.filter((capability) => capability.surfaces.includes(entry.surface))
+			.map((capability) => `${capability.id} ${PROJECT_MAP_STATE_GLYPH[capability.state]}`)
+			.join(", ");
+		return `${label} ${share}% (${entry.done}/${entry.declared}): ${capabilities}`;
 	});
 	const lines: string[] = [];
 	let current = "";
 	for (const part of parts) {
 		const candidate = current.length === 0 ? part : `${current} · ${part}`;
 		if (candidate.length > COVERAGE_BUDGET && current.length > 0) {
-			lines.push(`  ${current}`);
+			lines.push(...boundedLines(`  ${current}`, COVERAGE_BUDGET + 2));
 			current = part;
 			continue;
 		}
 		current = candidate;
 	}
-	if (current.length > 0) lines.push(`  ${current}`);
+	if (current.length > 0) lines.push(...boundedLines(`  ${current}`, COVERAGE_BUDGET + 2));
 	return lines;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState): ProjectMapCardDescriptor {
+function completed(items: { state: ProjectMapState }[]): number {
+	return items.filter((item) => item.state === "done").length;
+}
+
+export function projectMapSummaryLine(map: ProjectMapV1): string {
+	return `${completed(map.foundations)}/${map.foundations.length} foundations · ${completed(map.capabilities)}/${map.capabilities.length} capabilities`;
+}
+
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): ProjectMapCardDescriptor {
 	if (state.kind === "empty") {
 		return {
 			title: "Project Map",
@@ -126,36 +186,32 @@ export function projectMapCardDescriptor(state: ProjectMapCardState): ProjectMap
 		};
 	}
 	if (state.kind === "invalid") {
-		return {
-			title: "Project Map",
-			subtitle: "invalid",
-			tone: "error",
-			body: [
-				"The Project Map artifact is not valid:",
-				...state.diagnostics.slice(0, MAX_DIAGNOSTICS).map((diagnostic) => `  ${diagnostic.path}: ${diagnostic.message}`),
-				"Run /gentle:project-map status for the full report.",
-			],
-		};
+		const body = [
+			"The Project Map artifact is not valid:",
+			...state.diagnostics.slice(0, MAX_DIAGNOSTICS).map((diagnostic) => `  ${diagnostic.path}: ${diagnostic.message}`),
+			"Run /gentle:project-map status for the full report.",
+		];
+		return { title: "Project Map", subtitle: "invalid", tone: "error", body: body.flatMap((line) => boundedLines(line)) };
 	}
 	const { map } = state;
 	const body: string[] = [];
 	if (map.foundations.length > 0) {
-		body.push("Foundations", ...map.foundations.map((foundation) => `  ${PROJECT_MAP_STATE_GLYPH[foundation.state]} ${foundation.id}`));
+		body.push(`${collapse.foundations ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.foundations} ${completed(map.foundations)}/${map.foundations.length}`);
+		if (!collapse.foundations) body.push(...map.foundations.map((foundation) => `  ${PROJECT_MAP_STATE_GLYPH[foundation.state]} ${foundation.id}`));
 	}
-	body.push(
-		"Product capabilities",
-		...map.capabilities.map((capability) => {
+	body.push(`${collapse.capabilities ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.capabilities} ${completed(map.capabilities)}/${map.capabilities.length}`);
+	if (!collapse.capabilities) {
+		body.push(...map.capabilities.map((capability) => {
 			const surfaces = capability.surfaces.length === 0 ? "no surface declared" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
 			return `  ${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id} · ${surfaces}`;
-		}),
-		"Coverage",
-		...coverageLines(state.coverage),
-	);
+		}));
+	}
+	body.push("Coverage", ...coverageLines(map, state.coverage));
 	return {
 		title: "Project Map",
 		subtitle: `${map.project.name} · ${map.approval.state}`,
 		tone: map.approval.state === "approved" ? "success" : "warning",
-		body,
+		body: body.flatMap((line) => boundedLines(line)),
 	};
 }
 
@@ -163,7 +219,7 @@ export function projectMapCardDescriptor(state: ProjectMapCardState): ProjectMap
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState): string {
-	const descriptor = projectMapCardDescriptor(state);
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED): string {
+	const descriptor = projectMapCardDescriptor(state, collapse);
 	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body })}`;
 }

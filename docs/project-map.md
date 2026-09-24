@@ -66,13 +66,15 @@ An unknown sub-action lists the valid ones and writes nothing. An approval witho
 
 ## Sidebar card
 
-The Project Map card is a read-only rendering of the artifact. It distinguishes an empty artifact, an invalid artifact, a draft map, and an approved map; draft and approved are visible in the subtitle so a draft never reads as approved. A missing or unreadable artifact renders empty, while a malformed JSON artifact renders invalid with its diagnostic. Ready maps show Product capabilities and Coverage rows, and show Foundations only when the map declares foundations. Each capability row carries its lifecycle glyph and declared surfaces.
+The Project Map card is a read-only rendering of the artifact. It distinguishes an empty artifact, an invalid artifact, a draft map, and an approved map; draft and approved are visible in the subtitle so a draft never reads as approved. A missing or unreadable artifact renders empty, while a malformed JSON artifact renders invalid with its diagnostic. Ready maps group Foundations (when declared) and Product capabilities. Each group header shows its done/total indicator and state: `▾ Foundations 2/3` is expanded and `▸ Product capabilities 6/12` is collapsed. Each capability row carries its lifecycle glyph and declared surfaces.
 
-Coverage counts only capabilities that declare a surface and are `done`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
+Coverage counts only capabilities that declare a surface and are `done`. Each declared value explains the contributing capabilities and their glyphs, for example `Web 67% (2/3): auth ✓, search ✓, billing ✕`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
 
-The rail digest is derived from the rendered descriptor (title, subtitle, tone, and body), so it moves when the descriptor moves. Width-dependent clipping happens inside `renderCard`, with width already part of the section cache key. In fullscreen, the card occupies the `project-map` rail slot between Status and TODO. Below the sidebar breakpoint and in regular mode, the same card appears collapsed below the editor.
+In fullscreen, clicking a group header toggles that group alone; clicks on rows or card whitespace do nothing. `alt+m` folds both groups when either is expanded and unfolds both when they are already folded. Set `GENTLE_PI_PROJECT_MAP_KEY` to bind a different shortcut; an empty value uses `alt+m` and `off` disables the shortcut. The key is shown in the card top rule when it fits.
 
-Visibility has no persisted setting. A ready artifact is visible by default; an empty or invalid one stays out of the rail until `show`. `show` and `hide` apply only to the current session, and the next session recomputes visibility from the current artifact.
+The rail digest is derived from the rendered descriptor (title, subtitle, tone, and body), so it moves when the descriptor moves, including on a collapse change. Width-dependent clipping happens inside `renderCard`, with width already part of the section cache key. In fullscreen, the card occupies the `project-map` rail slot between Status and TODO. Below the sidebar breakpoint and in regular mode, the same card appears collapsed below the editor with its `done/total foundations · done/total capabilities` summary.
+
+Visibility and collapse have no persisted setting. A ready artifact is visible by default; an empty or invalid one stays out of the rail until `show`. `show` and `hide` apply only to the current session, and the next session recomputes visibility from the current artifact.
 
 ### Known workflow gap
 
