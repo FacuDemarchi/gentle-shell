@@ -181,13 +181,13 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Keep runtime ownership and session fields out of the versioned definition.
   - Provide migration-safe defaults and actionable validation errors.
 
-- [ ] **PM-2 — Add draft generation and human plan approval**
+- [x] **PM-2 — Add draft generation and human plan approval**
   - Generate a draft map from project context without beginning implementation.
   - Present capabilities, dependencies, coverage, assumptions, and omissions for correction.
   - Persist explicit `draft`/`approved` transitions with auditable human intent.
   - Prove that approval grants plan authority only and does not start writers or mutate source.
 
-- [ ] **PM-3 — Render the real map and capability inspector**
+- [x] **PM-3 — Render the real map and capability inspector**
   - Replace static demo data with the approved versioned definition plus read-only runtime overlay.
   - Preserve `Status → Project Map → Agents → TODO`, width safety, narrow-mode behavior, and independent render digests.
   - Add row selection, grouping/collapse, viewport behavior, coverage explanations, empty/error states, and capability details.
@@ -296,12 +296,15 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 - 2026-09-23: PM-1 delivered `lib/shell-project-map-schema.ts`, `tests/shell-project-map-schema.test.ts`, and `docs/project-map.md`. The artifact location `openspec/project-map.json` is defined but not yet populated; population belongs to PM-2.
 - 2026-09-23: The branch was rebased from its original base v3.1.0 (`459f4fe2`) onto the stable tag v3.7.0 (`59257bff`), 151 commits and 6 releases forward. All five commits were rewritten: `8a346388 99f80c9f 8fa6809f 210f9350 aa9732df` became `0706cd39 2b8515bb 2667fe67 56f9476b b9ec3b0e`. The stable `patch-id` is identical before and after (`b3086602836874c428d104323c02a61ddcc00aea`), so the move changed the base and nothing else. The pre-rebase history survives only in the local branch `backup/project-map-pre-v370`.
 - 2026-09-23: The rebased branch is one reviewed candidate: lineage `review-ad14ab396d7b9c21` over base-ref `59257bff`, tier `medium`, one `review-reliability` lens, 2,166 lines, zero correction rounds, approved and acknowledged. The two PM-1 lineages above are invalidated by the base move alone; they no longer apply to any reachable commit.
-- PM-2 through PM-9 remain unstarted and require independent authorization/task planning.
+- 2026-09-23: PM-2 closed in `odd/tasks/pm-2-draft-approval.md`: draft generation, the human approval lifecycle, atomic persistence and the `/gentle:project-map` command surface, with one documented workflow gap — a generated draft declares no surfaces, so approval cannot succeed until they are declared. PM-3 closed the gap rather than leaving it.
+- 2026-09-24: PM-3 closed in `odd/tasks/pm-3-render-and-inspector.md` across five independently reviewed stages: PM3-1a/1b (card core, composition, rail slot, descriptor digest, narrow mode), PM3-2 (coverage explanations, grouping, collapse), PM3-3 (row selection, inspector, reveal), PM3-4 (interactive surface declaration, which closes PM-2's gap) and PM3-5 (documentation and verification of the unit). PM-4 through PM-9 remain unstarted and require independent authorization and task planning.
 
 ## Next decision
 
+PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is the next unit in the dependency graph. It still requires its own authorization, exploration, and task document; none of that is implied by PM-3's closure, and PM-5 through PM-9 remain behind it.
+
+Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
+
+PM3-5 recorded two test-coverage gaps it was not authorized to fix (the invalid card's three-diagnostic ceiling and the narrow-mode bottom for an empty or invalid artifact). They are informational and unowned; the user decides whether they deserve a small follow-up work unit.
+
 Maintainer feedback on the visual preview issue is still pending: issue #1257 is open with no comments.
-
-PM-1 is closed, so PM-2 (draft generation and human plan approval), PM-3 (render the real map and capability inspector), and PM-4 (shared cross-worktree coordination store) are all unblocked. Each one still requires its own authorization, exploration, and task document; none of them is implied by PM-1's closure.
-
-Publishing the completed PM-1 work units as a pull request against upstream is a separate decision that requires explicit authorization, as do push and merge.
