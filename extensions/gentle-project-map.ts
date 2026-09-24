@@ -89,6 +89,25 @@ function readArtifactText(path: string): string | null {
 	return read.ok ? read.text : null;
 }
 
+/**
+ * Reports whether the artifact moved since it was observed. An unreadable artifact is its
+ * own state rather than an absent one, because conflating them would let a write replace a
+ * file nobody could read: the observation would be `null`, the re-check would also be
+ * `null`, and the guard would wave the write through.
+ */
+function artifactMovedSince(path: string, observed: SourceRead): boolean {
+	const current = readSource(path);
+	if (current.ok !== observed.ok) return true;
+	if (!current.ok && !observed.ok) return current.reason !== observed.reason;
+	return !current.ok || !observed.ok || current.text !== observed.text;
+}
+
+function unreadableArtifactRefusal(path: string): ProjectMapDiagnostic | null {
+	const observed = readSource(path);
+	if (observed.ok || observed.reason !== "unreadable") return null;
+	return refusal(`The artifact at ${path} exists but could not be read, so nothing was written; writing blind would replace a file this command cannot inspect.`, "$");
+}
+
 function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
 	const omissions: string[] = [];
 	const sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] } = {};
@@ -150,7 +169,12 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 
 	if (parsed.action === "draft") {
-		const observed = readArtifactText(artifactPath);
+		const observed = readSource(artifactPath);
+		const unreadable = unreadableArtifactRefusal(artifactPath);
+		if (unreadable !== null) {
+			ctx.ui.notify(unreadable.message);
+			return emptyReport("draft", [unreadable]);
+		}
 		const repository = readRepositorySources(ctx.cwd);
 		const generated = generateProjectMapDraft(repository.sources);
 		const omissions = [...repository.omissions, ...generated.omissions];
@@ -165,7 +189,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			ctx.ui.notify("Draft discarded; nothing was written.");
 			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 		}
-		if (readArtifactText(artifactPath) !== observed) {
+		if (artifactMovedSince(artifactPath, observed)) {
 			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
 			ctx.ui.notify(message);
 			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [refusal(message, "$")] };
@@ -184,7 +208,12 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		ctx.ui.notify(`Approval requires an actor identity, because an approval nobody can attribute is not auditable.\n${USAGE}`);
 		return emptyReport("approve", [refusal("Approval requires an actor identity.", "$.approval.approvedBy")]);
 	}
-	const observed = readArtifactText(artifactPath);
+	const observed = readSource(artifactPath);
+	const unreadable = unreadableArtifactRefusal(artifactPath);
+	if (unreadable !== null) {
+		ctx.ui.notify(unreadable.message);
+		return emptyReport("approve", [unreadable]);
+	}
 	const read = readProjectMapFile(artifactPath);
 	if (read.map === null) {
 		ctx.ui.notify(`No map to approve at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
@@ -202,7 +231,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		ctx.ui.notify("Approval discarded; nothing was written.");
 		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
 	}
-	if (readArtifactText(artifactPath) !== observed) {
+	if (artifactMovedSince(artifactPath, observed)) {
 		const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
 		ctx.ui.notify(message);
 		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [refusal(message, "$")] };

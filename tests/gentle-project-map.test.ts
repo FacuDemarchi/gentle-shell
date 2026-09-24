@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
@@ -351,5 +351,24 @@ test("refuses to write a draft when the artifact appeared while the human decide
 		assert.equal(report.wrote, false);
 		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed")));
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), "someone else got here first\n");
+	});
+});
+
+test("refuses to write over an artifact it cannot read", async () => {
+	await withRepository(async (directory) => {
+		// A directory where the artifact is expected is unreadable, not absent. Conflating the
+		// two would make the staleness guard see null before and null after, and wave the write
+		// through over a file it never inspected.
+		mkdirSync(artifactPath(directory));
+		for (const args of ["draft", "approve facundo"]) {
+			const probe = harness(directory, [true]);
+			const report = await runProjectMapCommand(args, probe.ctx, { now: () => NOW });
+			assert.equal(report.wrote, false, `expected ${args} to refuse`);
+			assert.ok(
+				report.diagnostics.some((diagnostic) => diagnostic.message.includes("could not be read")),
+				`expected ${args} to report the unreadable artifact`,
+			);
+			assert.equal(statSync(artifactPath(directory)).isDirectory(), true);
+		}
 	});
 });
