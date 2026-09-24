@@ -82,9 +82,15 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 test("parses a known sub-action and rejects everything else", () => {
 	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "approve", "status"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
-		assert.deepEqual(parseProjectMapSubAction(action), { ok: true, action, argument: "" });
+		const parsed = parseProjectMapSubAction(action);
+		assert.equal(parsed.ok, true);
+		assert.equal(parsed.action, action);
+		assert.equal(parsed.argument, "");
 	}
-	assert.deepEqual(parseProjectMapSubAction("approve facundo"), { ok: true, action: "approve", argument: "facundo" });
+	const withArgument = parseProjectMapSubAction("approve facundo");
+	assert.equal(withArgument.ok, true);
+	assert.equal(withArgument.action, "approve");
+	assert.equal(withArgument.argument, "facundo");
 	const unknown = parseProjectMapSubAction("publish");
 	assert.equal(unknown.ok, false);
 	if (!unknown.ok) {

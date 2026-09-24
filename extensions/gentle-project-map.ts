@@ -44,15 +44,20 @@ export interface ProjectMapCommandOptions {
 	now?: () => Date;
 }
 
-export type ProjectMapSubActionParse = { ok: true; action: ProjectMapSubAction; argument: string } | { ok: false; message: string };
+export interface ProjectMapSubActionParse {
+	ok: boolean;
+	action: ProjectMapSubAction | null;
+	argument: string;
+	message: string;
+}
 
 export function parseProjectMapSubAction(args: string): ProjectMapSubActionParse {
 	const [head = "", ...rest] = args.trim().split(/\s+/);
-	if (head.length === 0) return { ok: false, message: `A sub-action is required. ${USAGE}` };
+	if (head.length === 0) return { ok: false, action: null, argument: "", message: `A sub-action is required. ${USAGE}` };
 	if (!PROJECT_MAP_SUB_ACTIONS.includes(head as ProjectMapSubAction)) {
-		return { ok: false, message: `Unknown sub-action "${head}". ${USAGE}` };
+		return { ok: false, action: null, argument: "", message: `Unknown sub-action "${head}". ${USAGE}` };
 	}
-	return { ok: true, action: head as ProjectMapSubAction, argument: rest.join(" ").trim() };
+	return { ok: true, action: head as ProjectMapSubAction, argument: rest.join(" ").trim(), message: "" };
 }
 
 function refusal(message: string, path = "$"): ProjectMapDiagnostic {
@@ -68,7 +73,18 @@ function readText(path: string): string | undefined {
 	return read.ok ? read.text : undefined;
 }
 
-type SourceRead = { ok: true; text: string } | { ok: false; reason: "absent" | "unreadable" };
+/**
+ * A source read. The shape is flat rather than a discriminated union on purpose: this
+ * repository compiles with `strict: false`, and TypeScript does not narrow a union by its
+ * discriminant under that setting, so a union would force every caller into a cast. The
+ * invariant is explicit instead: `reason` is null exactly when `ok` is true, and `text` is
+ * empty exactly when it is not.
+ */
+interface SourceRead {
+	ok: boolean;
+	text: string;
+	reason: "absent" | "unreadable" | null;
+}
 
 /**
  * Distinguishes a source that is not there from one that is there and cannot be read.
@@ -77,10 +93,10 @@ type SourceRead = { ok: true; text: string } | { ok: false; reason: "absent" | "
  */
 function readSource(path: string): SourceRead {
 	try {
-		return { ok: true, text: readFileSync(path, "utf8") };
+		return { ok: true, text: readFileSync(path, "utf8"), reason: null };
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException | null)?.code;
-		return { ok: false, reason: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreadable" };
+		return { ok: false, text: "", reason: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreadable" };
 	}
 }
 
@@ -97,14 +113,12 @@ function readArtifactText(path: string): string | null {
  */
 function artifactMovedSince(path: string, observed: SourceRead): boolean {
 	const current = readSource(path);
-	if (current.ok !== observed.ok) return true;
-	if (!current.ok && !observed.ok) return current.reason !== observed.reason;
-	return !current.ok || !observed.ok || current.text !== observed.text;
+	return current.ok !== observed.ok || current.reason !== observed.reason || current.text !== observed.text;
 }
 
 function unreadableArtifactRefusal(path: string): ProjectMapDiagnostic | null {
 	const observed = readSource(path);
-	if (observed.ok || observed.reason !== "unreadable") return null;
+	if (observed.reason !== "unreadable") return null;
 	return refusal(`The artifact at ${path} exists but could not be read, so nothing was written; writing blind would replace a file this command cannot inspect.`, "$");
 }
 
