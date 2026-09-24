@@ -52,6 +52,20 @@ A generated capability leaves its surface list empty, because no structured sour
 
 Every generated map is a draft. The generator never marks a map approved, and it returns a canonicalized draft, so the map it hands a caller is exactly what `validateProjectMap` returns for it.
 
+## Command surface
+
+`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with three validated sub-actions:
+
+- `status` reads the artifact and reports its approval state and counts. It never writes.
+- `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation.
+- `approve <actor>` reads the artifact, refuses when anything is incomplete, shows what it is about to record, and writes only after an explicit confirmation.
+
+An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. The timestamp is injected rather than read from the clock, so the transition is testable.
+
+### Known workflow gap
+
+A generated draft always declares no surfaces, because the generator never infers them, and the approval gate requires them. So `/gentle:project-map draft` followed by `approve` cannot succeed on its own: the human must first declare each capability's surfaces in the artifact. Today that means editing `openspec/project-map.json` directly. The refusal names the exact path (`$.capabilities[n].surfaces`), and the gap is deliberate rather than hidden — inferring surfaces would manufacture the coverage the map exists to report honestly. A sub-action or an inspector that collects surfaces interactively belongs to the rendering unit.
+
 ## Approval transitions and persistence
 
 `approveProjectMap` (`lib/shell-project-map-approval.ts`) moves a draft to approved. It performs no I/O and mutates nothing: it returns a new canonical map or a refusal. It refuses an already-approved map, because approval is not repeatable; it refuses an empty actor or a timestamp that is not a real ISO-8601 instant; and it refuses a map the validator rejects, which is where the completeness gate lands — a capability that still declares no surface cannot be approved.
