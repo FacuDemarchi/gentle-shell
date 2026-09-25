@@ -18,6 +18,7 @@ import {
 	PROJECT_MAP_RAIL_KEY,
 	projectMapCardBottom,
 	projectMapCardRail,
+	projectMapOpenPiHostOnce,
 	renderProjectMapCard,
 	type ProjectMapCardSession,
 } from "../lib/shell-project-map-card.ts";
@@ -124,6 +125,22 @@ test("rail digest follows rendered diagnostics but ignores unrendered map fields
 		const secondMessage = projectMapCardDescriptor(projectMapCardState(path)).body.join("\n");
 		assert.notEqual(secondMessage, firstMessage, "the invalid diagnostics differ in their rendered message");
 		assert.notEqual(rail.digest!(), firstInvalid);
+	});
+});
+
+test("memoizes the host probe and shares one readiness decision between body and digest", () => {
+	let probes = 0;
+	assert.deepEqual(projectMapOpenPiHostOnce(() => { probes += 1; return { available: true, version: "tmux test" }; }), { available: true, version: "tmux test" });
+	assert.equal(projectMapOpenPiHostOnce(() => { probes += 1; return { available: false, version: null }; }).available, true);
+	assert.equal(probes, 1);
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		current.select("capability-with-an-unbreakable-identifier");
+		let decisions = 0;
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, () => ({ permitted: ++decisions === 1, diagnostics: [] }));
+		assert.match(rail.render(80).join("\n"), /\[Open Pi\]/);
+		assert.match(rail.digest!(), /\[Open Pi\]/);
+		assert.equal(decisions, 1, "body and digest reuse the same injected decision");
 	});
 });
 

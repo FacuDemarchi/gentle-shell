@@ -80,7 +80,7 @@ Slice by slice; no slice may touch a path outside its own list.
 
 - [ ] **PM7-2 — The launch plan and the tmux adapter**
   - Design, fixed before the source write:
-    - **Plan and execute are two functions**: `planProjectMapOpenPi({ cwd, capabilityId, sessionId, now, host })` returns the readiness result plus `{ decision: "open" | "fallback" | "refuse", argv, cwd, env, handoff, diagnostics }` and starts nothing; `openProjectMapPi(...)` executes exactly the planned argv after the confirmation. No shell is involved: `argv` is an array handed to the spawner, and the handoff is one element of it.
+    - **Plan and execute are two functions**: `planProjectMapOpenPi({ cwd, capabilityId, sessionId, now, host })` returns the readiness result plus `{ decision: "open" | "refuse", argv, cwd, env, handoff, diagnostics }` and starts nothing; `openProjectMapPi(...)` executes exactly the planned argv after the confirmation. No shell is involved: `argv` is an array handed to the spawner, and the handoff is one element of it. The fallback decision belongs to PM7-3 and is not represented here.
     - **The handoff is the structured brief, as text**: objective, approved surfaces, dependencies and their states, accepted contracts, the capability's feature documents, the parent session id, and the verification requirements — assembled from the approved map and the coordination projection, never retyped by hand. The shape is pinned by a test, so a later field addition is deliberate.
     - **The child is identified explicitly**: the parent passes the capability id and its own session through the child's environment, and the launched `gentle-shell` therefore starts in the capability worktree with the extension loaded. PM7-2 must demonstrate the child-side write (`session-binding`/`heartbeat`) with a real, headless child or state plainly that it could not and leave the report at `unconfirmed`.
     - **The command surface grows one sub-action**: `open` joins `PROJECT_MAP_SUB_ACTIONS` (`extensions/gentle-project-map.ts:61`), prints the plan (capability, branch, path, host, the exact argv, and what will be opened), asks once, then launches. A plan that already refuses is never confirmed — the PM-6 rule, reused.
@@ -135,6 +135,10 @@ RDD is **off** for this clone (`clone-local: off`, inheriting nothing from `glob
 - PM7-2 owns the readiness coverage limits: there is no live-lead exception fixture, risking an unpinned lead-held claim allowance.
 - PM7-2 owns the readiness coverage limits: there are no separate nested-repository, foreign-clone, or path-escape readiness fixtures, risking regressions in repository-boundary handling.
 - PM7-2 owns the readiness coverage limits: there is no test for the returned `claim` field when the lead holds the claim, risking an unpinned caller-facing ownership result.
+
+PM7-2 records an owed product decision: the versioned map has no per-capability verification-requirements field. Its handoff therefore says `Verification requirements: not declared by the map.`; PM-8 owns deciding whether the schema grows that field, and this honest content remains until then.
+
+PM7-2 closure limit: the receiver's durable `session-binding` and `heartbeat` writes are proven only at the handler level with fakes, not end-to-end against a real launched `gentle-shell` child. Therefore `confirmed` remains unproven; PM7-4's acceptance record must carry that criterion as **not verified**, not imply it from a tmux spawn acknowledgement.
 
 ## Next decision
 
