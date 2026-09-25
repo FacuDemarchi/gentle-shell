@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -156,9 +156,9 @@ test("normalizes a valid but non-canonical artifact while changing only the cont
 
 		assert.equal(result.applied, true);
 		// The single authorized writer canonicalizes the whole artifact, so the bytes differ from a
-		// non-canonical input even though only one array changed semantically. `result.map` is the
-		// validated candidate before canonicalization, which is why the comparison goes through the
-		// serializer.
+		// non-canonical input even though only one array changed semantically. The returned map is
+		// canonical too — `validateProjectMap` canonicalizes what it returns — which is why both
+		// comparisons go through the serializer.
 		assert.notEqual(readFileSync(path, "utf8"), before);
 		assert.equal(readFileSync(path, "utf8"), serializeProjectMap(approvedMap(["alpha", "beta", "zeta"])));
 		assert.equal(serializeProjectMap(result.map!), readFileSync(path, "utf8"));
@@ -182,6 +182,89 @@ test("reports a supersession that writes while adding nothing", async () => {
 		assert.equal(result.removed, true);
 		assert.notEqual(readFileSync(path, "utf8"), before);
 		assert.equal(readFileSync(path, "utf8"), serializeProjectMap(approvedMap(["beta"])));
+	});
+});
+
+test("leaves a non-canonical artifact untouched when nothing changes", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		const canonical = approvedMap(["zeta", "alpha"]);
+		writeFileSync(path, `${JSON.stringify({ ...canonical, capabilities: [...canonical.capabilities].reverse() }, null, 2)}\n`, "utf8");
+		const before = readFileSync(path, "utf8");
+
+		const result = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "alpha" });
+
+		// The early return is load-bearing here: without it the candidate would be canonicalized and
+		// the file rewritten, which is exactly what a no-op must not do to an artifact it was not
+		// asked to change.
+		assert.equal(result.applied, false);
+		assert.equal(result.removed, false);
+		assert.equal(readFileSync(path, "utf8"), before);
+		assert.deepEqual(result.map?.capabilities.find((capability) => capability.id === "catalog")?.contracts, ["alpha", "zeta"]);
+	});
+});
+
+test("treats a self-superseding apply and an absent superseded id as no change", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		writeMap(path, approvedMap(["alpha", "beta"]));
+		const before = readFileSync(path, "utf8");
+
+		const selfSuperseding = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "beta", supersedes: "beta" });
+		assert.equal(selfSuperseding.applied, false);
+		assert.equal(selfSuperseding.removed, false);
+		assert.equal(readFileSync(path, "utf8"), before);
+
+		const absentSuperseded = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "alpha", supersedes: "missing" });
+		assert.equal(absentSuperseded.applied, false);
+		assert.equal(absentSuperseded.removed, false);
+		assert.equal(readFileSync(path, "utf8"), before);
+	});
+});
+
+test("changes only the targeted capability when the other metadata varies", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		const varied = approvedMap(["catalog-v1"]);
+		varied.capabilities[1] = {
+			...varied.capabilities[1],
+			contracts: ["checkout-v1"],
+			outcome: "Checkout is available and varied.",
+			surfaces: ["api", "operations"],
+			featureDocs: ["odd/tasks/checkout.md"],
+			state: "active",
+		};
+		writeMap(path, varied);
+
+		const result = await applyProjectMapContract({ path, capabilityId: "checkout", contractId: "checkout-v2" });
+
+		assert.equal(result.applied, true);
+		assert.deepEqual(result.map?.capabilities.find((capability) => capability.id === "catalog")?.contracts, ["catalog-v1"]);
+		const checkout = result.map?.capabilities.find((capability) => capability.id === "checkout");
+		assert.deepEqual(checkout?.contracts, ["checkout-v1", "checkout-v2"]);
+		assert.equal(checkout?.outcome, "Checkout is available and varied.");
+		assert.deepEqual(checkout?.surfaces, ["api", "operations"]);
+		assert.deepEqual(checkout?.featureDocs, ["odd/tasks/checkout.md"]);
+		assert.equal(checkout?.state, "active");
+	});
+});
+
+test("fails closed when the artifact cannot be written", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		writeMap(path, approvedMap());
+		const before = readFileSync(path, "utf8");
+		chmodSync(directory, 0o500);
+		try {
+			const result = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "catalog-api-v1" });
+			assert.equal(result.applied, false);
+			assert.equal(result.removed, false);
+			assert.equal(result.map, null);
+			assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_DIAGNOSTIC_CODES.UNREADABLE_ARTIFACT));
+		} finally {
+			chmodSync(directory, 0o700);
+		}
+		assert.equal(readFileSync(path, "utf8"), before);
 	});
 });
 
@@ -213,6 +296,8 @@ test("refuses an unknown capability without touching the artifact", async () => 
 
 		assert.equal(result.map, null);
 		assert.ok(result.diagnostics[0]?.message.includes("missing"));
+		assert.equal(result.applied, false);
+		assert.equal(result.removed, false);
 		assert.equal(readFileSync(path, "utf8"), before);
 	});
 });
@@ -229,6 +314,8 @@ test("refuses empty contract identifiers and whitespace-only supersession identi
 		]) {
 			const result = await applyProjectMapContract(request);
 			assert.equal(result.map, null, `expected refusal for ${JSON.stringify(request)}`);
+			assert.equal(result.applied, false, `expected no application for ${JSON.stringify(request)}`);
+			assert.equal(result.removed, false, `expected no removal for ${JSON.stringify(request)}`);
 			assert.ok(result.diagnostics.some((diagnostic) => diagnostic.code === PROJECT_MAP_DIAGNOSTIC_CODES.INVALID_FIELD));
 			assert.equal(readFileSync(path, "utf8"), before);
 		}
@@ -268,7 +355,7 @@ test("fails closed for missing and corrupt artifacts without creating or overwri
 	});
 });
 
-test("preserves contract order, appends new ids, and canonicalizes repeated applications", async () => {
+test("canonicalizes the artifact deterministically across additive application orders", async () => {
 	await withTempDirectory(async (directory) => {
 		const firstPath = join(directory, "first.json");
 		writeMap(firstPath, approvedMap(["alpha", "legacy"]));
