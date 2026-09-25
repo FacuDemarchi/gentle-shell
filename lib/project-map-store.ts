@@ -79,7 +79,7 @@ interface StoreEmptinessInspection extends ProjectMapStoreEmptinessResult {
 	quarantine: string | null;
 }
 
-const PROJECT_MAP_STORE_RECORD_DIRECTORIES = ["claims", "heartbeats", "sessions", "blockers", "contracts", "receipts"] as const;
+const PROJECT_MAP_STORE_RECORD_DIRECTORIES = ["claims", "heartbeats", "sessions", "blockers", "contracts", "receipts", "worktrees"] as const;
 
 function descriptorPath(root: string): string {
 	return join(root, "store.json");

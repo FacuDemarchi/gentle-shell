@@ -311,9 +311,9 @@ test("finds claim, heartbeat, and quarantine evidence in a store root", () => {
 	});
 });
 
-test("does not prove a store holding session, blocker, contract, and receipt records empty", () => {
+test("does not prove a store holding session, blocker, contract, receipt, and worktree records empty", () => {
 	withRoot((root) => {
-		for (const directory of ["sessions", "blockers", "contracts", "receipts"]) {
+		for (const directory of ["sessions", "blockers", "contracts", "receipts", "worktrees"]) {
 			mkdirSync(join(root, directory));
 			writeFileSync(join(root, directory, "record.json"), "evidence", "utf8");
 		}
@@ -326,6 +326,20 @@ test("does not prove a store holding session, blocker, contract, and receipt rec
 		assert.match(initialization.diagnostics[0].message, /1 entry under blockers\//);
 		assert.match(initialization.diagnostics[0].message, /1 entry under contracts\//);
 		assert.match(initialization.diagnostics[0].message, /1 entry under receipts\//);
+		assert.match(initialization.diagnostics[0].message, /1 entry under worktrees\//);
+	});
+});
+
+test("does not prove a store holding a worktree record alone empty", () => {
+	withRoot((root) => {
+		const directory = join(root, "worktrees");
+		mkdirSync(directory);
+		writeFileSync(join(directory, "record.json"), "evidence", "utf8");
+		assert.equal(projectMapStore.storeIsProvablyEmpty(root).empty, false);
+		const initialization = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT });
+		assert.equal(initialization.descriptor, null);
+		assert.deepEqual(initialization.diagnostics.map((entry) => entry.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
+		assert.match(initialization.diagnostics[0].message, /1 entry under worktrees\//);
 	});
 });
 
