@@ -302,7 +302,7 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 
 ## Next decision
 
-PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is planned in `odd/tasks/pm-4-coordination-store.md`: six slices, each under the review budget, the first (PM4-1, schema and canonical root) next. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
+PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is in delivery in `odd/tasks/pm-4-coordination-store.md`: PM4-1 through PM4-4 are closed (schema and canonical root; store engine with corruption refusal, proven emptiness and a cross-process lock; claims and leases; heartbeats and session bindings), and the remaining slices are PM4-5a (blockers), PM4-5b (readiness receipts) and PM4-6 (cross-worktree end to end), each under the review budget. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
 
 Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
 
