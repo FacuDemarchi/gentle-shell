@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
@@ -8,13 +8,15 @@ import { acquireProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } 
 import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree, listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
+import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib/project-map-store-heartbeats.ts";
 import { planProjectMapWorktree, provisionProjectMapWorktree, type ProjectMapWorktreePlan, type ProjectMapWorktreeProvisionResult } from "../lib/project-map-worktrees.ts";
 import { SessionWorktreeRegistry } from "../lib/session-worktree-registry.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
-import { projectMapCardPart, projectMapCardVisible } from "../lib/shell-project-map-card.ts";
+import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
+import { openProjectMapPi, planProjectMapOpenPi, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
 import {
@@ -58,7 +60,7 @@ export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
 const USAGE = {
@@ -72,6 +74,7 @@ const USAGE = {
 	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status>`,
 	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
 	worktree: `Usage: /${PROJECT_MAP_COMMAND_NAME} worktree <inspect|provision|list> [capability-id]`,
+	open: `Usage: /${PROJECT_MAP_COMMAND_NAME} open <capability-id>`,
 } as const;
 
 export interface ProjectMapCommandContext {
@@ -112,6 +115,8 @@ export interface ProjectMapCommandOptions {
 	onShow?: () => void;
 	onHide?: () => void;
 	worktrees?: ProjectMapWorktreeRegistrationPort;
+	host?: ProjectMapOpenPiHost;
+	launch?: typeof openProjectMapPi;
 }
 
 export interface ProjectMapSubActionParse {
@@ -144,6 +149,22 @@ function sessionKey(ctx: ProjectMapCommandContext): string {
 
 function describeDiagnostics(diagnostics: Array<{ code: string; path: string; message: string }>): string {
 	return diagnostics.map((diagnostic) => `[${diagnostic.code}] ${diagnostic.path}: ${diagnostic.message}`).join("\n");
+}
+
+function openPiPlanText(plan: ProjectMapOpenPiPlan): string {
+	const inspection = plan.readiness.worktree.inspection;
+	return [
+		"Open Pi plan",
+		`Capability: ${plan.readiness.capability?.id ?? "unavailable"}`,
+		`Decision: ${plan.decision}`,
+		`Branch: ${inspection.identity.branch}`,
+		`Path: ${plan.cwd}`,
+		`Host: ${plan.readiness.host.version ?? "tmux unavailable"}`,
+		`Argv: ${JSON.stringify(plan.argv)}`,
+		`Attach: ${plan.attachCommand.join(" ")}`,
+		`Will open: ${plan.launcher.source === "package-local" ? `the package-local launcher ${plan.launcher.path} through ${plan.launcher.command}` : `the verified PATH launcher ${plan.launcher.path}`} with the Project Map handoff for ${plan.readiness.capability?.id ?? "the requested capability"}.`,
+		...(plan.diagnostics.length > 0 ? ["Diagnostics:", describeDiagnostics(plan.diagnostics)] : []),
+	].join("\n");
 }
 
 function worktreePlanText(plan: ProjectMapWorktreePlan): string {
@@ -409,6 +430,41 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		});
 		for (const notification of applied.notifications) ctx.ui.notify(notification);
 		return { action: "worktree", wrote: applied.wrote, map: null, assumptions: [], omissions: [], diagnostics: applied.diagnostics };
+	}
+
+	if (parsed.action === "open") {
+		const [capabilityId = "", ...extra] = parsed.argument.split(/\s+/);
+		if (capabilityId.length === 0 || extra.length > 0) {
+			ctx.ui.notify(USAGE.open);
+			return emptyReport("open", [refusal(USAGE.open)]);
+		}
+		const sessionId = sessionKey(ctx);
+		if (sessionId.length === 0) {
+			const message = "Opening Pi requires this session's identity; nothing was launched.";
+			ctx.ui.notify(message);
+			return emptyReport("open", [refusal(message, "$.sessionId")]);
+		}
+		const plan = planProjectMapOpenPi({ cwd: ctx.cwd, capabilityId, sessionId, now: now().toISOString(), host: options.host ?? probeProjectMapOpenPiHost({ env: process.env, timeoutMs: 1000 }), sessionExists: (name) => projectMapOpenPiSessionExists({ name, env: process.env }) });
+		const text = openPiPlanText(plan);
+		ctx.ui.notify(text);
+		if (plan.decision === "refuse") {
+			ctx.ui.notify(`Opening Pi was refused.\n${describeDiagnostics(plan.diagnostics)}`);
+			return { action: "open", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
+		}
+		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Open Pi for this capability?", text) : false;
+		if (!confirmed) {
+			const declined = refusal(ctx.hasUI ? "Opening Pi was declined; nothing was launched." : "Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
+			ctx.ui.notify(declined.message);
+			return emptyReport("open", [declined]);
+		}
+		const launched = (options.launch ?? openProjectMapPi)(plan);
+		if (!launched.launched) {
+			const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`);
+			ctx.ui.notify(failure.message);
+			return emptyReport("open", [failure]);
+		}
+		ctx.ui.notify("Pi launch requested; work is not confirmed until the child writes its own binding or heartbeat.");
+		return emptyReport("open");
 	}
 
 	if (parsed.action === "lead" || parsed.action === "contract") {
@@ -702,10 +758,36 @@ interface ProjectMapSessionRecord {
 	selection: string | undefined;
 }
 
+export function handleProjectMapOpenPiSessionStart(
+	ctx: ProjectMapCommandContext,
+	launchIdentity: string | undefined,
+	now: () => string = () => new Date().toISOString(),
+	writer: { bind: typeof bindProjectMapStoreSession; heartbeat: typeof beatProjectMapStoreHeartbeat } = { bind: bindProjectMapStoreSession, heartbeat: beatProjectMapStoreHeartbeat },
+): void {
+	if (launchIdentity === undefined) return;
+	try {
+		const identity = JSON.parse(launchIdentity) as { capabilityId?: unknown; parentSessionId?: unknown };
+		const sessionId = ctx.sessionManager?.getSessionId();
+		if (typeof identity.capabilityId !== "string" || typeof identity.parentSessionId !== "string" || sessionId === undefined || sessionId.length === 0) throw new Error("launch identity or child session identity is unavailable");
+		const root = resolveProjectMapStoreRoot(ctx.cwd);
+		if (root.root === null) throw new Error(describeDiagnostics(root.diagnostics));
+		const instant = now(), incarnation = randomUUID();
+		const binding = writer.bind({ root: root.root, sessionId, workspaceRoot: ctx.cwd, pid: process.pid, incarnation, now: instant });
+		if (binding.binding === null) throw new Error(describeDiagnostics(binding.diagnostics));
+		const heartbeat = writer.heartbeat({ root: root.root, sessionId, pid: process.pid, incarnation, now: instant });
+		if (heartbeat.heartbeat === null) throw new Error(describeDiagnostics(heartbeat.diagnostics));
+	} catch (error) {
+		ctx.ui.notify(`Open Pi receiver could not write this session's binding and heartbeat: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
 export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void {
+	const launchIdentity = env[PROJECT_MAP_OPEN_PI_ENV];
+	if (launchIdentity !== undefined) pi.on("session_start", (_event, raw) => handleProjectMapOpenPiSessionStart(raw as ProjectMapCommandContext, launchIdentity));
 	const sessions = new Map<string, ProjectMapSessionRecord>();
 	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI }>();
 	const collapseKey = parseProjectMapCollapseKey(env);
+	const renderHost = projectMapOpenPiHostOnce();
 	const nextKey = parseProjectMapNextKey(env);
 	const prevKey = parseProjectMapPrevKey(env);
 	const record = (ctx: ProjectMapCommandContext): ProjectMapSessionRecord => {
@@ -750,7 +832,10 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 					refresh(ctx);
 				},
 			};
-			const part = projectMapCardPart(tui, path, theme, session, collapseKey);
+			const part = projectMapCardPart(tui, path, theme, session, collapseKey, (capabilityId) => {
+				try { return projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost }); }
+				catch { return { permitted: false, diagnostics: [{ code: "project-map-open-pi/unavailable" }] }; }
+			});
 			mounted.set(key, { part, tui });
 			return part;
 		}, { placement: "belowEditor" });

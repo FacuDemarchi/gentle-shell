@@ -1,6 +1,7 @@
 import { wrapTextWithAnsi as wrapTextAnsi, type Component, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { cardInnerWidth, renderCard, type CardTheme } from "./shell-card.ts";
 import { sidebarPart, sidebarState, type SidebarRail } from "./shell-sidebar.ts";
+import { probeProjectMapOpenPiHost, type ProjectMapOpenPiHost } from "./project-map-open-pi.ts";
 import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
@@ -15,6 +16,15 @@ import {
 } from "./shell-project-map-view.ts";
 
 export const PROJECT_MAP_RAIL_KEY = "project-map";
+
+export type ProjectMapOpenPiDecision = { permitted: boolean; diagnostics: Array<{ code: string }> };
+export type ProjectMapOpenPiDecisionFor = (capabilityId: string) => ProjectMapOpenPiDecision;
+let memoizedOpenPiHost: ProjectMapOpenPiHost | undefined;
+
+/** tmux availability cannot change while this Pi process is alive. */
+export function projectMapOpenPiHostOnce(probe = probeProjectMapOpenPiHost): ProjectMapOpenPiHost {
+	return memoizedOpenPiHost ??= probe({ env: process.env, timeoutMs: 1000 });
+}
 
 export interface ProjectMapCardSession {
 	collapse(): ProjectMapCollapseState;
@@ -38,18 +48,29 @@ export function renderProjectMapCard(
 	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse), theme, width, { expanded, hint });
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
 	const capabilityLines = new Map<number, string>();
 	const capabilityStarts = new Map<string, number>();
 	let revealedSelection: string | undefined;
+	let decisionSelection: string | undefined;
+	let decision: ProjectMapOpenPiDecision | undefined;
+	const currentDecision = () => {
+		const selection = session.selection();
+		if (selection !== decisionSelection) {
+			decisionSelection = selection;
+			decision = selection === undefined ? undefined : decisionFor?.(selection);
+		}
+		return decision;
+	};
 	const render = (width: number) => {
 		headerLines.clear();
 		capabilityLines.clear();
 		capabilityStarts.clear();
 		const current = state(artifactPath);
-		const body = projectMapCardBody(current, session.collapse(), session.selection());
-		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection());
+		const openPiDecision = currentDecision();
+		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision);
+		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision);
 		const lines = renderCard(descriptor, theme, width, { expanded: true, hint });
 		// `renderCard` starts with the frame top, then wraps each body line in order. Map
 		// body indices through that wrapping rather than reading control text back from paint.
@@ -83,7 +104,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 	return {
 		render,
-		digest: () => projectMapCardDigest(state(artifactPath), session.collapse(), session.selection()),
+		digest: () => projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision()),
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -112,13 +133,14 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
 		artifactPath,
 		theme,
 		session,
 		hint,
 		(localLine) => sidebarState(tui).reveal?.(PROJECT_MAP_RAIL_KEY, localLine),
+		decisionFor,
 	));
 }
 

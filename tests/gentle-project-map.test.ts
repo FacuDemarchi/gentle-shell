@@ -77,7 +77,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
