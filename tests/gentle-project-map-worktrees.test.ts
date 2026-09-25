@@ -139,8 +139,33 @@ test("worktree provision confirms the displayed plan, creates, binds, and regist
 		// either one while keeping the label in place would otherwise still satisfy this test.
 		const plannedBaseCommit = git(["rev-parse", "HEAD"]).trim();
 		assert.ok(confirmation.message.includes("Decision: create") && confirmation.message.includes("Branch: feat/catalog") && confirmation.message.includes(`Path: ${identity.path}`) && confirmation.message.includes(`Base commit: ${plannedBaseCommit}`));
+		assert.ok(confirmation.message.includes(`Command: git worktree add -b feat/catalog ${identity.path} ${plannedBaseCommit}`));
+		assert.ok(confirmation.message.includes("Dirty: no"));
 		assert.equal(existsSync(identity.path), true);
 		assert.deepEqual(registrations, [[identity.path, "capability:catalog"]]);
+		const bindings = listProjectMapStoreWorktreeBindings({ root: store });
+		assert.deepEqual(bindings.diagnostics, []);
+		assert.deepEqual(bindings.bindings.map((binding) => [binding.capability_id, binding.branch, binding.worktree_root, binding.session_id]), [["catalog", "feat/catalog", identity.path, "session-a"]]);
+	});
+});
+
+test("worktree provision reuses a dirty worktree, binds it, and reports its dirtiness", async () => {
+	await withFixture(async ({ cwd, store, git }) => {
+		liveClaim(store, "catalog");
+		const identity = deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" });
+		git(["worktree", "add", "-b", "feat/catalog", identity.path]);
+		writeFileSync(join(identity.path, "untracked.txt"), "dirty\n", "utf8");
+		const worktreesBefore = git(["worktree", "list", "--porcelain"]);
+		const probe = harness(cwd, "session-a", [true]);
+		const report = await runProjectMapCommand("worktree provision catalog", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, true);
+		assert.equal(probe.confirmations, 1);
+		const confirmation = probe.confirmationSnapshots[0];
+		assert.ok(confirmation);
+		assert.ok(confirmation.message.includes("Decision: reuse"));
+		assert.ok(confirmation.message.includes("Dirty: yes"));
+		assert.equal(git(["worktree", "list", "--porcelain"]), worktreesBefore);
+		assert.ok(probe.notified.some((message) => message.includes("Capability worktree reused")));
 		const bindings = listProjectMapStoreWorktreeBindings({ root: store });
 		assert.deepEqual(bindings.diagnostics, []);
 		assert.deepEqual(bindings.bindings.map((binding) => [binding.capability_id, binding.branch, binding.worktree_root, binding.session_id]), [["catalog", "feat/catalog", identity.path, "session-a"]]);

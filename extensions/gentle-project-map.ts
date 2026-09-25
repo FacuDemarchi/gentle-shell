@@ -161,6 +161,8 @@ function worktreePlanText(plan: ProjectMapWorktreePlan): string {
 		`Branch: ${inspection.identity.branch}`,
 		`Path: ${inspection.identity.path}`,
 		`Base commit: ${plan.baseCommit ?? "unavailable"}`,
+		...(plan.command !== null ? [`Command: ${plan.command.join(" ")}`] : []),
+		`Dirty: ${plan.dirty ? "yes" : "no"}`,
 		"Checks that passed:",
 		...(checks.length > 0 ? checks : ["- None."]),
 		...(plan.diagnostics.length > 0 ? ["Diagnostics:", describeDiagnostics(plan.diagnostics)] : []),
