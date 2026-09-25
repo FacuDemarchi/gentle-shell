@@ -202,6 +202,7 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - The whole unit was implemented with RDD switched off by the user's decision, so it carries parent verification plus independent audits of PM5-1, PM5-2 and PM5-3 instead of native reviews; the deferred review pass over the five parts runs when the unit closes.
 
 - [ ] **PM-6 — Provision and manage capability worktrees safely**
+  - Planned 2026-09-25 in `odd/tasks/pm-6-capability-worktrees.md`, with the user's decisions: a capability worktree lives at `<parent>/<repo>-worktrees/<capability-id>` with branch `feat/<capability-id>`; PM-6 creates it behind an explicit confirmation after showing the plan; a live claim on the capability is required first; and an existing same-clone clean worktree is reused while everything else is refused or asked about. The unit is five slices, each its own commit, and the read-only surface map recorded that nothing in product code creates, moves or deletes a capability worktree or branch today — this is the first unit that writes outside the coordination store.
   - Derive branch/worktree identity from approved capability IDs.
   - Validate same-clone roots, existing branches, dirty state, collisions, nested repositories, and already-running sessions.
   - Register worktrees with the coordinating Pi session and bind them to claims.
@@ -297,7 +298,7 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 
 ## Next decision
 
-PM-4 and PM-5 are closed. **PM-5 — Establish lead/satellite coordination contracts** is complete in `odd/tasks/pm-5-coordination-protocol.md`: five slices delivered, the protocol documented in `docs/project-map.md`, and the deferred review pass over those five parts queued. **PM-6 — Provision and manage capability worktrees safely** is the natural next unit: it is what turns the projection's advisory scope signal into real enforcement, because it binds worktrees to capabilities. PM-6 through PM-9 remain unstarted and need their own planning.
+PM-5 is complete and reviewed. **PM-6 — Provision and manage capability worktrees safely** is planned in `odd/tasks/pm-6-capability-worktrees.md`: five slices, each under the review budget, the first (PM6-1, worktree identity and read-only inspection) next. It is the unit that turns the coordination projection's advisory scope signal into real enforcement, because it binds a worktree to a capability, and it is the first piece of the project that writes outside the store. PM-7 through PM-9 remain unstarted and need their own planning.
 
 Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
 
