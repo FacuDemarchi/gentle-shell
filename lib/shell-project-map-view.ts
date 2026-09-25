@@ -186,7 +186,12 @@ export function projectMapSummaryLine(map: ProjectMapV1): string {
 	return `${completed(map.foundations)}/${map.foundations.length} foundations · ${completed(map.capabilities)}/${map.capabilities.length} capabilities`;
 }
 
-function inspectorLines(map: ProjectMapV1, selection: string): string[] {
+interface ProjectMapOpenPiReadinessView {
+	permitted: boolean;
+	diagnostics: Array<{ code: string }>;
+}
+
+function inspectorLines(map: ProjectMapV1, selection: string, openPiReadiness?: ProjectMapOpenPiReadinessView): string[] {
 	const capability = map.capabilities.find((entry) => entry.id === selection);
 	if (capability === undefined) return [];
 	const foundations = new Map(map.foundations.map((entry) => [entry.id, entry]));
@@ -213,10 +218,11 @@ function inspectorLines(map: ProjectMapV1, selection: string): string[] {
 		`Feature documents: ${listed(capability.featureDocs, (entry) => entry)}`,
 		`Static blockers: ${listed(staticBlockers, (entry) => entry)}`,
 		"Runtime overlay: not wired yet.",
+		...(openPiReadiness?.permitted === true ? ["[Open Pi]"] : []),
 	];
 }
 
-export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): ProjectMapCardBody {
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): ProjectMapCardBody {
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
@@ -255,12 +261,12 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	}
 	add("Coverage");
 	for (const line of coverageLines(map, state.coverage)) add(line);
-	for (const line of inspectorLines(map, selection ?? "")) add(line);
+	for (const line of inspectorLines(map, selection ?? "", openPiReadiness)) add(line);
 	return body;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): ProjectMapCardDescriptor {
-	const body = projectMapCardBody(state, collapse, selection).lines;
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection, openPiReadiness).lines;
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
@@ -275,7 +281,7 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): string {
-	const descriptor = projectMapCardDescriptor(state, collapse, selection);
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): string {
+	const descriptor = projectMapCardDescriptor(state, collapse, selection, openPiReadiness);
 	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body })}`;
 }

@@ -175,6 +175,16 @@ test("inspector renders every field, empty lists, and static blockers without ru
 	for (const field of ["Surfaces: none", "Foundations: none", "Dependencies: none", "Contracts: none", "Feature documents: none", "Static blockers: none"]) assert.ok(empty.includes(field), `expected ${field}`);
 });
 
+test("inspector renders Open Pi only for an injected permitted readiness decision", () => {
+	const state = ready(map());
+	const permitted = projectMapCardDescriptor(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: true, diagnostics: [] }).body;
+	assert.ok(permitted.includes("[Open Pi]"));
+	const refused = projectMapCardDescriptor(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: false, diagnostics: [{ code: "project-map-open-pi/host-unavailable" }] }).body;
+	assert.equal(refused.includes("[Open Pi]"), false);
+	assert.equal(refused.some((line) => line.toLowerCase().includes("disabled")), false);
+	assert.notEqual(projectMapCardDigest(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: true, diagnostics: [] }), projectMapCardDigest(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: false, diagnostics: [{ code: "project-map-open-pi/host-unavailable" }] }));
+});
+
 test("inspector content and selection move the digest within the body budget", () => {
 	const base = ready(map());
 	const selected = projectMapCardDigest(base, PROJECT_MAP_EXPANDED, "checkout");
