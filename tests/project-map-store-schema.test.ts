@@ -30,6 +30,7 @@ function record(kind: ProjectMapStoreRecordKind, overrides: Record<string, unkno
 		heartbeat: { ...common, session_id: "session-1", pid: 1, incarnation: UUID, beat_at: AT },
 		"session-binding": { ...common, session_id: "session-1", pid: 1, incarnation: UUID, workspace_root: "/workspace", bound_at: AT },
 		blocker: { ...common, capability_id: "project-map", blocker_id: "blocker-1", owner: "owner-1", reason: "Needs review", raised_by: "session-1", raised_at: AT },
+		"contract-proposal": { ...common, capability_id: "project-map", contract_id: "contract-1", title: "Shared boundary", digest: DIGEST, proposed_by: "session-1", proposed_at: AT, state: "proposed" },
 		"readiness-receipt": { ...common, capability_id: "project-map", issued_by: "session-1", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
 	};
 	return { ...records[kind], ...overrides };
@@ -45,7 +46,7 @@ function paths(result: { diagnostics: { path: string }[] }): string[] {
 
 test("exports the frozen store vocabulary", () => {
 	assert.equal(PROJECT_MAP_STORE_SCHEMA_V1, "gentle-shell.project-map-store/v1");
-	assert.deepEqual([...PROJECT_MAP_STORE_RECORD_KINDS], ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "readiness-receipt"]);
+	assert.deepEqual([...PROJECT_MAP_STORE_RECORD_KINDS], ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt"]);
 	assert.deepEqual(PROJECT_MAP_STORE_DIAGNOSTIC_CODES, {
 		UNSUPPORTED_SCHEMA_VERSION: "project-map-store/unsupported-schema-version",
 		UNKNOWN_FIELD: "project-map-store/unknown-field",
@@ -70,6 +71,9 @@ test("exports the frozen store vocabulary", () => {
 		BLOCKER_EXISTS: "project-map-store/blocker-exists",
 		BLOCKER_ABSENT: "project-map-store/blocker-absent",
 		BLOCKER_RESOLVED: "project-map-store/blocker-resolved",
+		CONTRACT_EXISTS: "project-map-store/contract-exists",
+		CONTRACT_ABSENT: "project-map-store/contract-absent",
+		CONTRACT_ALREADY_DECIDED: "project-map-store/contract-already-decided",
 	});
 });
 
@@ -189,6 +193,22 @@ test("enforces record field rules and paired blocker resolution", () => {
 	const missingResolutionTime = validateProjectMapStoreValue("blocker", record("blocker", { resolution: "Approved" }));
 	assert.deepEqual(codes(missingResolutionTime), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
 	assert.deepEqual(paths(missingResolutionTime), ["$.resolved_at"]);
+
+	const missingDecider = record("contract-proposal", { state: "accepted", decided_at: AT, rationale: "Approved" });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", missingDecider)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", missingDecider)), ["$.decided_by"]);
+
+	const missingDecisionTime = record("contract-proposal", { state: "accepted", decided_by: "session-lead", rationale: "Approved" });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", missingDecisionTime)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", missingDecisionTime)), ["$.decided_at"]);
+
+	const missingRationale = record("contract-proposal", { state: "accepted", decided_by: "session-lead", decided_at: AT });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", missingRationale)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", missingRationale)), ["$.rationale"]);
+
+	const proposedWithDecision = validateProjectMapStoreValue("contract-proposal", record("contract-proposal", { decided_by: "session-lead" }));
+	assert.deepEqual(codes(proposedWithDecision), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(proposedWithDecision), ["$.decided_by"]);
 
 	const missingIdentifiers = record("blocker");
 	delete missingIdentifiers.blocker_id;
