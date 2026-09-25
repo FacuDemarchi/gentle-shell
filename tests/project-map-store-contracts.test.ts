@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { initializeProjectMapStore } from "../lib/project-map-store.ts";
+import { acquireProjectMapStoreLock, initializeProjectMapStore, releaseProjectMapStoreLock } from "../lib/project-map-store.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
 
 const REPOSITORY_ID = `sha256:${"a".repeat(64)}`;
@@ -75,26 +75,35 @@ test("accepts a proposal while preserving every proposal field and canonical byt
 	assert.ok(module, "contract store module must be implemented");
 	await withRoot((root) => {
 		initialize(root);
-		assert.ok(proposal(module, root, "contract-a").contract);
+		// Deliberately different from every fixture default, so an implementation that reset the
+		// proposal metadata on decision could not pass.
+		const proposed = proposal(module, root, "contract-a", { title: "Boundary with varied metadata", digest: `sha256:${"c".repeat(64)}`, sessionId: "session-proposer", now: "2026-09-24T11:00:00.000Z" });
+		assert.ok(proposed.contract);
 		const decided = module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "accepted", rationale: "Boundary approved", sessionId: "session-lead", now: LATER });
 		assert.deepEqual(decided.diagnostics, []);
-		assert.deepEqual(decided.contract, { schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "project-map", contract_id: "contract-a", title: "Shared boundary", digest: DIGEST, proposed_by: "session-a", proposed_at: NOW, state: "accepted", decided_by: "session-lead", decided_at: LATER, rationale: "Boundary approved" });
-		assert.deepEqual(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" }), { contract: decided.contract, status: "accepted", diagnostics: [] });
+		assert.deepEqual(decided.contract, { schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "project-map", contract_id: "contract-a", title: "Boundary with varied metadata", digest: `sha256:${"c".repeat(64)}`, proposed_by: "session-proposer", proposed_at: "2026-09-24T11:00:00.000Z", state: "accepted", decided_by: "session-lead", decided_at: LATER, rationale: "Boundary approved" });
+		const reread = module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" });
+		assert.deepEqual(reread, { contract: decided.contract, status: "accepted", diagnostics: [] });
+		assert.deepEqual({ title: reread.contract?.title, digest: reread.contract?.digest, proposed_by: reread.contract?.proposed_by, proposed_at: reread.contract?.proposed_at }, { title: "Boundary with varied metadata", digest: `sha256:${"c".repeat(64)}`, proposed_by: "session-proposer", proposed_at: "2026-09-24T11:00:00.000Z" });
 		assert.equal(readFileSync(contractPath(root, "project-map", "contract-a"), "utf8"), serializeProjectMapStoreValue("contract-proposal", decided.contract).record);
 	});
 });
 
-test("rejects a proposal with the decided record shape", async () => {
+test("rejects a proposal with the decided record shape and without arbitrating the decider", async () => {
 	const module = await contracts();
 	assert.ok(module, "contract store module must be implemented");
 	await withRoot((root) => {
 		initialize(root);
-		assert.ok(proposal(module, root, "contract-a").contract);
-		const decided = module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "rejected", rationale: "Boundary conflicts", sessionId: "session-lead", now: LATER });
+		assert.ok(proposal(module, root, "contract-a", { title: "Varied rejection metadata", sessionId: "session-proposer" }).contract);
+		// The store records who decided and never checks that it is the lead: arbitration is the
+		// projection's and the command's job, and this assertion is what pins that.
+		const decided = module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "rejected", rationale: "Boundary conflicts", sessionId: "session-anyone", now: LATER });
 		assert.equal(decided.contract?.state, "rejected");
-		assert.equal(decided.contract?.decided_by, "session-lead");
+		assert.equal(decided.contract?.decided_by, "session-anyone");
 		assert.equal(decided.contract?.decided_at, LATER);
 		assert.equal(decided.contract?.rationale, "Boundary conflicts");
+		assert.equal(decided.contract?.title, "Varied rejection metadata");
+		assert.equal(decided.contract?.proposed_by, "session-proposer");
 		assert.equal(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" }).status, "rejected");
 	});
 });
@@ -164,15 +173,130 @@ test("classifies non-canonical and mismatched contract records as corrupted", as
 	});
 });
 
-test("classifies a decided contract missing rationale as corrupted", async () => {
+test("classifies a decided contract missing rationale as corrupted through the pairing rule alone", async () => {
 	const module = await contracts();
 	assert.ok(module, "contract store module must be implemented");
 	await withRoot((root) => {
 		initialize(root);
 		const path = contractPath(root, "project-map", "contract-a");
 		mkdirSync(join(root, "contracts", createHash("sha256").update("project-map").digest("hex")), { recursive: true });
-		writeFileSync(path, JSON.stringify({ schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "project-map", contract_id: "contract-a", title: "Shared boundary", digest: DIGEST, proposed_by: "session-a", proposed_at: NOW, state: "accepted", decided_by: "session-lead", decided_at: LATER }), "utf8");
-		assert.equal(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" }).status, "corrupted");
+		// Canonical bytes for a record that carries a decision without its rationale: built by hand
+		// because the serializer refuses to produce one. The pairing rule is therefore the only
+		// rejection reason, which is what makes this test discriminate.
+		const decidedWithoutRationale = { schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "project-map", contract_id: "contract-a", title: "Shared boundary", digest: DIGEST, proposed_by: "session-a", proposed_at: NOW, state: "accepted", decided_by: "session-lead", decided_at: LATER };
+		writeFileSync(path, `${JSON.stringify(decidedWithoutRationale, null, 2)}\n`, "utf8");
+		const read = module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" });
+		assert.equal(read.status, "corrupted");
+		assert.ok(read.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD && entry.path === "$.rationale"));
+	});
+});
+
+test("reports free for a missing record and unreadable for one it cannot read", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		assert.equal(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "missing" }).status, "free");
+		const path = contractPath(root, "project-map", "contract-a");
+		mkdirSync(join(root, "contracts", createHash("sha256").update("project-map").digest("hex")), { recursive: true });
+		writeFileSync(path, serializeProjectMapStoreValue("contract-proposal", { schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "project-map", contract_id: "contract-a", title: "Shared boundary", digest: DIGEST, proposed_by: "session-a", proposed_at: NOW, state: "proposed" }).record!, "utf8");
+		chmodSync(path, 0o000);
+		assert.equal(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" }).status, "unreadable");
+	});
+});
+
+test("refuses mutations while the store lock is held and keeps lock-free reads working", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		assert.ok(proposal(module, root, "contract-a").contract);
+		const path = contractPath(root, "project-map", "contract-a");
+		const before = readFileSync(path, "utf8");
+		const held = acquireProjectMapStoreLock(root, NOW);
+		assert.ok(held.handle);
+		assert.deepEqual(codes(proposal(module, root, "contract-b")), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED]);
+		assert.deepEqual(codes(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "accepted", rationale: "Approved", sessionId: "session-lead", now: LATER })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_LOCKED]);
+		assert.equal(readFileSync(path, "utf8"), before);
+		assert.equal(module.readProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a" }).status, "proposed");
+		assert.deepEqual(module.listProjectMapContracts({ root, capabilityId: "project-map", includeDecided: true }).contracts.map((contract) => contract.contract_id), ["contract-a"]);
+		assert.deepEqual(releaseProjectMapStoreLock(root, held.handle!), []);
+	});
+});
+
+test("refuses mutations on a corrupted descriptor and preserves contract bytes", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		assert.ok(proposal(module, root, "contract-a").contract);
+		const path = contractPath(root, "project-map", "contract-a");
+		const before = readFileSync(path, "utf8");
+		writeFileSync(join(root, "store.json"), "not json", "utf8");
+		assert.ok(codes(proposal(module, root, "contract-b")).includes(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
+		assert.ok(codes(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "accepted", rationale: "Approved", sessionId: "session-lead", now: LATER })).includes(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
+		assert.equal(readFileSync(path, "utf8"), before);
+		assert.equal(readFileSync(join(root, "store.json"), "utf8"), "not json");
+	});
+});
+
+test("refuses invalid mutation inputs without writing or leaving a lock behind", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		const path = contractPath(root, "project-map", "contract-a");
+		assert.deepEqual(codes(proposal(module, root, "contract-a", { now: "not-an-instant" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.deepEqual(codes(proposal(module, root, "contract-a", { title: "" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.deepEqual(codes(proposal(module, root, "contract-a", { sessionId: "" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.deepEqual(codes(proposal(module, root, "contract-a", { digest: "not-a-digest" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.equal(existsSync(path), false);
+		assert.equal(existsSync(join(root, "store.lock")), false);
+		assert.ok(proposal(module, root, "contract-a").contract);
+		const before = readFileSync(path, "utf8");
+		assert.deepEqual(codes(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "accepted", rationale: "", sessionId: "session-lead", now: LATER })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+		assert.equal(readFileSync(path, "utf8"), before);
+	});
+});
+
+test("keeps decided records immutable for later proposals and decisions", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		assert.ok(proposal(module, root, "contract-a").contract);
+		assert.ok(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-a", decision: "accepted", rationale: "Approved", sessionId: "session-lead", now: LATER }).contract);
+		const acceptedPath = contractPath(root, "project-map", "contract-a");
+		const acceptedBytes = readFileSync(acceptedPath, "utf8");
+		assert.deepEqual(codes(proposal(module, root, "contract-a", { title: "Replacement" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.CONTRACT_EXISTS]);
+		assert.equal(readFileSync(acceptedPath, "utf8"), acceptedBytes);
+		assert.ok(proposal(module, root, "contract-b").contract);
+		assert.ok(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-b", decision: "rejected", rationale: "No", sessionId: "session-lead", now: LATER }).contract);
+		const rejectedPath = contractPath(root, "project-map", "contract-b");
+		const rejectedBytes = readFileSync(rejectedPath, "utf8");
+		assert.deepEqual(codes(module.decideProjectMapContract({ root, capabilityId: "project-map", contractId: "contract-b", decision: "accepted", rationale: "Changed my mind", sessionId: "session-lead", now: "2026-09-24T12:02:00.000Z" })), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.CONTRACT_ALREADY_DECIDED]);
+		assert.deepEqual(codes(proposal(module, root, "contract-b")), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.CONTRACT_EXISTS]);
+		assert.equal(readFileSync(rejectedPath, "utf8"), rejectedBytes);
+	});
+});
+
+test("reports foreign and corrupt entries while listing one capability only", async () => {
+	const module = await contracts();
+	assert.ok(module, "contract store module must be implemented");
+	await withRoot((root) => {
+		initialize(root);
+		assert.ok(proposal(module, root, "contract-a").contract);
+		assert.ok(proposal(module, root, "other-contract", { capabilityId: "other-capability" }).contract);
+		const directory = join(root, "contracts", createHash("sha256").update("project-map").digest("hex"));
+		writeFileSync(join(directory, "broken.json"), "not json", "utf8");
+		const foreign = { schema: "gentle-shell.project-map-store/v1", kind: "contract-proposal", capability_id: "other-capability", contract_id: "foreign", title: "Foreign", digest: DIGEST, proposed_by: "session-a", proposed_at: NOW, state: "proposed" } as const;
+		writeFileSync(join(directory, `${createHash("sha256").update("foreign").digest("hex")}.json`), serializeProjectMapStoreValue("contract-proposal", foreign).record!, "utf8");
+		const misplaced = { ...foreign, capability_id: "project-map", contract_id: "declared-y" };
+		writeFileSync(join(directory, `${createHash("sha256").update("declared-z").digest("hex")}.json`), serializeProjectMapStoreValue("contract-proposal", misplaced).record!, "utf8");
+		const listed = module.listProjectMapContracts({ root, capabilityId: "project-map", includeDecided: true });
+		assert.deepEqual(listed.contracts.map((contract) => contract.contract_id), ["contract-a"]);
+		assert.equal(listed.diagnostics.filter((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED).length, 3);
+		assert.deepEqual(module.listProjectMapContracts({ root, capabilityId: "other-capability", includeDecided: true }).contracts.map((contract) => contract.contract_id), ["other-contract"]);
 	});
 });
 

@@ -210,6 +210,26 @@ test("enforces record field rules and paired blocker resolution", () => {
 	assert.deepEqual(codes(proposedWithDecision), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
 	assert.deepEqual(paths(proposedWithDecision), ["$.decided_by"]);
 
+	const proposedWithDecisionTime = validateProjectMapStoreValue("contract-proposal", record("contract-proposal", { decided_at: AT }));
+	assert.deepEqual(codes(proposedWithDecisionTime), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(proposedWithDecisionTime), ["$.decided_at"]);
+
+	const proposedWithRationale = validateProjectMapStoreValue("contract-proposal", record("contract-proposal", { rationale: "Approved" }));
+	assert.deepEqual(codes(proposedWithRationale), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
+	assert.deepEqual(paths(proposedWithRationale), ["$.rationale"]);
+
+	const rejectedMissingDecider = record("contract-proposal", { state: "rejected", decided_at: AT, rationale: "No" });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", rejectedMissingDecider)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", rejectedMissingDecider)), ["$.decided_by"]);
+
+	const rejectedMissingTime = record("contract-proposal", { state: "rejected", decided_by: "session-lead", rationale: "No" });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", rejectedMissingTime)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", rejectedMissingTime)), ["$.decided_at"]);
+
+	const rejectedMissingRationale = record("contract-proposal", { state: "rejected", decided_by: "session-lead", decided_at: AT });
+	assert.deepEqual(codes(validateProjectMapStoreValue("contract-proposal", rejectedMissingRationale)), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(validateProjectMapStoreValue("contract-proposal", rejectedMissingRationale)), ["$.rationale"]);
+
 	const missingIdentifiers = record("blocker");
 	delete missingIdentifiers.blocker_id;
 	delete missingIdentifiers.owner;
