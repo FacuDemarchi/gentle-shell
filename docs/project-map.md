@@ -54,7 +54,7 @@ Every generated map is a draft. The generator never marks a map approved, and it
 
 ## Command surface
 
-`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with eight validated sub-actions:
+`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with nine validated sub-actions:
 
 - `status` reads the artifact and reports its approval state and counts. It never writes.
 - `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation. It replaces whatever the artifact held, an approved map included, so it is not a way to edit an approved plan in place.
@@ -63,9 +63,10 @@ Every generated map is a draft. The generator never marks a map approved, and it
 - `show` displays the Project Map card for the current session without writing the artifact.
 - `hide` removes the Project Map card for the current session without writing the artifact.
 - `lead claim|renew|release|status` manages the reserved lead claim for the current session. The session identity comes from the command's own session manager, never from a free-text argument, and a session that cannot be identified is refused rather than guessed.
-- `contract propose|accept|reject|list ...` drives the shared-contract protocol described below; `accept` is the only one of them that writes the artifact, and the only new sub-action that asks for confirmation.
+- `contract propose|accept|reject|list ...` drives the shared-contract protocol described below; `accept` is the only one of them that writes the artifact.
+- `worktree inspect|provision|list ...` plans, provisions, or lists capability worktrees as described below; only `provision` can write.
 
-An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. A declaration refuses an unknown or repeated surface and names the frozen vocabulary; it also refuses an approved map, because declaration is a draft-time action and no plan-preserving return to draft exists. The transition takes its timestamp as an argument rather than reading the clock, so the tests inject it; the command is what supplies the current time. Every writing sub-action re-reads the artifact after its confirmation: when the file changed while the decision was pending, the write is refused and the change reported instead of clobbering the other writer.
+An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. A declaration refuses an unknown or repeated surface and names the frozen vocabulary; it also refuses an approved map, because declaration is a draft-time action and no plan-preserving return to draft exists. The transition takes its timestamp as an argument rather than reading the clock, so the tests inject it; the command is what supplies the current time. Every artifact-writing sub-action re-reads the artifact after its confirmation: when the file changed while the decision was pending, the write is refused and the change reported instead of clobbering the other writer. `worktree provision` writes no artifact; it re-inspects the plan's compared facts under the store lock and refuses when they changed.
 
 ## Sidebar card
 
@@ -114,8 +115,9 @@ The durable records are the state transitions, and there is no separate event jo
 | blocker | `blockers/<sha256(capability-id)>/<sha256(blocker-id)>.json` | an obstacle with an owner and a resolution path |
 | readiness receipt | `receipts/<sha256(capability-id)>/...` | what was verified, and `authority: "none"` |
 | contract proposal | `contracts/<sha256(capability-id)>/<sha256(contract-id)>.json` | a shared-contract proposal, its body digest, and its decision |
+| worktree binding | `worktrees/<sha256(capability-id)>.json` | one capability's branch, worktree root, session and audited base commit |
 
-A store that is not `ready`, a non-canonical record, or an unreadable file is refused rather than interpreted, and the emptiness proof that guards initialization counts every record directory, so a store holding live state can never be initialized over.
+A store that is not `ready`, a non-canonical record, or an unreadable file is refused rather than interpreted, and the emptiness proof that guards initialization counts every record directory, including `worktrees/`, so a store holding live state can never be initialized over.
 
 ### The lead and its satellites
 
@@ -137,7 +139,7 @@ A satellite may claim a capability, renew and release it, report blockers, issue
 
 ### Conflicts the projection reports
 
-`readProjectMapCoordinationState` is read-only and reports the facts a coordinator needs: the lead, the satellites, the derived dependency readiness and completion, a next safe action per capability, and five conflicts it can honestly detect — a claim on a capability the map does not declare, a claim on a capability with no declared surfaces, a live claim whose session has no fresh heartbeat, a map that declares the reserved `__lead` id, and a store generation that moved past the one the caller expected. File-level enforcement of declared surfaces is deliberately not claimed: without the worktree-to-capability binding that PM-6 brings, an out-of-surface edit cannot be detected here, so the projection reports the signal instead of pretending to prevent it. `dependency-ready` and `completion` are derived from the map plus the receipts, never stored, and the projection writes nothing at all.
+`readProjectMapCoordinationState` is read-only and reports the facts a coordinator needs: the lead, the satellites, the derived dependency readiness and completion, a next safe action per capability, and five conflicts it can honestly detect — a claim on a capability the map does not declare, a claim on a capability with no declared surfaces, a live claim whose session has no fresh heartbeat, a map that declares the reserved `__lead` id, and a store generation that moved past the one the caller expected. File-level enforcement of declared surfaces is deliberately not claimed. The worktree-to-capability binding now records that association, but it does not detect or prevent an out-of-surface edit; that enforcement is later work, so the projection reports the signal instead of pretending to prevent it. `dependency-ready` and `completion` are derived from the map plus the receipts, never stored, and the projection writes nothing at all.
 
 ### Commands
 
@@ -148,6 +150,28 @@ A satellite may claim a capability, renew and release it, report blockers, issue
 - `contract list [capability-id]` lists proposals and decisions, for one capability or for every capability the map declares.
 
 Every refusal keeps the store's own diagnostic code — `claim-held`, `renewal-too-early`, `contract-exists`, `contract-absent`, `contract-already-decided`, `unreadable-store`, `store-locked` — so a caller can branch on the reason instead of parsing a message.
+
+## Capability worktrees
+
+A capability worktree has a pure, deterministic identity derived from the approved capability id: its branch is `feat/<capability-id>` and its path is `<parent-of-repo>/<repo>-worktrees/<capability-id>`. `deriveProjectMapWorktreeIdentity` derives those values from the canonical repository root and the id; it does not inspect Git, the filesystem, or the clock.
+
+`inspectProjectMapWorktreeTarget` is read-only. It reports the derived identity; repository root, Git common directory and same-clone fact; branch existence and whether that branch is current; target directory existence and emptiness; nested-repository and common-directory containment facts; the capability claim; and store-derived target occupancy with the occupant's heartbeat state. It writes no branch, directory, lock, or store record.
+
+`planProjectMapWorktree` turns that inspection into `create`, `reuse`, or `refuse`. The plan carries the exact command it would run, `git worktree add -b <branch> <path> <base>`, where `<base>` is the resolved `HEAD` recorded by the plan, and the printed plan shows that command together with the decision, the branch, the path, the base commit and whether the worktree is dirty. A live capability claim is required: the caller may hold it, or the caller may be the live lead while another live session holds it; any other holder refuses with the existing `claim-held` code. Nothing here validates that the id belongs to this repository's approved map — the id is the caller's input and the enforced gate is a live claim, so a claim on an id the map does not declare is possible, and the coordination projection reports it as a conflict.
+
+Provisioning acquires the store lock and re-inspects before acting. When a new worktree has to be created, a missing base is created with mode `0o700`, and a pre-existing symlinked or non-directory base is refused; a reuse creates no base and does not run that check, so a same-clone worktree reached through a symlinked base can still be reused. Git runs `git worktree add -b <branch> <path> <base>` with the sanitized Git environment. After Git returns, the target is revalidated as a real directory at the derived path, in the same clone and outside the common directory, on the expected branch and base commit. A detected divergence is `uncertain`, never success.
+
+Reuse is only for a worktree at the derived path whose root belongs to this clone and whose expected branch exists and is current. It creates nothing and reports `created: false`. A dirty but otherwise correct worktree is reported as dirty in the plan the human confirms rather than refused; a plan approved while clean but found dirty under the lock is refused because the displayed plan no longer matches.
+
+The named refusals are `worktree-claim-required` for no live claim, `worktree-target-not-empty` for content that is not a reusable target, `worktree-nested-repository` when the target sits inside another Git working tree, `worktree-foreign-clone` when the target belongs to a different clone, `worktree-occupied` when the store finds a live session binding for it, and `worktree-path-escapes` for common-directory containment or an unsafe worktree base or target path. A refusal creates neither branch nor directory; pre-existing objects remain in place rather than being removed.
+
+The durable binding is one `worktree-binding` record per capability at `worktrees/<sha256(capability-id)>.json`. It contains `schema`, `kind`, `capability_id`, `branch`, `worktree_root`, `session_id`, `base_commit`, and `created_at`. Rebinding is idempotent only when the five binding facts — capability, branch, worktree root, session, and base commit — match. `created_at` is first-write metadata and is deliberately excluded, so a legitimate later re-provisioning does not conflict. Any other difference refuses with `worktree-already-bound` and never overwrites the first record. The store records bindings; it does not arbitrate claims.
+
+The command is `worktree inspect|provision|list <capability-id>` (`list` takes no capability id). `inspect` prints the plan and writes nothing. `provision` prints that plan and, unless it already refuses, asks exactly once through the UI confirmation; it provisions with the displayed plan, so a change to the compared facts — the decision, the branch, the path, the base commit, the dirtiness, the command or the inspected state — is refused rather than re-planned. `list` prints the durable bindings. An unverifiable result registers and binds nothing. A session-registration failure is a warning on an otherwise successful provision.
+
+Nothing deletes, prunes, or rewrites a worktree or branch automatically. Cleanup only inspects and asks. Provisioning a worktree or creating a branch grants no commit, push, PR, merge, or release authority.
+
+The sibling layout keeps the path-race boundary decided on 2026-09-25. Before creating a new worktree, a pre-existing symlinked base is refused, and a missing base is created `0o700` without unchecked recursive symlink traversal; identity and containment are revalidated after Git runs. This guarantee assumes the repository's parent directory is not concurrently replaced by an uncooperative filesystem actor. Node pathname checks followed by `git worktree add` cannot atomically exclude that actor, so this protocol claims no atomic protection from a hostile path race.
 
 ## Approval
 
