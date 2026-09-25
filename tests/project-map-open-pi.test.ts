@@ -13,7 +13,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapCapabilityV1, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
-import { probeProjectMapOpenPiHost, projectMapOpenPiReadiness } from "../lib/project-map-open-pi.ts";
+import { deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher } from "../lib/project-map-open-pi.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
@@ -129,6 +129,89 @@ test("readiness fails closed when an unrelated store record is corrupted", () =>
 		assert.equal(result.permitted, false);
 		assert.ok(result.diagnostics.some((entry) => entry.code === "project-map-store/store-corrupted"));
 	}, projectMap([capability("catalog"), capability("billing")]));
+});
+
+test("plans a named detached tmux session, attach command, and structured handoff without launching", () => {
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		assert.equal(plan.decision, "open");
+		assert.equal(plan.sessionName, "project-map-open-pi-catalog");
+		assert.deepEqual(plan.attachCommand, ["tmux", "attach-session", "-t", plan.sessionName]);
+		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
+		assert.equal(plan.cwd, plan.readiness.worktree.inspection.identity.path);
+		assert.deepEqual(JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? ""), { capabilityId: "catalog", parentSessionId: "session-a" });
+		assert.equal(plan.handoff, [
+			"Project Map Open Pi handoff",
+			"Capability: catalog",
+			"Objective and outcome: catalog is available.",
+			"Approved surfaces: web",
+			"Dependencies: none",
+			"Accepted contracts: none",
+			"Feature documents: none",
+			"Parent session: session-a",
+			"Verification requirements: not declared by the map.",
+		].join("\n"));
+	});
+});
+
+test("derives a bounded deterministic tmux session name and refuses a collision", () => {
+	const maximumId = "a".repeat(64);
+	assert.equal(deriveProjectMapOpenPiSessionName(maximumId), `project-map-open-pi-${maximumId}`);
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST, sessionExists: () => true });
+		assert.equal(plan.decision, "refuse");
+		assert.ok(plan.diagnostics.some((entry) => entry.code === "project-map-open-pi/session-name-occupied"));
+	});
+	assert.equal(projectMapOpenPiSessionExists({ name: "project-map-open-pi-catalog", env: {}, run: (() => "") as unknown as typeof execFileSync }), true);
+	assert.equal(projectMapOpenPiSessionExists({ name: "project-map-open-pi-catalog", env: {}, run: (() => { throw new Error("absent"); }) as typeof execFileSync }), false);
+});
+
+test("resolves the package launcher through Node before a verified PATH fallback and refuses no launcher", () => {
+	const local = resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin" }, exists: (path) => path === "/package/bin/gentle-shell.mjs" });
+	assert.deepEqual(local, { command: "/node", path: "/package/bin/gentle-shell.mjs", source: "package-local" });
+	const fallback = resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin:/usr/bin" }, exists: (path) => path === "/usr/bin/gentle-shell" });
+	assert.deepEqual(fallback, { command: "/usr/bin/gentle-shell", path: "/usr/bin/gentle-shell", source: "path" });
+	assert.equal(resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin" }, exists: () => false }), null);
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const refused = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST, launcher: null });
+		assert.equal(refused.decision, "refuse"); assert.ok(refused.diagnostics.some((entry) => entry.code === "project-map-open-pi/launcher-unavailable"));
+		const fallbackPlan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST, launcher: fallback! });
+		assert.equal(fallbackPlan.argv.filter((entry) => entry === fallback!.command).length, 1, "a PATH launcher is the command, not its own argument");
+	});
+});
+
+test("executes only an open plan's argv and refuses never launches", () => {
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		const calls: Array<[string, string[]]> = [];
+		assert.equal(openProjectMapPi(plan, ((file, args) => { calls.push([file, args]); return ""; }) as typeof execFileSync).launched, true);
+		assert.deepEqual(calls, [["tmux", plan.argv.slice(1)]]);
+		const refused = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: { available: false, version: null } });
+		let refusedCalls = 0;
+		assert.equal(openProjectMapPi(refused, (() => { refusedCalls += 1; return ""; }) as unknown as typeof execFileSync).launched, false);
+		assert.equal(refusedCalls, 0, "a refusal never reaches the spawner");
+	});
+});
+
+test("tmux adapter creates a detached session only in a temporary sandbox", (t) => {
+	if (!probeProjectMapOpenPiHost({ env: process.env, timeoutMs: 1000 }).available) return t.skip("tmux is not installed");
+	const sandbox = mkdtempSync(join(tmpdir(), "project-map-open-pi-tmux-"));
+	const name = `project-map-open-pi-${process.pid}-${Date.now()}`;
+	try {
+		const result = openProjectMapPi({
+			decision: "open", argv: ["tmux", "new-session", "-d", "-s", name, "-c", sandbox, "sh", "-c", "sleep 30"], cwd: sandbox, env: process.env, handoff: "test", diagnostics: [],
+			readiness: {} as ReturnType<typeof readiness>, sessionName: name, attachCommand: ["tmux", "attach-session", "-t", name], launcher: { command: "sh", path: "sh", source: "path" },
+		});
+		assert.equal(result.launched, true);
+		assert.doesNotThrow(() => execFileSync("tmux", ["has-session", "-t", name], { stdio: "ignore" }));
+	} finally {
+		try { execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" }); } catch {}
+		rmSync(sandbox, { recursive: true, force: true });
+	}
 });
 
 test("readiness names every readiness disqualifier", () => {
