@@ -58,14 +58,14 @@ export interface AdvanceProjectMapStoreOptions {
 
 export const PROJECT_MAP_STORE_LOCK_STALE_MS = 30_000;
 
-interface ProjectMapStoreLockOwner {
+export interface ProjectMapStoreLockOwner {
 	token: string;
 	pid: number;
 	owner_hash: string;
 	acquired_at: string;
 }
 
-interface ProjectMapStoreLockHandle {
+export interface ProjectMapStoreLockHandle {
 	path: string;
 	owner: ProjectMapStoreLockOwner;
 }
@@ -200,7 +200,7 @@ function writeStoreLockOwner(path: string, owner: ProjectMapStoreLockOwner): boo
 	}
 }
 
-function acquireProjectMapStoreLock(root: string, now: string): { handle: ProjectMapStoreLockHandle | null; diagnostics: ProjectMapStoreDiagnostic[] } {
+export function acquireProjectMapStoreLock(root: string, now: string): { handle: ProjectMapStoreLockHandle | null; diagnostics: ProjectMapStoreDiagnostic[] } {
 	const path = storeLockPath(root);
 	try {
 		mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -237,7 +237,7 @@ function acquireProjectMapStoreLock(root: string, now: string): { handle: Projec
 	return { handle: { path, owner }, diagnostics: [] };
 }
 
-function releaseProjectMapStoreLock(root: string, handle: ProjectMapStoreLockHandle): ProjectMapStoreDiagnostic[] {
+export function releaseProjectMapStoreLock(root: string, handle: ProjectMapStoreLockHandle): ProjectMapStoreDiagnostic[] {
 	const observed = parseStoreLockOwner(join(handle.path, "owner.json"));
 	if (observed === null || observed.token !== handle.owner.token || observed.owner_hash !== handle.owner.owner_hash || observed.pid !== process.pid) return [storeLockedDiagnostic()];
 	const quarantineRoot = join(root, "locks-quarantine");
