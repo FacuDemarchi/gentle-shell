@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isIsoInstant } from "./shell-project-map-schema.ts";
 
 export const PROJECT_MAP_STORE_SCHEMA_V1 = "gentle-shell.project-map-store/v1" as const;
-export const PROJECT_MAP_STORE_RECORD_KINDS = ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "readiness-receipt"] as const;
+export const PROJECT_MAP_STORE_RECORD_KINDS = ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt"] as const;
 export type ProjectMapStoreRecordKind = (typeof PROJECT_MAP_STORE_RECORD_KINDS)[number];
 export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	UNSUPPORTED_SCHEMA_VERSION: "project-map-store/unsupported-schema-version",
@@ -28,6 +28,9 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	BLOCKER_EXISTS: "project-map-store/blocker-exists",
 	BLOCKER_ABSENT: "project-map-store/blocker-absent",
 	BLOCKER_RESOLVED: "project-map-store/blocker-resolved",
+	CONTRACT_EXISTS: "project-map-store/contract-exists",
+	CONTRACT_ABSENT: "project-map-store/contract-absent",
+	CONTRACT_ALREADY_DECIDED: "project-map-store/contract-already-decided",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 
@@ -90,6 +93,20 @@ export interface ProjectMapStoreBlockerV1 extends RecordBase {
 	resolution?: string;
 }
 
+export interface ProjectMapStoreContractProposalV1 extends RecordBase {
+	kind: "contract-proposal";
+	capability_id: string;
+	contract_id: string;
+	title: string;
+	digest: string;
+	proposed_by: string;
+	proposed_at: string;
+	state: "proposed" | "accepted" | "rejected";
+	decided_by?: string;
+	decided_at?: string;
+	rationale?: string;
+}
+
 export interface ProjectMapStoreReadinessReceiptV1 extends RecordBase {
 	kind: "readiness-receipt";
 	capability_id: string;
@@ -100,7 +117,7 @@ export interface ProjectMapStoreReadinessReceiptV1 extends RecordBase {
 	authority: "none";
 }
 
-export type ProjectMapStoreRecord = ProjectMapStoreDescriptorV1 | ProjectMapStoreClaimV1 | ProjectMapStoreHeartbeatV1 | ProjectMapStoreSessionBindingV1 | ProjectMapStoreBlockerV1 | ProjectMapStoreReadinessReceiptV1;
+export type ProjectMapStoreRecord = ProjectMapStoreDescriptorV1 | ProjectMapStoreClaimV1 | ProjectMapStoreHeartbeatV1 | ProjectMapStoreSessionBindingV1 | ProjectMapStoreBlockerV1 | ProjectMapStoreContractProposalV1 | ProjectMapStoreReadinessReceiptV1;
 export interface ProjectMapStoreResult<T = ProjectMapStoreRecord> {
 	record: T | null;
 	diagnostics: ProjectMapStoreDiagnostic[];
@@ -194,6 +211,7 @@ function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): Project
 		case "heartbeat": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, beat_at: value.beat_at as string };
 		case "session-binding": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, workspace_root: value.workspace_root as string, bound_at: value.bound_at as string };
 		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, blocker_id: value.blocker_id as string, owner: value.owner as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
+		case "contract-proposal": return { ...base, kind, capability_id: value.capability_id as string, contract_id: value.contract_id as string, title: value.title as string, digest: value.digest as string, proposed_by: value.proposed_by as string, proposed_at: value.proposed_at as string, state: value.state as "proposed" | "accepted" | "rejected", ...(value.decided_by === undefined ? {} : { decided_by: value.decided_by as string }), ...(value.decided_at === undefined ? {} : { decided_at: value.decided_at as string }), ...(value.rationale === undefined ? {} : { rationale: value.rationale as string }) };
 		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_by: value.issued_by as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
 	}
 }
@@ -235,6 +253,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			heartbeat: ["schema", "kind", "session_id", "pid", "incarnation", "beat_at"],
 			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at"],
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
+			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state", "decided_by", "decided_at", "rationale"],
 			"readiness-receipt": ["schema", "kind", "capability_id", "issued_by", "issued_at", "verified", "evidence", "authority"],
 		};
 		const requiredFields: Record<ProjectMapStoreRecordKind, readonly string[]> = {
@@ -243,6 +262,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			heartbeat: fields.heartbeat,
 			"session-binding": fields["session-binding"],
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at"],
+			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state"],
 			"readiness-receipt": fields["readiness-receipt"],
 		};
 		unknownFields(value, fields[kind], diagnostics);
@@ -286,6 +306,27 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 				if (value.resolution !== undefined) identifier(value.resolution, "$.resolution", diagnostics);
 				if (value.resolved_at !== undefined && value.resolution === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, "$.resolution", "A resolution is required with resolved_at.");
 				if (value.resolution !== undefined && value.resolved_at === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, "$.resolved_at", "resolved_at is required with a resolution.");
+				break;
+			case "contract-proposal":
+				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);
+				if (value.contract_id !== undefined) identifier(value.contract_id, "$.contract_id", diagnostics);
+				if (value.title !== undefined) identifier(value.title, "$.title", diagnostics);
+				if (value.digest !== undefined && (typeof value.digest !== "string" || !SHA256.test(value.digest))) invalid(diagnostics, "$.digest", "Expected a sha256 digest.");
+				if (value.proposed_by !== undefined) identifier(value.proposed_by, "$.proposed_by", diagnostics);
+				if (value.proposed_at !== undefined) instant(value.proposed_at, "$.proposed_at", diagnostics);
+				if (value.state !== "proposed" && value.state !== "accepted" && value.state !== "rejected") invalid(diagnostics, "$.state", "Expected proposed, accepted, or rejected.");
+				if (value.state === "proposed") {
+					for (const field of ["decided_by", "decided_at", "rationale"] as const) {
+						if (value[field] !== undefined) invalid(diagnostics, `$.${field}`, `${field} is forbidden for a proposed contract.`);
+					}
+				} else if (value.state === "accepted" || value.state === "rejected") {
+					if (value.decided_by === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, "$.decided_by", "decided_by is required for a decided contract.");
+					else identifier(value.decided_by, "$.decided_by", diagnostics);
+					if (value.decided_at === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, "$.decided_at", "decided_at is required for a decided contract.");
+					else instant(value.decided_at, "$.decided_at", diagnostics);
+					if (value.rationale === undefined) report(diagnostics, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD, "$.rationale", "rationale is required for a decided contract.");
+					else identifier(value.rationale, "$.rationale", diagnostics);
+				}
 				break;
 			case "readiness-receipt":
 				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);

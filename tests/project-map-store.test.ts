@@ -311,9 +311,9 @@ test("finds claim, heartbeat, and quarantine evidence in a store root", () => {
 	});
 });
 
-test("does not prove a store holding session, blocker, and receipt records empty", () => {
+test("does not prove a store holding session, blocker, contract, and receipt records empty", () => {
 	withRoot((root) => {
-		for (const directory of ["sessions", "blockers", "receipts"]) {
+		for (const directory of ["sessions", "blockers", "contracts", "receipts"]) {
 			mkdirSync(join(root, directory));
 			writeFileSync(join(root, directory, "record.json"), "evidence", "utf8");
 		}
@@ -324,6 +324,7 @@ test("does not prove a store holding session, blocker, and receipt records empty
 		assert.deepEqual(initialization.diagnostics.map((entry) => entry.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
 		assert.match(initialization.diagnostics[0].message, /1 entry under sessions\//);
 		assert.match(initialization.diagnostics[0].message, /1 entry under blockers\//);
+		assert.match(initialization.diagnostics[0].message, /1 entry under contracts\//);
 		assert.match(initialization.diagnostics[0].message, /1 entry under receipts\//);
 	});
 });
