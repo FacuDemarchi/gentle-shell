@@ -31,6 +31,12 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	CONTRACT_EXISTS: "project-map-store/contract-exists",
 	CONTRACT_ABSENT: "project-map-store/contract-absent",
 	CONTRACT_ALREADY_DECIDED: "project-map-store/contract-already-decided",
+	WORKTREE_CLAIM_REQUIRED: "project-map-store/worktree-claim-required",
+	WORKTREE_TARGET_NOT_EMPTY: "project-map-store/worktree-target-not-empty",
+	WORKTREE_NESTED_REPOSITORY: "project-map-store/worktree-nested-repository",
+	WORKTREE_FOREIGN_CLONE: "project-map-store/worktree-foreign-clone",
+	WORKTREE_OCCUPIED: "project-map-store/worktree-occupied",
+	WORKTREE_PATH_ESCAPES: "project-map-store/worktree-path-escapes",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 

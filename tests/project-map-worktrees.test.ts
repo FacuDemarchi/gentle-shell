@@ -10,7 +10,7 @@ import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession, projectMapSto
 import { ensureProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
-import { deriveProjectMapWorktreeIdentity, inspectProjectMapWorktreeTarget } from "../lib/project-map-worktrees.ts";
+import { deriveProjectMapWorktreeIdentity, inspectProjectMapWorktreeTarget, planProjectMapWorktree } from "../lib/project-map-worktrees.ts";
 
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
 const INCARNATION = "123e4567-e89b-12d3-a456-426614174001";
@@ -288,6 +288,90 @@ test("reports corrupt and non-canonical session bindings after a fresh occupant"
 		"$.sessions.zzzz-corrupt.json",
 	]));
 	assert.ok(corruptPaths.has("$.sessions.zzzz-corrupt.json"));
+});
+
+function claim(f: ReturnType<typeof fixture>, capabilityId: string, sessionId = "requester"): void {
+	assert.ok(acquireProjectMapClaim({ root: f.store, capabilityId, sessionId, now: NOW }).claim);
+}
+
+function plan(f: ReturnType<typeof fixture>, capabilityId: string, sessionId = "requester") {
+	return planProjectMapWorktree({ cwd: f.main, capabilityId, sessionId, now: NOW });
+}
+
+function hasCode(result: { diagnostics: Array<{ code: string }> }, code: string): boolean {
+	return result.diagnostics.some((entry) => entry.code === code);
+}
+
+test("plans require a live caller claim or a live lead", (t) => {
+	const f = fixture(t);
+	assert.equal(plan(f, "free").decision, "refuse");
+	assert.ok(hasCode(plan(f, "free"), PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED));
+	claim(f, "held", "holder");
+	assert.ok(hasCode(plan(f, "held"), PROJECT_MAP_STORE_DIAGNOSTIC_CODES.CLAIM_HELD));
+	claim(f, "__lead", "requester");
+	assert.equal(plan(f, "held").decision, "create");
+});
+
+test("plans a clean create from the resolved HEAD without changing the target", (t) => {
+	const f = fixture(t);
+	claim(f, "create");
+	const expectedBase = f.git(f.main, ["rev-parse", "HEAD"]).trim();
+	const proposed = plan(f, "create");
+	assert.equal(proposed.decision, "create");
+	assert.equal(proposed.baseCommit, expectedBase);
+	assert.deepEqual(proposed.command, ["git", "worktree", "add", "-b", "feat/create", proposed.inspection.identity.path, expectedBase]);
+	assert.equal(proposed.dirty, false);
+	assert.deepEqual(proposed.diagnostics, []);
+	assert.equal(existsSync(proposed.inspection.identity.path), false);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/create"]).trim(), "");
+});
+
+test("plans clean and dirty reusable worktrees and refuses an unreadable porcelain status", (t) => {
+	const f = fixture(t);
+	for (const capabilityId of ["clean", "dirty"]) {
+		claim(f, capabilityId);
+		const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId }).path;
+		f.git(f.main, ["worktree", "add", "-b", `feat/${capabilityId}`, target]);
+	}
+	const clean = plan(f, "clean");
+	assert.equal(clean.decision, "reuse");
+	assert.equal(clean.dirty, false);
+	writeFileSync(join(deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "dirty" }).path, "dirty.txt"), "dirty\n");
+	const dirty = plan(f, "dirty");
+	assert.equal(dirty.decision, "reuse");
+	assert.equal(dirty.dirty, true);
+	const statusFailure = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
+		if (file === "git" && args.includes("status")) throw Object.assign(new Error("status unavailable"), { status: 128, stdout: "", stderr: "status unavailable" });
+		return execFileSync(file, args, options);
+	}) as typeof execFileSync;
+	const unreadable = planProjectMapWorktree({ cwd: f.main, capabilityId: "clean", sessionId: "requester", now: NOW, run: statusFailure });
+	assert.equal(unreadable.decision, "refuse");
+	assert.equal(unreadable.dirty, false);
+	assert.ok(hasCode(unreadable, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+});
+
+test("plans refuse unsafe target states without changing bytes", (t) => {
+	const f = fixture(t);
+	for (const capabilityId of ["nonempty", "nested", "foreign", "occupied", "../main.repo/.git/escape"]) claim(f, capabilityId);
+	const nonempty = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "nonempty" }).path;
+	mkdirSync(nonempty, { recursive: true }); writeFileSync(join(nonempty, "x"), "x");
+	f.git(f.dir, ["init", "--initial-branch=main", deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "foreign" }).path]);
+	const occupied = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "occupied" }).path;
+	assert.ok(bindProjectMapStoreSession({ root: f.store, sessionId: "occupant", pid: process.pid, incarnation: INCARNATION, workspaceRoot: occupied, now: NOW }).binding);
+	const before = snapshot(f.dir);
+	for (const [capabilityId, code] of [["nonempty", "WORKTREE_TARGET_NOT_EMPTY"], ["foreign", "WORKTREE_FOREIGN_CLONE"], ["occupied", "WORKTREE_OCCUPIED"], ["../main.repo/.git/escape", "WORKTREE_PATH_ESCAPES"]] as const) assert.ok(hasCode(plan(f, capabilityId), PROJECT_MAP_STORE_DIAGNOSTIC_CODES[code]));
+	assert.deepEqual(snapshot(f.dir), before);
+	const nestedBase = join(f.dir, "main.repo-worktrees"); f.git(f.dir, ["init", "--initial-branch=main", nestedBase]); mkdirSync(join(nestedBase, "nested"));
+	const nested = plan(f, "nested");
+	assert.ok(hasCode(nested, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_NESTED_REPOSITORY));
+	assert.ok(hasCode(nested, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_FOREIGN_CLONE));
+});
+
+test("plans refuse an unattached branch", (t) => {
+	const f = fixture(t);
+	claim(f, "orphan"); f.git(f.main, ["branch", "feat/orphan"]);
+	assert.equal(plan(f, "orphan").decision, "refuse");
+	assert.ok(hasCode(plan(f, "orphan"), PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
 });
 
 test("inspection is byte-level read-only for filesystem, store, branches, and worktrees", (t) => {
