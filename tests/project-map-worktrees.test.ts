@@ -108,7 +108,7 @@ test("treats a file target as existing and non-empty", (t) => {
 	assert.equal(file?.directory.empty, false);
 });
 
-test("flags repositories at the target and nested worktree base", (t) => {
+test("distinguishes nested repositories from foreign clones rooted at the target", (t) => {
 	const f = fixture(t);
 	const nestedPath = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "nested" }).path;
 	const nestedBase = join(f.dir, "main.repo-worktrees");
@@ -121,8 +121,16 @@ test("flags repositories at the target and nested worktree base", (t) => {
 	const foreignPath = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "foreign" }).path;
 	f.git(f.dir, ["init", "--initial-branch=main", foreignPath]);
 	const foreign = inspectProjectMapWorktreeTarget({ cwd: f.main, capabilityId: "foreign", sessionId: "session", now: NOW });
-	assert.equal(foreign.directory.insideAnotherRepository, true);
+	assert.equal(foreign.directory.insideAnotherRepository, false);
 	assert.equal(foreign.repository.sameClone, false);
+});
+
+test("flags a target inside this repository checkout as nested", (t) => {
+	const f = fixture(t);
+	mkdirSync(join(f.main, "sub"));
+	const inspection = inspectProjectMapWorktreeTarget({ cwd: f.main, capabilityId: "../main.repo/sub", sessionId: "session", now: NOW });
+	assert.equal(inspection.directory.insideAnotherRepository, true);
+	assert.equal(inspection.repository.sameClone, true);
 });
 
 test("reports common-directory containment and the actual escaped path", (t) => {
@@ -169,6 +177,22 @@ test("recognizes a same-clone linked worktree as safe reuse", (t) => {
 	const linked = inspectProjectMapWorktreeTarget({ cwd: f.main, capabilityId: "linked", sessionId: "session", now: NOW });
 	assert.equal(linked.directory.insideAnotherRepository, false);
 	assert.equal(linked.repository.sameClone, true);
+});
+
+test("recognizes a same-clone worktree through a symlinked base as safe reuse", (t) => {
+	const f = fixture(t);
+	// A worktree reached through a symlinked base is physically elsewhere, so both
+	// sides of the nested comparison must be canonicalized or legitimate reuse is
+	// refused as nested.
+	const realBase = join(f.dir, "real-base");
+	mkdirSync(realBase);
+	symlinkSync(realBase, join(f.dir, "main.repo-worktrees"));
+	const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "symlinked" }).path;
+	f.git(f.main, ["worktree", "add", "-b", "feat/symlinked", target]);
+	const inspection = inspectProjectMapWorktreeTarget({ cwd: f.main, capabilityId: "symlinked", sessionId: "session", now: NOW });
+	assert.equal(inspection.directory.exists, true);
+	assert.equal(inspection.directory.insideAnotherRepository, false);
+	assert.equal(inspection.repository.sameClone, true);
 });
 
 test("maps free, own live, other live, and stale claims from the store", (t) => {
