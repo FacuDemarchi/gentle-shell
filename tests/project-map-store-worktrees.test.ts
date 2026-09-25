@@ -48,16 +48,19 @@ function runStoreChild(source: string, args: string[]): ChildProcess {
 	return spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", source, ...args], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
 }
 
-function waitForChildExit(child: ChildProcess): Promise<{ stdout: string; stderr: string; code: number | null }> {
+function waitForChildExit(child: ChildProcess, timeoutMs = 20_000): Promise<{ stdout: string; stderr: string; code: number | null }> {
 	return new Promise((resolve, reject) => {
 		let stdout = "";
 		let stderr = "";
 		child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk; });
 		child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk; });
-		child.once("error", reject);
+		// A child that never closes would hang the whole suite, so the wait is bounded and the
+		// process is killed on the way out instead of leaking into the test run.
+		const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Child process did not exit in time.")); }, timeoutMs);
+		child.once("error", (error) => { clearTimeout(timer); reject(error); });
 		// "close" fires after the stdio streams are closed, so the collected output is
 		// complete; "exit" can arrive while the last stdout chunk is still unread.
-		child.once("close", (code) => resolve({ stdout, stderr, code }));
+		child.once("close", (code) => { clearTimeout(timer); resolve({ stdout, stderr, code }); });
 	});
 }
 

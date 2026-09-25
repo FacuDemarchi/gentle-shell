@@ -177,6 +177,14 @@ function withBlockerLock<T extends { diagnostics: ProjectMapStoreDiagnostic[] }>
 	return result;
 }
 
+function compareBlockers(left: ProjectMapStoreBlockerV1, right: ProjectMapStoreBlockerV1): number {
+	const difference = Date.parse(left.raised_at) - Date.parse(right.raised_at);
+	if (Number.isFinite(difference) && difference !== 0) return difference;
+	// Code-unit order rather than localeCompare: a tie-break that changes with the runtime
+	// locale is a tie-break that reports a different order on a different machine.
+	return left.blocker_id < right.blocker_id ? -1 : left.blocker_id > right.blocker_id ? 1 : 0;
+}
+
 export function readProjectMapStoreBlocker(options: ReadProjectMapStoreBlockerOptions): ProjectMapStoreBlockerReadResult {
 	try {
 		return classifyBlocker(blockerPath(options.root, options.capabilityId, options.blockerId), options.capabilityId, options.blockerId);
@@ -250,6 +258,6 @@ export function listProjectMapStoreBlockers(options: ListProjectMapStoreBlockers
 		}
 		if (options.includeResolved || current.status === "open") blockers.push(current.blocker);
 	}
-	blockers.sort((left, right) => Date.parse(left.raised_at) - Date.parse(right.raised_at) || left.blocker_id.localeCompare(right.blocker_id));
+	blockers.sort(compareBlockers);
 	return { blockers, diagnostics };
 }

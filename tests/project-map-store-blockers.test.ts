@@ -132,6 +132,18 @@ test("lists open blockers chronologically across mixed ISO offsets", () => {
 	});
 });
 
+test("orders blockers deterministically when instants tie", () => {
+	withRoot((root) => {
+		initialize(root);
+		assert.ok(raise(root, "a-tie", { now: NOW }).blocker);
+		assert.ok(raise(root, "B-tie", { now: NOW }).blocker);
+		const listed = blockers.listProjectMapStoreBlockers({ root, capabilityId: "project-map", includeResolved: false });
+		// Code-unit order puts "B" before "a"; locale collation puts "a" first, so this fails if the
+		// tie-break ever goes back to a locale-dependent comparison.
+		assert.deepEqual(listed.blockers.map((blocker) => blocker.blocker_id), ["B-tie", "a-tie"]);
+	});
+});
+
 test("classifies non-canonical and mismatched blocker records as corrupted", () => {
 	withRoot((root) => {
 		initialize(root);

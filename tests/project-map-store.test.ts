@@ -237,10 +237,10 @@ test("archives and prunes nothing when a mutation is refused", () => {
 			assert.ok(result.descriptor);
 			descriptor = result.descriptor;
 		}
-		// The swap-failure-after-archive path is no longer reachable through inputs: the PM4-2c
-		// lock shares the store root's write permission and an invalid instant is refused before
-		// the archive. This pins the reachable half instead: a refused mutation archives nothing
-		// and prunes nothing, and the store stays where it was.
+		// Pins the reachable half of the refused-mutation contract. The archive-then-swap failure is
+		// unreachable through inputs (the PM4-2c lock shares the store root's write permission, and
+		// an invalid instant is refused before the archive), so what is pinned here is that a
+		// refused mutation archives nothing, prunes nothing and leaves the store where it was.
 		const before = readdirSync(join(root, "history")).sort();
 		const refused = advanceProjectMapStore({
 			root,
