@@ -143,7 +143,7 @@ function classifyReceipt(path: string, entry: string, capabilityId: string): Cla
 
 function compareNewest(left: ReceiptEntry, right: ReceiptEntry): number {
 	const difference = Date.parse(right.receipt.issued_at) - Date.parse(left.receipt.issued_at);
-	if (difference !== 0) return difference;
+	if (Number.isFinite(difference) && difference !== 0) return difference;
 	if (left.entry < right.entry) return -1;
 	if (left.entry > right.entry) return 1;
 	return 0;
@@ -175,6 +175,9 @@ function pruneReceiptHistory(root: string, capabilityId: string): ProjectMapStor
 			continue;
 		}
 		diagnostics.push(...current.diagnostics);
+		// An entry that could not be read is not an entry this may delete: a permission problem or
+		// a transient read error would otherwise destroy evidence that was never inspected.
+		if (current.state === "unreadable") continue;
 		try {
 			unlinkSync(path);
 		} catch {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -267,6 +267,21 @@ test("refuses an invalid instant and a corrupted descriptor without creating rec
 		assert.equal(corruptStore.receipt, null);
 		assert.ok(codes(corruptStore).includes(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
 		assert.equal(existsSync(join(root, "receipts")), false);
+	});
+});
+
+test("never deletes a receipt entry it could not read", () => {
+	withRoot((root) => {
+		initialize(root);
+		const directory = receiptDirectory(root);
+		mkdirSync(directory, { recursive: true });
+		const path = join(directory, "unreadable.json");
+		writeFileSync(path, canonicalReceiptBytes(receipt()), "utf8");
+		chmodSync(path, 0o000);
+		const issued = issue(root);
+		assert.ok(issued.receipt);
+		assert.equal(existsSync(path), true);
+		assert.ok(codes(issued).includes(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
 	});
 });
 

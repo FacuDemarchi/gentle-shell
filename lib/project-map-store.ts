@@ -211,7 +211,13 @@ export function acquireProjectMapStoreLock(root: string, now: string): { handle:
 	const owner = createStoreLockOwner(now);
 	try {
 		mkdirSync(path, { mode: 0o700 });
-		if (!writeStoreLockOwner(path, owner)) return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+		if (!writeStoreLockOwner(path, owner)) {
+			// A lock this process created and could not finish is this process's to remove. Leaving
+			// it behind would refuse every later mutation until a human intervened, because an
+			// ownerless lock directory is never broken automatically.
+			try { rmSync(path, { recursive: true, force: true }); } catch { /* retained: the refusal still fails closed */ }
+			return { handle: null, diagnostics: [storeLockedDiagnostic()] };
+		}
 		return { handle: { path, owner }, diagnostics: [] };
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return { handle: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Store lock could not be acquired.")] };
