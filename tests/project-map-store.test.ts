@@ -329,6 +329,23 @@ test("does not prove a store holding session, blocker, contract, and receipt rec
 	});
 });
 
+test("refuses to initialize over contract evidence alone", () => {
+	withRoot((root) => {
+		// Only contract evidence, so the emptiness decision itself is what is under test: a proof
+		// that kept contracts in the diagnostic accounting but ignored them in the decision would
+		// still pass the combined test above.
+		const directory = join(root, "contracts", "digest-directory");
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "record.json"), "evidence", "utf8");
+		assert.equal(projectMapStore.storeIsProvablyEmpty(root).empty, false);
+		const initialization = initializeProjectMapStore({ root, repositoryId: REPOSITORY_ID, epoch: EPOCH, now: CREATED_AT });
+		assert.equal(initialization.descriptor, null);
+		assert.deepEqual(initialization.diagnostics.map((entry) => entry.code), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY]);
+		assert.match(initialization.diagnostics[0].message, /1 entry under contracts\//);
+		assert.equal(existsSync(join(directory, "record.json")), true);
+	});
+});
+
 test("fails closed when a record directory cannot be read", () => {
 	withRoot((root) => {
 		writeFileSync(join(root, "claims"), "not a directory", "utf8");
