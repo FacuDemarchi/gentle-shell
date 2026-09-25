@@ -215,6 +215,7 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Pass a structured handoff: objective, approved surfaces, dependencies, contracts, feature document, parent session, and verification requirements.
   - Offer background-subagent fallback as a visible user choice, never as a silent behavior change.
   - Report launch uncertainty honestly; process spawn or transport ACK does not prove work began.
+  - Planned 2026-09-25 in `odd/tasks/pm-7-open-pi-flow.md` after a read-only surface map, with the user's six decisions: **`tmux`-only in v1** (terminal emulators are an explicit non-goal, deferred until desktop behaviour can be verified for real), **`gentle-shell` launched in the capability worktree** (so the child can claim, heartbeat and bind itself), the **handoff passed by argv/initial prompt** (no file in the worktree, no new store record kind), the **background-subagent fallback offered as a visible confirmation**, the **session identity passed by the parent** rather than derived from the worktree path, and the action **triggered from the command surface** with the `[Open Pi]` affordance **absent rather than disabled**. The unit is four slices (PM7-1 readiness predicate and affordance, PM7-2 launch plan and `tmux` adapter, PM7-3 visible fallback, PM7-4 honest launch uncertainty plus documentation and verification); nothing is implemented yet.
 
 - [ ] **PM-8 — Add integration-readiness sequencing**
   - Order candidates by dependency and accepted shared-contract state.
