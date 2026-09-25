@@ -24,6 +24,7 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	RENEWAL_TOO_EARLY: "project-map-store/renewal-too-early",
 	STALE_CLAIM_RECOVERED: "project-map-store/stale-claim-recovered",
 	HEARTBEAT_TOO_EARLY: "project-map-store/heartbeat-too-early",
+	SESSION_BINDING_HELD: "project-map-store/session-binding-held",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 

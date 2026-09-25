@@ -13,6 +13,7 @@ import {
 	serializeProjectMapStoreValue,
 	type ProjectMapStoreDiagnostic,
 	type ProjectMapStoreHeartbeatV1,
+	type ProjectMapStoreSessionBindingV1,
 } from "./project-map-store-schema.ts";
 import { conservativeOwnerDeathProofV1, type ReviewLockOwnerV1 } from "./review-lock.ts";
 import { isIsoInstant } from "./shell-project-map-schema.ts";
@@ -21,6 +22,7 @@ export const PROJECT_MAP_STORE_HEARTBEAT_INTERVAL_MS = 10_000;
 export const PROJECT_MAP_STORE_HEARTBEAT_STALE_MS = 60_000;
 
 export type ProjectMapStoreHeartbeatStatus = "free" | "fresh" | "stale" | "corrupted" | "unreadable";
+export type ProjectMapStoreSessionBindingStatus = "free" | "bound" | "corrupted" | "unreadable";
 
 export interface ReadProjectMapStoreHeartbeatOptions {
 	root: string;
@@ -33,6 +35,18 @@ export interface ProjectMapStoreHeartbeatMutationOptions extends ReadProjectMapS
 	incarnation: string;
 }
 
+export interface ReadProjectMapStoreSessionBindingOptions {
+	root: string;
+	sessionId: string;
+}
+
+export interface ProjectMapStoreSessionBindingMutationOptions extends ReadProjectMapStoreSessionBindingOptions {
+	pid: number;
+	incarnation: string;
+	workspaceRoot: string;
+	now: string;
+}
+
 export interface ProjectMapStoreHeartbeatReadResult {
 	heartbeat: ProjectMapStoreHeartbeatV1 | null;
 	status: ProjectMapStoreHeartbeatStatus;
@@ -41,6 +55,17 @@ export interface ProjectMapStoreHeartbeatReadResult {
 
 export interface ProjectMapStoreHeartbeatMutationResult {
 	heartbeat: ProjectMapStoreHeartbeatV1 | null;
+	diagnostics: ProjectMapStoreDiagnostic[];
+}
+
+export interface ProjectMapStoreSessionBindingReadResult {
+	binding: ProjectMapStoreSessionBindingV1 | null;
+	status: ProjectMapStoreSessionBindingStatus;
+	diagnostics: ProjectMapStoreDiagnostic[];
+}
+
+export interface ProjectMapStoreSessionBindingMutationResult {
+	binding: ProjectMapStoreSessionBindingV1 | null;
 	diagnostics: ProjectMapStoreDiagnostic[];
 }
 
@@ -114,6 +139,33 @@ function classifyHeartbeat(options: ReadProjectMapStoreHeartbeatOptions): Projec
 	};
 }
 
+function classifySessionBinding(options: ReadProjectMapStoreSessionBindingOptions): ProjectMapStoreSessionBindingReadResult {
+	let bytes: string;
+	try {
+		bytes = readFileSync(recordPath(options.root, "sessions", options.sessionId), "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { binding: null, status: "free", diagnostics: [] };
+		return { binding: null, status: "unreadable", diagnostics: [unreadableDiagnostic("Session binding")] };
+	}
+	const parsed = parseProjectMapStoreValue("session-binding", bytes);
+	if (parsed.record === null) {
+		return { binding: null, status: "corrupted", diagnostics: [corruptedDiagnostic("Session binding"), ...parsed.diagnostics] };
+	}
+	const binding = parsed.record as ProjectMapStoreSessionBindingV1;
+	if (binding.session_id !== options.sessionId) {
+		return {
+			binding: null,
+			status: "corrupted",
+			diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED, "Session binding id does not match the requested session.", "$.session_id")],
+		};
+	}
+	const canonical = serializeProjectMapStoreValue("session-binding", binding);
+	if (canonical.record === null || canonical.record !== bytes) {
+		return { binding: null, status: "corrupted", diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED, "Session binding record is not in canonical form.")] };
+	}
+	return { binding, status: "bound", diagnostics: [] };
+}
+
 function writeHeartbeat(root: string, heartbeat: ProjectMapStoreHeartbeatV1): ProjectMapStoreHeartbeatMutationResult {
 	const serialized = serializeProjectMapStoreValue("heartbeat", heartbeat);
 	if (serialized.record === null) return { heartbeat: null, diagnostics: serialized.diagnostics };
@@ -123,6 +175,18 @@ function writeHeartbeat(root: string, heartbeat: ProjectMapStoreHeartbeatV1): Pr
 		return { heartbeat, diagnostics: [] };
 	} catch {
 		return { heartbeat: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Heartbeat record could not be written.")] };
+	}
+}
+
+function writeSessionBinding(root: string, binding: ProjectMapStoreSessionBindingV1): ProjectMapStoreSessionBindingMutationResult {
+	const serialized = serializeProjectMapStoreValue("session-binding", binding);
+	if (serialized.record === null) return { binding: null, diagnostics: serialized.diagnostics };
+	try {
+		mkdirSync(join(root, "sessions"), { recursive: true, mode: 0o700 });
+		writeJsonFileAtomicallySync(recordPath(root, "sessions", binding.session_id), serialized.record);
+		return { binding, diagnostics: [] };
+	} catch {
+		return { binding: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Session binding record could not be written.")] };
 	}
 }
 
@@ -137,12 +201,28 @@ function heartbeatRecord(options: ProjectMapStoreHeartbeatMutationOptions): Proj
 	};
 }
 
+function bindingRecord(options: ProjectMapStoreSessionBindingMutationOptions): ProjectMapStoreSessionBindingV1 {
+	return {
+		schema: "gentle-shell.project-map-store/v1",
+		kind: "session-binding",
+		session_id: options.sessionId,
+		pid: options.pid,
+		incarnation: options.incarnation,
+		workspace_root: options.workspaceRoot,
+		bound_at: options.now,
+	};
+}
+
 function pidProvesDead(pid: number): boolean {
 	try {
 		return conservativeOwnerDeathProofV1({ pid } as ReviewLockOwnerV1);
 	} catch {
 		return false;
 	}
+}
+
+export function projectMapStoreBindingProvesDead(binding: ProjectMapStoreSessionBindingV1): boolean {
+	return pidProvesDead(binding.pid);
 }
 
 export function readProjectMapStoreHeartbeat(options: ReadProjectMapStoreHeartbeatOptions): ProjectMapStoreHeartbeatReadResult {
@@ -167,6 +247,48 @@ export function beatProjectMapStoreHeartbeat(options: ProjectMapStoreHeartbeatMu
 		return writeHeartbeat(options.root, heartbeatRecord(options));
 	} catch {
 		return { heartbeat: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Heartbeat operation could not be completed.")] };
+	}
+}
+
+export function readProjectMapStoreSessionBinding(options: ReadProjectMapStoreSessionBindingOptions): ProjectMapStoreSessionBindingReadResult {
+	try {
+		return classifySessionBinding(options);
+	} catch {
+		return { binding: null, status: "unreadable", diagnostics: [unreadableDiagnostic("Session binding")] };
+	}
+}
+
+export function bindProjectMapStoreSession(options: ProjectMapStoreSessionBindingMutationOptions): ProjectMapStoreSessionBindingMutationResult {
+	try {
+		if (!isIsoInstant(options.now)) return { binding: null, diagnostics: [invalidNowDiagnostic()] };
+		const readiness = readyStoreDiagnostics(options.root, "session binding operations");
+		if (readiness.length > 0) return { binding: null, diagnostics: readiness };
+		const acquired = acquireProjectMapStoreLock(options.root, options.now);
+		if (acquired.handle === null) return { binding: null, diagnostics: acquired.diagnostics };
+		let result: ProjectMapStoreSessionBindingMutationResult;
+		try {
+			const underLock = readyStoreDiagnostics(options.root, "session binding operations");
+			if (underLock.length > 0) result = { binding: null, diagnostics: underLock };
+			else {
+				const current = classifySessionBinding(options);
+				if (current.status === "corrupted" || current.status === "unreadable") result = { binding: null, diagnostics: current.diagnostics };
+				else if (current.status === "free") result = writeSessionBinding(options.root, bindingRecord(options));
+				else if (current.binding !== null && current.binding.pid === options.pid && current.binding.incarnation === options.incarnation) {
+					result = writeSessionBinding(options.root, { ...current.binding, bound_at: options.now });
+				} else if (current.binding !== null && projectMapStoreBindingProvesDead(current.binding)) {
+					result = writeSessionBinding(options.root, bindingRecord(options));
+				} else {
+					result = { binding: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.SESSION_BINDING_HELD, "Session binding is held by a live or ambiguous process.")] };
+				}
+			}
+		} catch {
+			result = { binding: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Session binding operation could not be completed.")] };
+		}
+		const releaseDiagnostics = releaseProjectMapStoreLock(options.root, acquired.handle);
+		if (releaseDiagnostics.length > 0) result.diagnostics.push(...releaseDiagnostics.map((entry) => result.binding === null ? entry : { ...entry, severity: "warning" as const }));
+		return result;
+	} catch {
+		return { binding: null, diagnostics: [diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, "Session binding operation could not be completed.")] };
 	}
 }
 

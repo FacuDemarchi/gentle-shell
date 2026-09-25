@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
-import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue, type ProjectMapStoreHeartbeatV1 } from "../lib/project-map-store-schema.ts";
+import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue, type ProjectMapStoreHeartbeatV1, type ProjectMapStoreSessionBindingV1 } from "../lib/project-map-store-schema.ts";
 
 const REPOSITORY_ID = `sha256:${"a".repeat(64)}`;
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
@@ -23,6 +23,10 @@ async function heartbeats() {
 
 function heartbeatPath(root: string, sessionId: string): string {
 	return join(root, "heartbeats", `${createHash("sha256").update(sessionId).digest("hex")}.json`);
+}
+
+function bindingPath(root: string, sessionId: string): string {
+	return join(root, "sessions", `${createHash("sha256").update(sessionId).digest("hex")}.json`);
 }
 
 function withRoot(run: (root: string) => void): void {
@@ -140,25 +144,60 @@ test("classifies non-canonical and mismatched-session heartbeat files as corrupt
 	});
 });
 
-test("refuses heartbeat writes without a descriptor and creates nothing", async () => {
-	const { beatProjectMapStoreHeartbeat } = await heartbeats();
+test("binds, refreshes, refuses a live holder, and takes over a dead holder", async () => {
+	const { bindProjectMapStoreSession, readProjectMapStoreSessionBinding } = await heartbeats();
+	withRoot((root) => {
+		initialize(root);
+		const first = bindProjectMapStoreSession({ root, sessionId: "session-a", pid: process.pid, incarnation: INCARNATION_A, workspaceRoot: "/first", now: NOW });
+		assert.ok(first.binding);
+		const refreshed = bindProjectMapStoreSession({ root, sessionId: "session-a", pid: process.pid, incarnation: INCARNATION_A, workspaceRoot: "/second", now: LATER });
+		assert.equal(refreshed.binding?.bound_at, LATER);
+		assert.equal(refreshed.binding?.workspace_root, "/first");
+		const path = bindingPath(root, "session-a");
+		const before = readFileSync(path, "utf8");
+		const held = bindProjectMapStoreSession({ root, sessionId: "session-a", pid: process.pid, incarnation: INCARNATION_B, workspaceRoot: "/third", now: STALE });
+		assert.equal(held.binding, null);
+		assert.deepEqual(codes(held), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.SESSION_BINDING_HELD]);
+		assert.equal(readFileSync(path, "utf8"), before);
+		const deadPid = exitedPid();
+		const dead: ProjectMapStoreSessionBindingV1 = { schema: "gentle-shell.project-map-store/v1", kind: "session-binding", session_id: "dead-session", pid: deadPid, incarnation: INCARNATION_A, workspace_root: "/dead", bound_at: NOW };
+		writeFileSync(bindingPath(root, "dead-session"), serializeProjectMapStoreValue("session-binding", dead).record!, "utf8");
+		const takeover = bindProjectMapStoreSession({ root, sessionId: "dead-session", pid: process.pid, incarnation: INCARNATION_B, workspaceRoot: "/new", now: STALE });
+		assert.equal(takeover.binding?.incarnation, INCARNATION_B);
+		assert.equal(readProjectMapStoreSessionBinding({ root, sessionId: "dead-session" }).binding?.pid, process.pid);
+	});
+});
+
+test("proves only a different exited pid dead", async () => {
+	const { projectMapStoreBindingProvesDead } = await heartbeats();
+	assert.equal(projectMapStoreBindingProvesDead({ pid: process.pid } as ProjectMapStoreSessionBindingV1), false);
+	assert.equal(projectMapStoreBindingProvesDead({ pid: exitedPid() } as ProjectMapStoreSessionBindingV1), true);
+});
+
+test("refuses heartbeat and binding writes without a descriptor and creates nothing", async () => {
+	const { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } = await heartbeats();
 	withRoot((root) => {
 		rmSync(root, { recursive: true, force: true });
 		const heartbeat = beatProjectMapStoreHeartbeat({ root, sessionId: "session-a", pid: process.pid, incarnation: INCARNATION_A, now: NOW });
+		const binding = bindProjectMapStoreSession({ root, sessionId: "session-a", pid: process.pid, incarnation: INCARNATION_A, workspaceRoot: "/workspace", now: NOW });
 		assert.equal(heartbeat.heartbeat, null);
+		assert.equal(binding.binding, null);
 		assert.deepEqual(codes(heartbeat), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE]);
+		assert.deepEqual(codes(binding), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE]);
 		assert.equal(existsSync(root), false);
 	});
 });
 
-test("hashes adversarial session ids into the heartbeat directory", async () => {
-	const { beatProjectMapStoreHeartbeat } = await heartbeats();
+test("hashes adversarial session ids into heartbeat and binding directories", async () => {
+	const { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } = await heartbeats();
 	withRoot((root) => {
 		initialize(root);
 		const sessionId = "../../outside/../session";
 		assert.ok(beatProjectMapStoreHeartbeat({ root, sessionId, pid: process.pid, incarnation: INCARNATION_A, now: NOW }).heartbeat);
+		assert.ok(bindProjectMapStoreSession({ root, sessionId, pid: process.pid, incarnation: INCARNATION_A, workspaceRoot: "/workspace", now: NOW }).binding);
 		const name = `${createHash("sha256").update(sessionId).digest("hex")}.json`;
 		assert.deepEqual(readdirSync(join(root, "heartbeats")), [name]);
+		assert.deepEqual(readdirSync(join(root, "sessions")), [name]);
 		assert.equal(existsSync(join(root, "outside")), false);
 	});
 });
