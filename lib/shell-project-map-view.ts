@@ -212,7 +212,7 @@ function inspectorLines(map: ProjectMapV1, selection: string): string[] {
 		`Contracts: ${listed(capability.contracts, (entry) => entry)}`,
 		`Feature documents: ${listed(capability.featureDocs, (entry) => entry)}`,
 		`Static blockers: ${listed(staticBlockers, (entry) => entry)}`,
-		"Runtime overlay: unavailable until PM-4.",
+		"Runtime overlay: not wired yet.",
 	];
 }
 

@@ -169,7 +169,7 @@ test("inspector renders every field, empty lists, and static blockers without ru
 		],
 	});
 	const body = projectMapCardDescriptor(ready(inspected), PROJECT_MAP_EXPANDED, "checkout").body.join("\n");
-	for (const text of ["Inspector", "✕ checkout", "Outcome: Complete a purchase.", "Surfaces: Web", "Foundations: tooling ○", "Dependencies: catalog ✓", "Contracts: checkout-api", "Feature documents: odd/tasks/checkout.md", "Static blockers: state is blocked, foundation tooling ○", "Runtime overlay: unavailable until PM-4."]) assert.ok(body.includes(text), `expected ${text}`);
+	for (const text of ["Inspector", "✕ checkout", "Outcome: Complete a purchase.", "Surfaces: Web", "Foundations: tooling ○", "Dependencies: catalog ✓", "Contracts: checkout-api", "Feature documents: odd/tasks/checkout.md", "Static blockers: state is blocked, foundation tooling ○", "Runtime overlay: not wired yet."]) assert.ok(body.includes(text), `expected ${text}`);
 	assert.equal(body.includes("lease"), false, "runtime blockers are not invented");
 	const empty = projectMapCardDescriptor(ready(map()), PROJECT_MAP_EXPANDED, "shopping-cart").body.join("\n");
 	for (const field of ["Surfaces: none", "Foundations: none", "Dependencies: none", "Contracts: none", "Feature documents: none", "Static blockers: none"]) assert.ok(empty.includes(field), `expected ${field}`);
