@@ -65,6 +65,7 @@ test("exports the frozen store vocabulary", () => {
 		CLAIM_EXPIRED: "project-map-store/claim-expired",
 		RENEWAL_TOO_EARLY: "project-map-store/renewal-too-early",
 		STALE_CLAIM_RECOVERED: "project-map-store/stale-claim-recovered",
+		HEARTBEAT_TOO_EARLY: "project-map-store/heartbeat-too-early",
 	});
 });
 
