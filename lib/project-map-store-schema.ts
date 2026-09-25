@@ -25,6 +25,9 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	STALE_CLAIM_RECOVERED: "project-map-store/stale-claim-recovered",
 	HEARTBEAT_TOO_EARLY: "project-map-store/heartbeat-too-early",
 	SESSION_BINDING_HELD: "project-map-store/session-binding-held",
+	BLOCKER_EXISTS: "project-map-store/blocker-exists",
+	BLOCKER_ABSENT: "project-map-store/blocker-absent",
+	BLOCKER_RESOLVED: "project-map-store/blocker-resolved",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 
@@ -78,6 +81,8 @@ export interface ProjectMapStoreSessionBindingV1 extends RecordBase {
 export interface ProjectMapStoreBlockerV1 extends RecordBase {
 	kind: "blocker";
 	capability_id: string;
+	blocker_id: string;
+	owner: string;
 	reason: string;
 	raised_by: string;
 	raised_at: string;
@@ -187,7 +192,7 @@ function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): Project
 		case "claim": return { ...base, kind, capability_id: value.capability_id as string, session_id: value.session_id as string, acquired_at: value.acquired_at as string, lease: { renewal_after: (value.lease as RecordValue).renewal_after as string, renew_by: (value.lease as RecordValue).renew_by as string } };
 		case "heartbeat": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, beat_at: value.beat_at as string };
 		case "session-binding": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, workspace_root: value.workspace_root as string, bound_at: value.bound_at as string };
-		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
+		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, blocker_id: value.blocker_id as string, owner: value.owner as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
 		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
 	}
 }
@@ -228,7 +233,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			claim: ["schema", "kind", "capability_id", "session_id", "acquired_at", "lease"],
 			heartbeat: ["schema", "kind", "session_id", "pid", "incarnation", "beat_at"],
 			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at"],
-			blocker: ["schema", "kind", "capability_id", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
+			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
 			"readiness-receipt": ["schema", "kind", "capability_id", "issued_at", "verified", "evidence", "authority"],
 		};
 		const requiredFields: Record<ProjectMapStoreRecordKind, readonly string[]> = {
@@ -236,7 +241,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			claim: fields.claim,
 			heartbeat: fields.heartbeat,
 			"session-binding": fields["session-binding"],
-			blocker: ["schema", "kind", "capability_id", "reason", "raised_by", "raised_at"],
+			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at"],
 			"readiness-receipt": fields["readiness-receipt"],
 		};
 		unknownFields(value, fields[kind], diagnostics);
@@ -271,6 +276,8 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 				break;
 			case "blocker":
 				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);
+				if (value.blocker_id !== undefined) identifier(value.blocker_id, "$.blocker_id", diagnostics);
+				if (value.owner !== undefined) identifier(value.owner, "$.owner", diagnostics);
 				if (value.reason !== undefined) identifier(value.reason, "$.reason", diagnostics);
 				if (value.raised_by !== undefined) identifier(value.raised_by, "$.raised_by", diagnostics);
 				if (value.raised_at !== undefined) instant(value.raised_at, "$.raised_at", diagnostics);

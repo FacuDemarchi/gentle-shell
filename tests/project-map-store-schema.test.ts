@@ -29,7 +29,7 @@ function record(kind: ProjectMapStoreRecordKind, overrides: Record<string, unkno
 		claim: { ...common, capability_id: "project-map", session_id: "session-1", acquired_at: AT, lease: { renewal_after: RENEW_AFTER, renew_by: RENEW_BY } },
 		heartbeat: { ...common, session_id: "session-1", pid: 1, incarnation: UUID, beat_at: AT },
 		"session-binding": { ...common, session_id: "session-1", pid: 1, incarnation: UUID, workspace_root: "/workspace", bound_at: AT },
-		blocker: { ...common, capability_id: "project-map", reason: "Needs review", raised_by: "session-1", raised_at: AT },
+		blocker: { ...common, capability_id: "project-map", blocker_id: "blocker-1", owner: "owner-1", reason: "Needs review", raised_by: "session-1", raised_at: AT },
 		"readiness-receipt": { ...common, capability_id: "project-map", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
 	};
 	return { ...records[kind], ...overrides };
@@ -67,6 +67,9 @@ test("exports the frozen store vocabulary", () => {
 		STALE_CLAIM_RECOVERED: "project-map-store/stale-claim-recovered",
 		HEARTBEAT_TOO_EARLY: "project-map-store/heartbeat-too-early",
 		SESSION_BINDING_HELD: "project-map-store/session-binding-held",
+		BLOCKER_EXISTS: "project-map-store/blocker-exists",
+		BLOCKER_ABSENT: "project-map-store/blocker-absent",
+		BLOCKER_RESOLVED: "project-map-store/blocker-resolved",
 	});
 });
 
@@ -85,7 +88,7 @@ test("accepts every frozen record shape and retains the kind envelope through se
 test("accepts migration-safe unresolved blocker defaults", () => {
 	const result = validateProjectMapStoreValue("blocker", record("blocker"));
 	assert.deepEqual(result.diagnostics, []);
-	assert.deepEqual(Object.keys(result.record as object), ["schema", "kind", "capability_id", "reason", "raised_by", "raised_at"]);
+	assert.deepEqual(Object.keys(result.record as object), ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at"]);
 });
 
 test("refuses unsupported versions and missing, unknown, or mismatched kinds", () => {
@@ -176,6 +179,16 @@ test("enforces record field rules and paired blocker resolution", () => {
 	const blocker = validateProjectMapStoreValue("blocker", record("blocker", { resolved_at: AT }));
 	assert.deepEqual(codes(blocker), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
 	assert.deepEqual(paths(blocker), ["$.resolution"]);
+
+	const missingResolutionTime = validateProjectMapStoreValue("blocker", record("blocker", { resolution: "Approved" }));
+	assert.deepEqual(codes(missingResolutionTime), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(missingResolutionTime), ["$.resolved_at"]);
+
+	const missingIdentifiers = record("blocker");
+	delete missingIdentifiers.blocker_id;
+	delete missingIdentifiers.owner;
+	const invalidIdentifiers = validateProjectMapStoreValue("blocker", missingIdentifiers);
+	assert.deepEqual(paths(invalidIdentifiers), ["$.blocker_id", "$.owner"]);
 });
 
 test("canonicalizes byte-identically regardless of insertion order", () => {

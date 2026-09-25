@@ -75,10 +75,11 @@ interface DescriptorFileRead extends ProjectMapStoreDescriptorReadResult {
 }
 
 interface StoreEmptinessInspection extends ProjectMapStoreEmptinessResult {
-	claims: number;
-	heartbeats: number;
+	recordDirectories: Array<{ name: string; entries: number }>;
 	quarantine: string | null;
 }
+
+const PROJECT_MAP_STORE_RECORD_DIRECTORIES = ["claims", "heartbeats", "sessions", "blockers", "receipts"] as const;
 
 function descriptorPath(root: string): string {
 	return join(root, "store.json");
@@ -284,12 +285,13 @@ function mutateWithProjectMapStoreLock(root: string, now: string, mutate: () => 
 }
 
 function inspectStoreEmptiness(root: string): StoreEmptinessInspection {
+	const emptyRecordDirectories = () => PROJECT_MAP_STORE_RECORD_DIRECTORIES.map((name) => ({ name, entries: 0 }));
 	let rootEntries: string[];
 	try {
 		rootEntries = readdirSync(root);
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { empty: true, diagnostics: [], claims: 0, heartbeats: 0, quarantine: null };
-		return { empty: false, diagnostics: [unreadableDirectoryDiagnostic(root)], claims: 0, heartbeats: 0, quarantine: null };
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { empty: true, diagnostics: [], recordDirectories: emptyRecordDirectories(), quarantine: null };
+		return { empty: false, diagnostics: [unreadableDirectoryDiagnostic(root)], recordDirectories: emptyRecordDirectories(), quarantine: null };
 	}
 	const diagnostics: ProjectMapStoreDiagnostic[] = [];
 	const countEntries = (path: string): number => {
@@ -301,21 +303,20 @@ function inspectStoreEmptiness(root: string): StoreEmptinessInspection {
 			return 0;
 		}
 	};
-	const claims = countEntries(join(root, "claims"));
-	const heartbeats = countEntries(join(root, "heartbeats"));
+	const recordDirectories = PROJECT_MAP_STORE_RECORD_DIRECTORIES.map((name) => ({ name, entries: countEntries(join(root, name)) }));
 	const quarantine = rootEntries.find((entry) => /^store\.corrupt\..*\.json$/.test(entry)) ?? null;
-	return { empty: diagnostics.length === 0 && claims === 0 && heartbeats === 0 && quarantine === null, diagnostics, claims, heartbeats, quarantine };
+	return { empty: diagnostics.length === 0 && recordDirectories.every((directory) => directory.entries === 0) && quarantine === null, diagnostics, recordDirectories, quarantine };
 }
 
 export function storeIsProvablyEmpty(root: string): ProjectMapStoreEmptinessResult {
-	const { claims: _claims, heartbeats: _heartbeats, quarantine: _quarantine, ...result } = inspectStoreEmptiness(root);
+	const { recordDirectories: _recordDirectories, quarantine: _quarantine, ...result } = inspectStoreEmptiness(root);
 	return result;
 }
 
 function storeNotEmptyDiagnostic(inspection: StoreEmptinessInspection): ProjectMapStoreDiagnostic {
-	const found: string[] = [];
-	if (inspection.claims > 0) found.push(`${inspection.claims} entr${inspection.claims === 1 ? "y" : "ies"} under claims/`);
-	if (inspection.heartbeats > 0) found.push(`${inspection.heartbeats} entr${inspection.heartbeats === 1 ? "y" : "ies"} under heartbeats/`);
+	const found = inspection.recordDirectories
+		.filter((directory) => directory.entries > 0)
+		.map((directory) => `${directory.entries} entr${directory.entries === 1 ? "y" : "ies"} under ${directory.name}/`);
 	if (inspection.quarantine !== null) found.push(`quarantine file ${inspection.quarantine}`);
 	return diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_NOT_EMPTY, `Store is not empty: found ${found.join(", ")}.`);
 }
