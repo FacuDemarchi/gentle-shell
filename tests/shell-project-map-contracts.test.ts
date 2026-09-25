@@ -139,6 +139,52 @@ test("reports an absent superseded id without inventing a removal", async () => 
 	});
 });
 
+test("normalizes a valid but non-canonical artifact while changing only the contracts semantically", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		const canonical = approvedMap(["zeta", "alpha"]);
+		// Valid but not canonical: the capabilities and one capability's contracts are out of
+		// order, which `validateProjectMap` accepts because it validates structure, not ordering.
+		const nonCanonical: ProjectMapV1 = {
+			...canonical,
+			capabilities: [...canonical.capabilities].reverse(),
+		};
+		writeFileSync(path, `${JSON.stringify(nonCanonical, null, 2)}\n`, "utf8");
+		const before = readFileSync(path, "utf8");
+
+		const result = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "beta" });
+
+		assert.equal(result.applied, true);
+		// The single authorized writer canonicalizes the whole artifact, so the bytes differ from a
+		// non-canonical input even though only one array changed semantically. `result.map` is the
+		// validated candidate before canonicalization, which is why the comparison goes through the
+		// serializer.
+		assert.notEqual(readFileSync(path, "utf8"), before);
+		assert.equal(readFileSync(path, "utf8"), serializeProjectMap(approvedMap(["alpha", "beta", "zeta"])));
+		assert.equal(serializeProjectMap(result.map!), readFileSync(path, "utf8"));
+		// Order preservation is not observable through this API: `validateProjectMap` canonicalizes the
+		// map it returns, so both the returned map and the artifact are sorted.
+		assert.deepEqual(result.map?.capabilities.find((capability) => capability.id === "catalog")?.contracts, ["alpha", "beta", "zeta"]);
+	});
+});
+
+test("reports a supersession that writes while adding nothing", async () => {
+	await withTempDirectory(async (directory) => {
+		const path = join(directory, "project-map.json");
+		writeMap(path, approvedMap(["alpha", "beta"]));
+		const before = readFileSync(path, "utf8");
+
+		const result = await applyProjectMapContract({ path, capabilityId: "catalog", contractId: "beta", supersedes: "alpha" });
+
+		// The id was already present, so nothing is added, but the array did change, so the write
+		// happens: `applied: false` alone does not mean "wrote nothing".
+		assert.equal(result.applied, false);
+		assert.equal(result.removed, true);
+		assert.notEqual(readFileSync(path, "utf8"), before);
+		assert.equal(readFileSync(path, "utf8"), serializeProjectMap(approvedMap(["beta"])));
+	});
+});
+
 test("refuses a draft map without touching its bytes", async () => {
 	await withTempDirectory(async (directory) => {
 		const path = join(directory, "project-map.json");
