@@ -193,12 +193,9 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Add row selection, grouping/collapse, viewport behavior, coverage explanations, empty/error states, and capability details.
   - Keep actions hidden or disabled unless their own dependencies and authority are available.
 
-- [ ] **PM-4 — Build the shared cross-worktree coordination store**
-  - Planned 2026-09-24 in `odd/tasks/pm-4-coordination-store.md`, with the user's decisions: store root under the canonical Git common directory, generation as a `{generation, epoch}` tuple, segmented layout, 10s heartbeat / 60s stale, corruption refused on read with auto-reset only on proven emptiness, and the whole model (claims, leases, heartbeats, session bindings, blockers, readiness receipts) delivered as six slices of their own.
-  - Resolve canonical Git common-directory identity and store runtime state there.
-  - Implement schemas, atomic compare/update behavior, generation counters, bounded history, and corruption refusal.
-  - Model claims, leases, heartbeats, session bindings, blockers, and readiness receipts.
-  - Cover crash recovery, stale leases, sibling worktrees, unrelated repositories, reload, and process exit.
+- [x] **PM-4 — Build the shared cross-worktree coordination store**
+  - Delivered 2026-09-24/25 in `odd/tasks/pm-4-coordination-store.md` across six slices, each its own commit and its own verification: PM4-1 (schema and canonical root), PM4-2a/2b/2c (store engine: CAS, corruption refusal with quarantine and proven emptiness, cross-process lock), PM4-3 (claims and leases), PM4-4 (heartbeats and session bindings), PM4-5a (blockers with an owner and a resolution path, plus the record-directory accounting in the emptiness proof), PM4-5b (append-only readiness receipts that grant no authority) and PM4-6 (cross-worktree end to end). The user's decisions govern it: store root under the canonical Git common directory, generation as a `{generation, epoch}` tuple, segmented layout, 10s heartbeat / 60s stale, corruption refused on read with auto-reset only on proven emptiness, and the whole model delivered as slices of their own.
+  - The last three slices were implemented with RDD switched off by the user's decision, so they carry parent verification instead of a native review; a deferred review pass over those three parts runs when the unit closes.
 
 - [ ] **PM-5 — Establish lead/satellite coordination contracts**
   - Define typed events for claim, release, heartbeat, dependency-ready, blocker, contract proposal/acceptance/rejection, and completion.
@@ -302,7 +299,7 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 
 ## Next decision
 
-PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is in delivery in `odd/tasks/pm-4-coordination-store.md`: PM4-1 through PM4-4 are closed (schema and canonical root; store engine with corruption refusal, proven emptiness and a cross-process lock; claims and leases; heartbeats and session bindings), and the remaining slices are PM4-5a (blockers), PM4-5b (readiness receipts) and PM4-6 (cross-worktree end to end), each under the review budget. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
+PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is complete in `odd/tasks/pm-4-coordination-store.md`: all six slices are delivered (schema and canonical root; store engine with corruption refusal, proven emptiness and a cross-process lock; claims and leases; heartbeats and session bindings; blockers and readiness receipts; cross-worktree end to end). The three slices implemented while RDD was off carry parent verification and are queued for the deferred review pass. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
 
 Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
 
