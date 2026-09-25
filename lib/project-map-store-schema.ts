@@ -93,6 +93,7 @@ export interface ProjectMapStoreBlockerV1 extends RecordBase {
 export interface ProjectMapStoreReadinessReceiptV1 extends RecordBase {
 	kind: "readiness-receipt";
 	capability_id: string;
+	issued_by: string;
 	issued_at: string;
 	verified: string[];
 	evidence: string[];
@@ -193,7 +194,7 @@ function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): Project
 		case "heartbeat": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, beat_at: value.beat_at as string };
 		case "session-binding": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, workspace_root: value.workspace_root as string, bound_at: value.bound_at as string };
 		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, blocker_id: value.blocker_id as string, owner: value.owner as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
-		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
+		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_by: value.issued_by as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
 	}
 }
 
@@ -234,7 +235,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			heartbeat: ["schema", "kind", "session_id", "pid", "incarnation", "beat_at"],
 			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at"],
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
-			"readiness-receipt": ["schema", "kind", "capability_id", "issued_at", "verified", "evidence", "authority"],
+			"readiness-receipt": ["schema", "kind", "capability_id", "issued_by", "issued_at", "verified", "evidence", "authority"],
 		};
 		const requiredFields: Record<ProjectMapStoreRecordKind, readonly string[]> = {
 			descriptor: fields.descriptor,
@@ -288,6 +289,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 				break;
 			case "readiness-receipt":
 				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);
+				if (value.issued_by !== undefined) identifier(value.issued_by, "$.issued_by", diagnostics);
 				if (value.issued_at !== undefined) instant(value.issued_at, "$.issued_at", diagnostics);
 				if (value.verified !== undefined) stringArray(value.verified, "$.verified", diagnostics, true);
 				if (value.evidence !== undefined) stringArray(value.evidence, "$.evidence", diagnostics, false);

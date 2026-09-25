@@ -30,7 +30,7 @@ function record(kind: ProjectMapStoreRecordKind, overrides: Record<string, unkno
 		heartbeat: { ...common, session_id: "session-1", pid: 1, incarnation: UUID, beat_at: AT },
 		"session-binding": { ...common, session_id: "session-1", pid: 1, incarnation: UUID, workspace_root: "/workspace", bound_at: AT },
 		blocker: { ...common, capability_id: "project-map", blocker_id: "blocker-1", owner: "owner-1", reason: "Needs review", raised_by: "session-1", raised_at: AT },
-		"readiness-receipt": { ...common, capability_id: "project-map", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
+		"readiness-receipt": { ...common, capability_id: "project-map", issued_by: "session-1", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
 	};
 	return { ...records[kind], ...overrides };
 }
@@ -166,8 +166,14 @@ test("reports lease missing and unknown fields at their nested paths", () => {
 	assert.deepEqual(paths(unknownLeaseField), ["$.lease.unexpected"]);
 });
 
-test("refuses readiness receipts that imply delivery authority", () => {
-	const result = validateProjectMapStoreValue("readiness-receipt", record("readiness-receipt", { authority: "commit" }));
+test("requires an issuer and refuses readiness receipts that imply delivery authority", () => {
+	const missingIssuer = record("readiness-receipt");
+	delete missingIssuer.issued_by;
+	const missing = validateProjectMapStoreValue("readiness-receipt", missingIssuer);
+	assert.deepEqual(codes(missing), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.MISSING_FIELD]);
+	assert.deepEqual(paths(missing), ["$.issued_by"]);
+
+	const result = validateProjectMapStoreValue("readiness-receipt", record("readiness-receipt", { authority: "delivery" }));
 	assert.deepEqual(codes(result), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD]);
 	assert.deepEqual(paths(result), ["$.authority"]);
 });
@@ -193,13 +199,13 @@ test("enforces record field rules and paired blocker resolution", () => {
 
 test("canonicalizes byte-identically regardless of insertion order", () => {
 	const first = record("readiness-receipt");
-	const second = { authority: "none", evidence: ["node --test"], verified: ["tests"], issued_at: AT, capability_id: "project-map", kind: "readiness-receipt", schema: PROJECT_MAP_STORE_SCHEMA_V1 };
+	const second = { authority: "none", evidence: ["node --test"], verified: ["tests"], issued_at: AT, issued_by: "session-1", capability_id: "project-map", kind: "readiness-receipt", schema: PROJECT_MAP_STORE_SCHEMA_V1 };
 	const one = serializeProjectMapStoreValue("readiness-receipt", first);
 	const two = serializeProjectMapStoreValue("readiness-receipt", second);
 	assert.deepEqual(one.diagnostics, []);
 	assert.deepEqual(two.diagnostics, []);
 	assert.equal(one.record, two.record);
-	assert.deepEqual(Object.keys(canonicalizeProjectMapStoreValue("readiness-receipt", second).record as object), ["schema", "kind", "capability_id", "issued_at", "verified", "evidence", "authority"]);
+	assert.deepEqual(Object.keys(canonicalizeProjectMapStoreValue("readiness-receipt", second).record as object), ["schema", "kind", "capability_id", "issued_by", "issued_at", "verified", "evidence", "authority"]);
 });
 
 test("distinguishes invalid JSON from an unreadable store file", () => {
