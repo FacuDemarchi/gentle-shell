@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { readProjectMapCoordinationState } from "./project-map-coordination-state.ts";
 import { readProjectMapClaim } from "./project-map-store-claims.ts";
 import { projectMapStoreBindingProvesDead, readProjectMapStoreHeartbeat } from "./project-map-store-heartbeats.ts";
 import { resolveProjectMapStoreRoot } from "./project-map-store-root.ts";
 import { parseProjectMapStoreValue, PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue, type ProjectMapStoreDiagnostic, type ProjectMapStoreSessionBindingV1 } from "./project-map-store-schema.ts";
-import { readProjectMapStoreDescriptor } from "./project-map-store.ts";
+import { acquireProjectMapStoreLock, readProjectMapStoreDescriptor, releaseProjectMapStoreLock } from "./project-map-store.ts";
 import { assertManagedStorePathV1 } from "./review-repository.ts";
 import { resolveSessionWorktreeWithGit, worktreeGitEnvironment } from "./session-worktree-registry.ts";
 import { isIsoInstant, PROJECT_MAP_ARTIFACT_PATH } from "./shell-project-map-schema.ts";
@@ -29,6 +29,22 @@ export interface ProjectMapWorktreePlan {
 	decision: "create" | "reuse" | "refuse";
 	command: string[] | null;
 	baseCommit: string | null;
+	dirty: boolean;
+	diagnostics: ProjectMapStoreDiagnostic[];
+}
+
+export interface ProjectMapWorktreeProvisionResult {
+	decision: "create" | "reuse" | "refuse";
+	/** `null` means Git may have changed the filesystem but the outcome was not verified. */
+	created: boolean | null;
+	/** `null` means Git could not determine whether the branch exists after a failed add. */
+	branchCreated: boolean | null;
+	/** `uncertain` means callers must inspect Git and the filesystem before taking further action. */
+	outcome: "verified" | "uncertain";
+	branch: string;
+	path: string;
+	baseCommit: string | null;
+	/** The locked plan's observed worktree dirtiness, including for a safe reuse. */
 	dirty: boolean;
 	diagnostics: ProjectMapStoreDiagnostic[];
 }
@@ -299,4 +315,122 @@ function planWorktree(options: InspectProjectMapWorktreeTargetOptions, run: type
 
 export function planProjectMapWorktree(options: InspectProjectMapWorktreeTargetOptions & { run?: typeof execFileSync }): ProjectMapWorktreePlan {
 	return planWorktree(options, options.run);
+}
+
+function provisionResult(plan: ProjectMapWorktreePlan, created: boolean | null, branchCreated: boolean | null, outcome: "verified" | "uncertain", diagnostics = plan.diagnostics, decision = plan.decision): ProjectMapWorktreeProvisionResult {
+	return { decision, created, branchCreated, outcome, branch: plan.inspection.identity.branch, path: plan.inspection.identity.path, baseCommit: plan.baseCommit, dirty: plan.dirty, diagnostics };
+}
+
+function fallbackProvisionResult(options: InspectProjectMapWorktreeTargetOptions, message: string): ProjectMapWorktreeProvisionResult {
+	return {
+		decision: "refuse",
+		created: false,
+		branchCreated: false,
+		outcome: "verified",
+		branch: `feat/${options.capabilityId}`,
+		path: resolve(options.cwd),
+		baseCommit: null,
+		dirty: false,
+		diagnostics: [worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE, message)],
+	};
+}
+
+function approvedPlanDiagnostic(plan: ProjectMapWorktreePlan, message: string): ProjectMapWorktreeProvisionResult {
+	return provisionResult(plan, false, false, "verified", [...plan.diagnostics, worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD, message)], "refuse");
+}
+
+function approvalMatches(approvedPlan: ProjectMapWorktreePlan, currentPlan: ProjectMapWorktreePlan): boolean {
+	return approvedPlan.decision === currentPlan.decision
+		&& approvedPlan.baseCommit === currentPlan.baseCommit
+		&& approvedPlan.inspection.identity.branch === currentPlan.inspection.identity.branch
+		&& approvedPlan.inspection.identity.path === currentPlan.inspection.identity.path
+		&& approvedPlan.dirty === currentPlan.dirty
+		&& JSON.stringify(approvedPlan.command) === JSON.stringify(currentPlan.command)
+		// The inspection is the complete plain-data state shown to the human. Any
+		// change, including a claim owner or repository identity, needs reapproval.
+		&& JSON.stringify(approvedPlan.inspection) === JSON.stringify(currentPlan.inspection);
+}
+
+function safeCreationBase(path: string): ProjectMapStoreDiagnostic | null {
+	const base = dirname(path);
+	const inspect = (): ProjectMapStoreDiagnostic | null => {
+		try {
+			const state = lstatSync(base);
+			return state.isDirectory() && !state.isSymbolicLink() ? null : worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES, `Worktree base "${base}" must be a real directory, not a symlink or non-directory.`);
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES, `Worktree base "${base}" could not be safely inspected.`);
+		}
+	};
+	const present = inspect();
+	if (present !== null) return present;
+	try {
+		mkdirSync(base, { mode: 0o700 });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") return worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES, `Worktree base "${base}" could not be safely created.`);
+	}
+	return inspect();
+}
+
+function createdTargetIsVerified(plan: ProjectMapWorktreePlan, run: typeof execFileSync = execFileSync): boolean {
+	try {
+		const base = dirname(plan.inspection.identity.path);
+		const baseState = lstatSync(base);
+		const targetState = lstatSync(plan.inspection.identity.path);
+		if (!baseState.isDirectory() || baseState.isSymbolicLink() || !targetState.isDirectory() || targetState.isSymbolicLink()) return false;
+		const canonicalTarget = stableRealpath(plan.inspection.identity.path);
+		if (!isInsideDirectory(realpathSync(base), canonicalTarget)) return false;
+		const target = resolveSessionWorktreeWithGit(plan.inspection.identity.path, plan.inspection.repository.root);
+		if (target === undefined || target.root !== canonicalTarget || target.commonDir !== plan.inspection.repository.commonDir) return false;
+		if (targetIsInsideCommonDir(plan.inspection.repository.commonDir, plan.inspection.identity.path, [])) return false;
+		const branch = gitResult(plan.inspection.identity.path, ["symbolic-ref", "--quiet", "--short", "HEAD"], run);
+		const commit = gitResult(plan.inspection.identity.path, ["rev-parse", "HEAD"], run);
+		return branch.status === 0 && branch.output.trim() === plan.inspection.identity.branch && commit.status === 0 && commit.output.trim() === plan.baseCommit;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * This only compares mutable plan data. PM6-4's extension owns the human
+ * confirmation gate after rendering the exact plan through `ctx.ui.confirm`.
+ */
+export function provisionProjectMapWorktree(options: InspectProjectMapWorktreeTargetOptions & { approvedPlan: ProjectMapWorktreePlan; run?: typeof execFileSync }): ProjectMapWorktreeProvisionResult {
+	if (!isIsoInstant(options.now)) return fallbackProvisionResult(options, "Worktree provisioning requires a valid ISO-8601 instant.");
+	const store = resolveProjectMapStoreRoot(options.cwd);
+	if (store.root === null || readyWorktreeStoreDiagnostics(store.root).length > 0) return fallbackProvisionResult(options, "Project-map store is not ready for worktree provisioning.");
+	const acquired = acquireProjectMapStoreLock(store.root, options.now);
+	if (acquired.handle === null) return fallbackProvisionResult(options, "Project-map store lock could not be acquired.");
+	let result: ProjectMapWorktreeProvisionResult;
+	try {
+		if (readyWorktreeStoreDiagnostics(store.root).length > 0) result = fallbackProvisionResult(options, "Project-map store is no longer ready for worktree provisioning.");
+		else {
+			const currentPlan = planWorktree(options, options.run);
+			if (options.approvedPlan === undefined) result = approvedPlanDiagnostic(currentPlan, "An approved worktree plan is required before provisioning.");
+			else if (!approvalMatches(options.approvedPlan, currentPlan)) result = approvedPlanDiagnostic(currentPlan, "The approved worktree plan no longer matches the locked repository state; show and approve a new plan.");
+			else if (currentPlan.decision !== "create") result = provisionResult(currentPlan, false, false, "verified");
+			else {
+				const baseDiagnostic = safeCreationBase(currentPlan.inspection.identity.path);
+				if (baseDiagnostic !== null) result = provisionResult(currentPlan, false, false, "verified", [...currentPlan.diagnostics, baseDiagnostic], "refuse");
+				else try {
+					(options.run ?? execFileSync)("git", currentPlan.command!.slice(1), { cwd: currentPlan.inspection.repository.root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, env: worktreeGitEnvironment() });
+					if (!createdTargetIsVerified(currentPlan, options.run)) result = provisionResult(currentPlan, null, null, "uncertain", [...currentPlan.diagnostics, worktreeDiagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES, "Git returned success but the worktree target diverged from its verified path, clone, branch, or base commit; inspect manually.")]);
+					else result = provisionResult(currentPlan, true, true, "verified");
+				} catch (error) {
+					const branch = gitResult(currentPlan.inspection.repository.root, ["show-ref", "--verify", "--quiet", `refs/heads/${currentPlan.inspection.identity.branch}`], options.run);
+					const branchCreated = branch.status === 0 ? true : branch.status === 1 ? false : null;
+					const stderr = String((error as { stderr?: string | Buffer }).stderr ?? "Git worktree add failed.").trim();
+					const message = branchCreated === true
+						? `Git worktree add failed after creating branch "${currentPlan.inspection.identity.branch}". Finish with "git worktree add ${currentPlan.inspection.identity.path} ${currentPlan.inspection.identity.branch}" or undo with "git branch -D ${currentPlan.inspection.identity.branch}".`
+						: branchCreated === false ? `Git worktree add failed: ${stderr}` : "Git worktree add failed and branch state could not be inspected; manual inspection of the branch and worktree is required.";
+					result = provisionResult(currentPlan, null, branchCreated, "uncertain", [...currentPlan.diagnostics, worktreeDiagnostic(branchCreated === null ? PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE : PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD, message)]);
+				}
+			}
+		}
+	} catch {
+		result = fallbackProvisionResult(options, "Worktree provisioning could not be completed.");
+	} finally {
+		const releaseDiagnostics = releaseProjectMapStoreLock(store.root, acquired.handle);
+		if (result !== undefined && releaseDiagnostics.length > 0) result.diagnostics.push(...releaseDiagnostics.map((entry) => ({ ...entry, severity: "warning" as const })));
+	}
+	return result!;
 }
