@@ -24,12 +24,18 @@ export interface InspectProjectMapWorktreeTargetOptions {
 
 export interface ProjectMapWorktreeInspection {
 	identity: ProjectMapWorktreeIdentity;
-	repository: { root: string; commonDir: string; sameClone: boolean };
+	repository: {
+		root: string;
+		commonDir: string;
+		/** A foreign clone rooted at the target is `false`; a linked worktree of this clone is `true`. */
+		sameClone: boolean;
+	};
 	branch: { name: string; exists: boolean; isCurrent: boolean };
 	directory: {
 		path: string;
 		exists: boolean;
 		empty: boolean;
+		/** `true` when the target sits inside a Git working tree; a foreign clone rooted at the target is reported by `sameClone`, while a linked worktree of this clone is neither. */
 		insideAnotherRepository: boolean;
 		/** `true` means the target is inside the Git common directory, or containment could not be ruled out. */
 		insideCommonDir: boolean;
@@ -210,9 +216,12 @@ export function inspectProjectMapWorktreeTarget({ cwd, capabilityId, sessionId, 
 		directory: {
 			path: identity.path,
 			...directory,
-			// Comparing the resolved top level against the target path made a repository
-			// rooted at the target look safe; compare clone common directories instead.
-			insideAnotherRepository: targetIdentity !== undefined && targetIdentity.commonDir !== repositoryIdentity.commonDir,
+			// A foreign clone rooted at the target is reported by `sameClone`; a linked
+			// worktree of this clone is neither condition. Only a target below its own
+			// resolved Git top level is inside another repository. Both sides are
+			// canonicalized, because a symlinked worktree base would otherwise make a
+			// legitimate same-clone worktree look nested.
+			insideAnotherRepository: targetIdentity !== undefined && targetIdentity.root !== stableRealpath(identity.path),
 			insideCommonDir: targetIsInsideCommonDir(repositoryIdentity.commonDir, identity.path, diagnostics),
 		},
 		session: { occupiedBy, heartbeat },
