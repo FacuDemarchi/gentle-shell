@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { isIsoInstant } from "./shell-project-map-schema.ts";
 
 export const PROJECT_MAP_STORE_SCHEMA_V1 = "gentle-shell.project-map-store/v1" as const;
-export const PROJECT_MAP_STORE_RECORD_KINDS = ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt"] as const;
+export const PROJECT_MAP_STORE_RECORD_KINDS = ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt", "worktree-binding"] as const;
 export type ProjectMapStoreRecordKind = (typeof PROJECT_MAP_STORE_RECORD_KINDS)[number];
 export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	UNSUPPORTED_SCHEMA_VERSION: "project-map-store/unsupported-schema-version",
@@ -37,6 +38,7 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	WORKTREE_FOREIGN_CLONE: "project-map-store/worktree-foreign-clone",
 	WORKTREE_OCCUPIED: "project-map-store/worktree-occupied",
 	WORKTREE_PATH_ESCAPES: "project-map-store/worktree-path-escapes",
+	WORKTREE_ALREADY_BOUND: "project-map-store/worktree-already-bound",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 
@@ -123,7 +125,17 @@ export interface ProjectMapStoreReadinessReceiptV1 extends RecordBase {
 	authority: "none";
 }
 
-export type ProjectMapStoreRecord = ProjectMapStoreDescriptorV1 | ProjectMapStoreClaimV1 | ProjectMapStoreHeartbeatV1 | ProjectMapStoreSessionBindingV1 | ProjectMapStoreBlockerV1 | ProjectMapStoreContractProposalV1 | ProjectMapStoreReadinessReceiptV1;
+export interface ProjectMapStoreWorktreeBindingV1 extends RecordBase {
+	kind: "worktree-binding";
+	capability_id: string;
+	branch: string;
+	worktree_root: string;
+	session_id: string;
+	base_commit: string;
+	created_at: string;
+}
+
+export type ProjectMapStoreRecord = ProjectMapStoreDescriptorV1 | ProjectMapStoreClaimV1 | ProjectMapStoreHeartbeatV1 | ProjectMapStoreSessionBindingV1 | ProjectMapStoreBlockerV1 | ProjectMapStoreContractProposalV1 | ProjectMapStoreReadinessReceiptV1 | ProjectMapStoreWorktreeBindingV1;
 export interface ProjectMapStoreResult<T = ProjectMapStoreRecord> {
 	record: T | null;
 	diagnostics: ProjectMapStoreDiagnostic[];
@@ -219,6 +231,7 @@ function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): Project
 		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, blocker_id: value.blocker_id as string, owner: value.owner as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
 		case "contract-proposal": return { ...base, kind, capability_id: value.capability_id as string, contract_id: value.contract_id as string, title: value.title as string, digest: value.digest as string, proposed_by: value.proposed_by as string, proposed_at: value.proposed_at as string, state: value.state as "proposed" | "accepted" | "rejected", ...(value.decided_by === undefined ? {} : { decided_by: value.decided_by as string }), ...(value.decided_at === undefined ? {} : { decided_at: value.decided_at as string }), ...(value.rationale === undefined ? {} : { rationale: value.rationale as string }) };
 		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_by: value.issued_by as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
+		case "worktree-binding": return { ...base, kind, capability_id: value.capability_id as string, branch: value.branch as string, worktree_root: value.worktree_root as string, session_id: value.session_id as string, base_commit: value.base_commit as string, created_at: value.created_at as string };
 	}
 }
 
@@ -261,6 +274,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
 			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state", "decided_by", "decided_at", "rationale"],
 			"readiness-receipt": ["schema", "kind", "capability_id", "issued_by", "issued_at", "verified", "evidence", "authority"],
+			"worktree-binding": ["schema", "kind", "capability_id", "branch", "worktree_root", "session_id", "base_commit", "created_at"],
 		};
 		const requiredFields: Record<ProjectMapStoreRecordKind, readonly string[]> = {
 			descriptor: fields.descriptor,
@@ -270,6 +284,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at"],
 			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state"],
 			"readiness-receipt": fields["readiness-receipt"],
+			"worktree-binding": fields["worktree-binding"],
 		};
 		unknownFields(value, fields[kind], diagnostics);
 		required(value, requiredFields[kind], diagnostics);
@@ -341,6 +356,14 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 				if (value.verified !== undefined) stringArray(value.verified, "$.verified", diagnostics, true);
 				if (value.evidence !== undefined) stringArray(value.evidence, "$.evidence", diagnostics, false);
 				if (value.authority !== "none") invalid(diagnostics, "$.authority", "Readiness receipts may not grant authority.");
+				break;
+			case "worktree-binding":
+				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);
+				if (value.branch !== undefined && (typeof value.branch !== "string" || !/^feat\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.branch))) invalid(diagnostics, "$.branch", "Expected a capability branch name.");
+				if (value.worktree_root !== undefined && (typeof value.worktree_root !== "string" || !isAbsolute(value.worktree_root) || resolve(value.worktree_root) !== value.worktree_root)) invalid(diagnostics, "$.worktree_root", "Expected an absolute canonical path.");
+				if (value.session_id !== undefined) identifier(value.session_id, "$.session_id", diagnostics);
+				if (value.base_commit !== undefined && (typeof value.base_commit !== "string" || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.base_commit))) invalid(diagnostics, "$.base_commit", "Expected a full SHA-1 or SHA-256 commit id.");
+				if (value.created_at !== undefined) instant(value.created_at, "$.created_at", diagnostics);
 				break;
 		}
 		if (diagnostics.length > 0) return { record: null, diagnostics };

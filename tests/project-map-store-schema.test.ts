@@ -32,21 +32,24 @@ function record(kind: ProjectMapStoreRecordKind, overrides: Record<string, unkno
 		blocker: { ...common, capability_id: "project-map", blocker_id: "blocker-1", owner: "owner-1", reason: "Needs review", raised_by: "session-1", raised_at: AT },
 		"contract-proposal": { ...common, capability_id: "project-map", contract_id: "contract-1", title: "Shared boundary", digest: DIGEST, proposed_by: "session-1", proposed_at: AT, state: "proposed" },
 		"readiness-receipt": { ...common, capability_id: "project-map", issued_by: "session-1", issued_at: AT, verified: ["tests"], evidence: ["node --test"], authority: "none" },
+		"worktree-binding": { ...common, capability_id: "project-map", branch: "feat/project-map", worktree_root: "/workspace/project-map-worktrees/project-map", session_id: "session-1", base_commit: "a".repeat(40), created_at: AT },
 	};
 	return { ...records[kind], ...overrides };
 }
 
-function codes(result: { diagnostics: { code: string }[] }): string[] {
+function codes(result: { record: unknown; diagnostics: { code: string }[] }): string[] {
+	assert.equal(result.record, null);
 	return result.diagnostics.map((diagnostic) => diagnostic.code);
 }
 
-function paths(result: { diagnostics: { path: string }[] }): string[] {
+function paths(result: { record: unknown; diagnostics: { path: string }[] }): string[] {
+	assert.equal(result.record, null);
 	return result.diagnostics.map((diagnostic) => diagnostic.path);
 }
 
 test("exports the frozen store vocabulary", () => {
 	assert.equal(PROJECT_MAP_STORE_SCHEMA_V1, "gentle-shell.project-map-store/v1");
-	assert.deepEqual([...PROJECT_MAP_STORE_RECORD_KINDS], ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt"]);
+	assert.deepEqual([...PROJECT_MAP_STORE_RECORD_KINDS], ["descriptor", "claim", "heartbeat", "session-binding", "blocker", "contract-proposal", "readiness-receipt", "worktree-binding"]);
 	assert.deepEqual(PROJECT_MAP_STORE_DIAGNOSTIC_CODES, {
 		UNSUPPORTED_SCHEMA_VERSION: "project-map-store/unsupported-schema-version",
 		UNKNOWN_FIELD: "project-map-store/unknown-field",
@@ -80,6 +83,7 @@ test("exports the frozen store vocabulary", () => {
 		WORKTREE_FOREIGN_CLONE: "project-map-store/worktree-foreign-clone",
 		WORKTREE_OCCUPIED: "project-map-store/worktree-occupied",
 		WORKTREE_PATH_ESCAPES: "project-map-store/worktree-path-escapes",
+		WORKTREE_ALREADY_BOUND: "project-map-store/worktree-already-bound",
 	});
 });
 
@@ -174,6 +178,30 @@ test("reports lease missing and unknown fields at their nested paths", () => {
 	assert.deepEqual(paths(validateProjectMapStoreValue("claim", missingRenewBy)), ["$.lease.renew_by"]);
 	assert.deepEqual(paths(validateProjectMapStoreValue("claim", missingRenewalAfter)), ["$.lease.renewal_after"]);
 	assert.deepEqual(paths(unknownLeaseField), ["$.lease.unexpected"]);
+});
+
+test("validates the worktree binding record shape", () => {
+	const valid = validateProjectMapStoreValue("worktree-binding" as ProjectMapStoreRecordKind, record("worktree-binding" as ProjectMapStoreRecordKind));
+	assert.deepEqual(valid.diagnostics, []);
+	assert.deepEqual(Object.keys(valid.record as object), ["schema", "kind", "capability_id", "branch", "worktree_root", "session_id", "base_commit", "created_at"]);
+
+	const unknown = validateProjectMapStoreValue("worktree-binding" as ProjectMapStoreRecordKind, record("worktree-binding" as ProjectMapStoreRecordKind, { unexpected: true }));
+	assert.deepEqual(paths(unknown), ["$.unexpected"]);
+	const missingValue = record("worktree-binding" as ProjectMapStoreRecordKind);
+	delete missingValue.base_commit;
+	assert.deepEqual(paths(validateProjectMapStoreValue("worktree-binding" as ProjectMapStoreRecordKind, missingValue)), ["$.base_commit"]);
+
+	for (const [field, value] of [
+		["branch", "main"],
+		["base_commit", `sha256:${"a".repeat(64)}`],
+		["base_commit", "a".repeat(39)],
+		["worktree_root", "relative/path"],
+		["worktree_root", "/workspace/../workspace/project-map"],
+	] as const) {
+		const invalid = validateProjectMapStoreValue("worktree-binding" as ProjectMapStoreRecordKind, record("worktree-binding" as ProjectMapStoreRecordKind, { [field]: value }));
+		assert.deepEqual(codes(invalid), [PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD], `${field}: ${value}`);
+		assert.deepEqual(paths(invalid), [`$.${field}`], `${field}: ${value}`);
+	}
 });
 
 test("requires an issuer and refuses readiness receipts that imply delivery authority", () => {
