@@ -3,14 +3,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
+import { acquireProjectMapClaim, releaseProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession, projectMapStoreBindingProvesDead } from "../lib/project-map-store-heartbeats.ts";
 import { ensureProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
-import { initializeProjectMapStore } from "../lib/project-map-store.ts";
-import { deriveProjectMapWorktreeIdentity, inspectProjectMapWorktreeTarget, planProjectMapWorktree } from "../lib/project-map-worktrees.ts";
+import { acquireProjectMapStoreLock, initializeProjectMapStore, releaseProjectMapStoreLock } from "../lib/project-map-store.ts";
+import { deriveProjectMapWorktreeIdentity, inspectProjectMapWorktreeTarget, planProjectMapWorktree, provisionProjectMapWorktree } from "../lib/project-map-worktrees.ts";
 
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
 const INCARNATION = "123e4567-e89b-12d3-a456-426614174001";
@@ -298,6 +298,10 @@ function plan(f: ReturnType<typeof fixture>, capabilityId: string, sessionId = "
 	return planProjectMapWorktree({ cwd: f.main, capabilityId, sessionId, now: NOW });
 }
 
+function provision(f: ReturnType<typeof fixture>, capabilityId: string, sessionId = "requester", run?: typeof execFileSync, approvedPlan = plan(f, capabilityId, sessionId)) {
+	return provisionProjectMapWorktree({ cwd: f.main, capabilityId, sessionId, now: NOW, approvedPlan, ...(run === undefined ? {} : { run }) });
+}
+
 function hasCode(result: { diagnostics: Array<{ code: string }> }, code: string): boolean {
 	return result.diagnostics.some((entry) => entry.code === code);
 }
@@ -312,34 +316,120 @@ test("plans require a live caller claim or a live lead", (t) => {
 	assert.equal(plan(f, "held").decision, "create");
 });
 
-test("plans a clean create from the resolved HEAD without changing the target", (t) => {
+test("provisions an unchanged approved plan from its displayed base while the store lock is held", (t) => {
 	const f = fixture(t);
 	claim(f, "create");
 	const expectedBase = f.git(f.main, ["rev-parse", "HEAD"]).trim();
 	const proposed = plan(f, "create");
-	assert.equal(proposed.decision, "create");
-	assert.equal(proposed.baseCommit, expectedBase);
 	assert.deepEqual(proposed.command, ["git", "worktree", "add", "-b", "feat/create", proposed.inspection.identity.path, expectedBase]);
-	assert.equal(proposed.dirty, false);
-	assert.deepEqual(proposed.diagnostics, []);
-	assert.equal(existsSync(proposed.inspection.identity.path), false);
-	assert.equal(f.git(f.main, ["branch", "--list", "feat/create"]).trim(), "");
+	let addRanWithLock = false;
+	const run = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
+		if (file === "git" && args.includes("worktree") && args.includes("add")) {
+			addRanWithLock = existsSync(join(f.store, "store.lock"));
+		}
+		return execFileSync(file, args, options);
+	}) as typeof execFileSync;
+	const result = provision(f, "create", "requester", run, proposed);
+	assert.equal(addRanWithLock, true);
+	assert.equal(result.created, true);
+	assert.equal(result.branchCreated, true);
+	assert.equal(result.baseCommit, expectedBase);
+	assert.ok(f.git(f.main, ["worktree", "list", "--porcelain"]).includes(`worktree ${result.path}\n`));
+	assert.equal(f.git(result.path, ["branch", "--show-current"]).trim(), "feat/create");
+	assert.equal(f.git(result.path, ["rev-parse", "HEAD"]).trim(), expectedBase);
 });
 
-test("plans clean and dirty reusable worktrees and refuses an unreadable porcelain status", (t) => {
+for (const [capabilityId, alterTarget] of [
+	["empty-target", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { mkdirSync(proposed.inspection.identity.path, { recursive: true }); }],
+	["wrong-branch", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { f.git(f.main, ["worktree", "add", "-b", proposed.inspection.identity.branch, proposed.inspection.identity.path, proposed.baseCommit!]); f.git(proposed.inspection.identity.path, ["checkout", "--detach"]); }],
+	["wrong-commit", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { f.git(f.main, ["worktree", "add", "-b", proposed.inspection.identity.branch, proposed.inspection.identity.path, proposed.baseCommit!]); f.git(proposed.inspection.identity.path, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Diverge target"]); }],
+] as const) test(`reports an uncertain outcome when Git add success leaves ${capabilityId} unverified`, (t) => {
+	const f = fixture(t);
+	claim(f, capabilityId);
+	const proposed = plan(f, capabilityId);
+	const runner = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
+		if (file === "git" && args.includes("worktree") && args.includes("add")) {
+			alterTarget(f, proposed);
+			return "";
+		}
+		return execFileSync(file, args, options);
+	}) as typeof execFileSync;
+	const result = provision(f, capabilityId, "requester", runner, proposed);
+	assert.equal(result.decision, "create");
+	assert.equal(result.created, null);
+	assert.equal(result.outcome, "uncertain");
+});
+
+test("refuses a changed HEAD after approval without creating from an unseen base", (t) => {
+	const f = fixture(t);
+	claim(f, "changed-head");
+	const proposed = plan(f, "changed-head");
+	writeFileSync(join(f.main, "advanced.txt"), "advanced\n");
+	f.git(f.main, ["add", "advanced.txt"]);
+	f.git(f.main, ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "Advance HEAD"]);
+	const before = snapshot(f.dir);
+	const result = provision(f, "changed-head", "requester", undefined, proposed);
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.deepEqual(snapshot(f.dir), before);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/changed-head"]).trim(), "");
+	assert.equal(existsSync(proposed.inspection.identity.path), false);
+});
+
+test("re-inspection refuses a disappeared claim without creating bytes", (t) => {
+	const f = fixture(t);
+	claim(f, "disappeared");
+	const proposed = plan(f, "disappeared");
+	assert.equal(releaseProjectMapClaim({ root: f.store, capabilityId: "disappeared", sessionId: "requester", now: NOW }).released, true);
+	const before = snapshot(f.dir);
+	const result = provision(f, "disappeared", "requester", undefined, proposed);
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD) || hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED));
+	assert.deepEqual(snapshot(f.dir), before);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/disappeared"]).trim(), "");
+	assert.equal(existsSync(proposed.inspection.identity.path), false);
+});
+
+test("refuses a lead's approval when the displayed claim owner changes", (t) => {
+	const f = fixture(t);
+	claim(f, "claim-owner", "session-a");
+	claim(f, "__lead", "lead");
+	const original = plan(f, "claim-owner", "lead");
+	assert.equal(original.decision, "create");
+	assert.deepEqual(original.inspection.claim, { status: "held-by-other", sessionId: "session-a" });
+
+	assert.equal(releaseProjectMapClaim({ root: f.store, capabilityId: "claim-owner", sessionId: "session-a", now: NOW }).released, true);
+	claim(f, "claim-owner", "session-b");
+	const before = snapshot(f.dir);
+	const stale = provision(f, "claim-owner", "lead", undefined, original);
+	assert.equal(stale.decision, "refuse");
+	assert.ok(hasCode(stale, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.deepEqual(snapshot(f.dir), before);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/claim-owner"]).trim(), "");
+	assert.equal(existsSync(original.inspection.identity.path), false);
+
+	const fresh = plan(f, "claim-owner", "lead");
+	assert.equal(fresh.decision, "create");
+	assert.deepEqual(fresh.inspection.claim, { status: "held-by-other", sessionId: "session-b" });
+	assert.equal(provision(f, "claim-owner", "lead", undefined, fresh).created, true);
+});
+
+test("reuses clean worktrees and refuses an unreadable porcelain status instead of calling it clean", (t) => {
 	const f = fixture(t);
 	for (const capabilityId of ["clean", "dirty"]) {
 		claim(f, capabilityId);
 		const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId }).path;
 		f.git(f.main, ["worktree", "add", "-b", `feat/${capabilityId}`, target]);
 	}
-	const clean = plan(f, "clean");
-	assert.equal(clean.decision, "reuse");
-	assert.equal(clean.dirty, false);
+	const clean = provision(f, "clean");
+	assert.deepEqual({ decision: clean.decision, created: clean.created, branchCreated: clean.branchCreated }, { decision: "reuse", created: false, branchCreated: false });
 	writeFileSync(join(deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "dirty" }).path, "dirty.txt"), "dirty\n");
 	const dirty = plan(f, "dirty");
 	assert.equal(dirty.decision, "reuse");
 	assert.equal(dirty.dirty, true);
+	const dirtyReuse = provision(f, "dirty", "requester", undefined, dirty);
+	assert.equal(dirtyReuse.decision, "reuse");
+	assert.equal(dirtyReuse.dirty, true);
 	const statusFailure = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
 		if (file === "git" && args.includes("status")) throw Object.assign(new Error("status unavailable"), { status: 128, stdout: "", stderr: "status unavailable" });
 		return execFileSync(file, args, options);
@@ -350,7 +440,7 @@ test("plans clean and dirty reusable worktrees and refuses an unreadable porcela
 	assert.ok(hasCode(unreadable, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
 });
 
-test("plans refuse unsafe target states without changing bytes", (t) => {
+test("refuses unsafe target states and leaves a refusal byte-identical", (t) => {
 	const f = fixture(t);
 	for (const capabilityId of ["nonempty", "nested", "foreign", "occupied", "../main.repo/.git/escape"]) claim(f, capabilityId);
 	const nonempty = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "nonempty" }).path;
@@ -367,11 +457,166 @@ test("plans refuse unsafe target states without changing bytes", (t) => {
 	assert.ok(hasCode(nested, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_FOREIGN_CLONE));
 });
 
-test("plans refuse an unattached branch", (t) => {
+test("refuses a clean approved reuse that becomes dirty before provisioning", (t) => {
+	const f = fixture(t);
+	claim(f, "became-dirty");
+	const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: f.main, capabilityId: "became-dirty" }).path;
+	f.git(f.main, ["worktree", "add", "-b", "feat/became-dirty", target]);
+	const proposed = plan(f, "became-dirty");
+	assert.equal(proposed.dirty, false);
+	const dirtyFile = join(target, "dirty.txt");
+	writeFileSync(dirtyFile, "dirty\n");
+	const before = snapshot(f.dir);
+	const result = provision(f, "became-dirty", "requester", undefined, proposed);
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.deepEqual(snapshot(f.dir), before);
+	assert.equal(readFileSync(dirtyFile, "utf8"), "dirty\n");
+});
+
+test("locked provisioning refuses stale nested, foreign, occupied, and common-directory targets without creating a branch or worktree", (t) => {
+	const cases = [
+		["nested-after-plan", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { const base = dirname(proposed.inspection.identity.path); f.git(f.dir, ["init", "--initial-branch=main", base]); mkdirSync(proposed.inspection.identity.path); }, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_NESTED_REPOSITORY],
+		["foreign-after-plan", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { f.git(f.dir, ["init", "--initial-branch=main", proposed.inspection.identity.path]); }, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_FOREIGN_CLONE],
+		["occupied-after-plan", (f: ReturnType<typeof fixture>, proposed: ReturnType<typeof plan>) => { assert.ok(bindProjectMapStoreSession({ root: f.store, sessionId: "occupant", pid: process.pid, incarnation: INCARNATION, workspaceRoot: proposed.inspection.identity.path, now: NOW }).binding); }, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_OCCUPIED],
+	] as const;
+	for (const [capabilityId, mutate, code] of cases) {
+		const f = fixture(t);
+		claim(f, capabilityId);
+		const proposed = plan(f, capabilityId);
+		mutate(f, proposed);
+		const before = snapshot(f.dir);
+		const result = provision(f, capabilityId, "requester", undefined, proposed);
+		assert.equal(result.decision, "refuse");
+		assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD) || hasCode(result, code));
+		assert.deepEqual(snapshot(f.dir), before);
+		assert.equal(f.git(f.main, ["branch", "--list", proposed.inspection.identity.branch]).trim(), "");
+		assert.equal(result.created, false);
+	}
+
+	const common = fixture(t);
+	const capabilityId = "../main.repo/.git/escape";
+	claim(common, capabilityId);
+	const proposed = plan(common, capabilityId);
+	const before = snapshot(common.dir);
+	const result = provision(common, capabilityId, "requester", undefined, proposed);
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES));
+	assert.deepEqual(snapshot(common.dir), before);
+	assert.equal(common.git(common.main, ["branch", "--list", proposed.inspection.identity.branch]).trim(), "");
+	assert.equal(result.created, false);
+});
+
+test("lock-time reinspection refuses a post-plan target conflict without writing", (t) => {
+	const f = fixture(t);
+	claim(f, "conflict");
+	const proposed = plan(f, "conflict");
+	mkdirSync(proposed.inspection.identity.path, { recursive: true }); writeFileSync(join(proposed.inspection.identity.path, "existing"), "x");
+	const before = snapshot(f.dir);
+	const result = provision(f, "conflict", "requester", undefined, proposed);
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD) || hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_TARGET_NOT_EMPTY));
+	assert.deepEqual(snapshot(f.dir), before);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/conflict"]).trim(), "");
+});
+
+function failedAddRunner(branchStatus: 0 | 1 | 128): typeof execFileSync {
+	return ((file: string, args: readonly string[]) => {
+		if (file === "git" && args.includes("show-ref")) {
+			if (branchStatus === 0) return "";
+			throw Object.assign(new Error("branch lookup failed"), { status: branchStatus, stdout: "", stderr: "branch lookup failed" });
+		}
+		throw Object.assign(new Error("simulated worktree failure"), { status: 1, stdout: "", stderr: "simulated worktree failure" });
+	}) as typeof execFileSync;
+}
+
+test("reports a real retained branch when worktree add fails after branch creation", (t) => {
+	const f = fixture(t);
+	claim(f, "partial-branch");
+	const run = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
+		if (file === "git" && args.includes("worktree") && args.includes("add")) {
+			f.git(f.main, ["branch", "feat/partial-branch"]);
+			throw Object.assign(new Error("simulated worktree failure"), { status: 1, stdout: "", stderr: "simulated worktree failure" });
+		}
+		return execFileSync(file, args, options);
+	}) as typeof execFileSync;
+	const result = provision(f, "partial-branch", "requester", run);
+	assert.deepEqual({ decision: result.decision, created: result.created, branchCreated: result.branchCreated, outcome: result.outcome }, { decision: "create", created: null, branchCreated: true, outcome: "uncertain" });
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/partial-branch"]).trim(), "feat/partial-branch");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.match(result.diagnostics.at(-1)?.message ?? "", /git worktree add .*git branch -D/);
+});
+
+test("reports no retained branch when an injected worktree add fails atomically", (t) => {
+	const f = fixture(t);
+	claim(f, "partial-none");
+	const result = provision(f, "partial-none", "requester", failedAddRunner(1));
+	assert.deepEqual({ decision: result.decision, created: result.created, branchCreated: result.branchCreated, outcome: result.outcome }, { decision: "create", created: null, branchCreated: false, outcome: "uncertain" });
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+	assert.match(result.diagnostics.at(-1)?.message ?? "", /simulated worktree failure/);
+});
+
+test("reports an unknown retained branch when show-ref cannot inspect it after add failure", (t) => {
+	const f = fixture(t);
+	claim(f, "partial-unknown");
+	const result = provision(f, "partial-unknown", "requester", failedAddRunner(128));
+	assert.equal(result.created, null);
+	assert.equal(result.branchCreated, null);
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
+	assert.match(result.diagnostics.at(-1)?.message ?? "", /manual inspection/i);
+});
+
+test("refuses an unattached branch", (t) => {
 	const f = fixture(t);
 	claim(f, "orphan"); f.git(f.main, ["branch", "feat/orphan"]);
 	assert.equal(plan(f, "orphan").decision, "refuse");
 	assert.ok(hasCode(plan(f, "orphan"), PROJECT_MAP_STORE_DIAGNOSTIC_CODES.INVALID_FIELD));
+});
+
+test("refuses a symlinked worktree base before the create runner and reports post-Git divergence as uncertain", (t) => {
+	const f = fixture(t);
+	claim(f, "symlink-base");
+	const symlinkPlan = plan(f, "symlink-base");
+	symlinkSync(join(f.main, ".git"), dirname(symlinkPlan.inspection.identity.path));
+	let calls = 0;
+	const neverRun = ((..._args: Parameters<typeof execFileSync>) => { calls += 1; throw new Error("runner must not execute"); }) as unknown as typeof execFileSync;
+	const symlinked = provision(f, "symlink-base", "requester", neverRun, symlinkPlan);
+	assert.equal(symlinked.decision, "refuse");
+	assert.ok(hasCode(symlinked, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES));
+	assert.equal(calls, 0);
+
+	const divergent = fixture(t);
+	claim(divergent, "divergent-target");
+	const divergentPlan = plan(divergent, "divergent-target");
+	const outside = join(divergent.dir, "outside");
+	mkdirSync(outside);
+	const succeedsButRedirects = ((file: string, args: readonly string[], options: Parameters<typeof execFileSync>[2]) => {
+		if (file === "git" && args.includes("worktree") && args.includes("add")) {
+			symlinkSync(outside, divergentPlan.inspection.identity.path);
+			return "";
+		}
+		return execFileSync(file, args, options);
+	}) as typeof execFileSync;
+	const result = provision(divergent, "divergent-target", "requester", succeedsButRedirects, divergentPlan);
+	assert.equal(result.decision, "create");
+	assert.equal(result.created, null);
+	assert.equal(result.outcome, "uncertain");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_PATH_ESCAPES));
+});
+
+test("releases the lock when an approved-plan getter throws", (t) => {
+	const f = fixture(t);
+	claim(f, "throwing-plan");
+	const throwingPlan = new Proxy(plan(f, "throwing-plan"), {
+		get() { throw new Error("persistent plan failure"); },
+	});
+	const result = provisionProjectMapWorktree({ cwd: f.main, capabilityId: "throwing-plan", sessionId: "requester", now: NOW, approvedPlan: throwingPlan });
+	assert.equal(result.decision, "refuse");
+	assert.ok(hasCode(result, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.UNREADABLE_STORE));
+	const acquired = acquireProjectMapStoreLock(f.store, NOW);
+	assert.ok(acquired.handle, "the lock is released after the approved-plan getter throws");
+	assert.deepEqual(releaseProjectMapStoreLock(f.store, acquired.handle!), []);
+	assert.equal(f.git(f.main, ["branch", "--list", "feat/throwing-plan"]).trim(), "");
 });
 
 test("inspection is byte-level read-only for filesystem, store, branches, and worktrees", (t) => {
