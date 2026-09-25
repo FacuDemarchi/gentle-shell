@@ -198,6 +198,7 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - The last three slices were implemented with RDD switched off by the user's decision, so they carry parent verification instead of a native review; a deferred review pass over those three parts runs when the unit closes.
 
 - [ ] **PM-5 — Establish lead/satellite coordination contracts**
+  - Planned 2026-09-25 in `odd/tasks/pm-5-coordination-protocol.md`, with the user's decisions: a shared-contract proposal is a new durable store record kind; the lead is a claim on a reserved capability id; durable state transitions stay the only records while `dependency-ready` and `completion` are derived and notifications stay signals; and the lead writes the versioned map directly, scoped to the `contracts` array of an already approved map, with every write mirrored as durable evidence in the store. The unit is five slices, each its own commit and its own native review.
   - Define typed events for claim, release, heartbeat, dependency-ready, blocker, contract proposal/acceptance/rejection, and completion.
   - Make the lead the arbiter of map boundaries and shared contracts without creating a delivery authority.
   - Preserve notification+ACK transport as a signal path while durable state remains the source of coordination truth.
@@ -299,7 +300,7 @@ A PM identifier is a roadmap unit, not permission to implement all files implied
 
 ## Next decision
 
-PM-3 is closed and **PM-4 — Build the shared cross-worktree coordination store** is complete in `odd/tasks/pm-4-coordination-store.md`: all six slices are delivered (schema and canonical root; store engine with corruption refusal, proven emptiness and a cross-process lock; claims and leases; heartbeats and session bindings; blockers and readiness receipts; cross-worktree end to end). The three slices implemented while RDD was off carry parent verification and are queued for the deferred review pass. PM-5 through PM-9 remain behind it in the dependency graph and need their own planning.
+PM-3 and PM-4 are closed, and **PM-5 — Establish lead/satellite coordination contracts** is planned in `odd/tasks/pm-5-coordination-protocol.md`: five slices, each under the review budget, the first (PM5-1, contract proposals in the store) next. PM-6 through PM-9 remain behind it in the dependency graph and need their own planning.
 
 Two open items outside the unit chain belong to the user. The branch through PM-3 is complete but unpublished over the stable tag v3.7.0: push is a separate decision, and a pull request against upstream is blocked until a maintainer applies `status:approved` to issue #1396, with the chained-PR strategy still unchosen.
 
