@@ -7,6 +7,9 @@ import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from 
 import { acquireProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
+import { bindProjectMapStoreWorktree, listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
+import { planProjectMapWorktree, provisionProjectMapWorktree, type ProjectMapWorktreePlan, type ProjectMapWorktreeProvisionResult } from "../lib/project-map-worktrees.ts";
+import { SessionWorktreeRegistry } from "../lib/session-worktree-registry.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
@@ -55,7 +58,7 @@ export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree"] as const;
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
 const USAGE = {
@@ -68,6 +71,7 @@ const USAGE = {
 	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
 	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status>`,
 	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
+	worktree: `Usage: /${PROJECT_MAP_COMMAND_NAME} worktree <inspect|provision|list> [capability-id]`,
 } as const;
 
 export interface ProjectMapCommandContext {
@@ -99,10 +103,15 @@ export interface ProjectMapCommandReport {
 	diagnostics: ProjectMapCommandDiagnostic[];
 }
 
+export interface ProjectMapWorktreeRegistrationPort {
+	register(path: string, evidence: string): string;
+}
+
 export interface ProjectMapCommandOptions {
 	now?: () => Date;
 	onShow?: () => void;
 	onHide?: () => void;
+	worktrees?: ProjectMapWorktreeRegistrationPort;
 }
 
 export interface ProjectMapSubActionParse {
@@ -133,8 +142,95 @@ function sessionKey(ctx: ProjectMapCommandContext): string {
 	return ctx.sessionManager?.getSessionId() ?? "";
 }
 
-function describeDiagnostics(diagnostics: Array<ProjectMapDiagnostic | ProjectMapStoreDiagnostic>): string {
+function describeDiagnostics(diagnostics: Array<{ code: string; path: string; message: string }>): string {
 	return diagnostics.map((diagnostic) => `[${diagnostic.code}] ${diagnostic.path}: ${diagnostic.message}`).join("\n");
+}
+
+function worktreePlanText(plan: ProjectMapWorktreePlan): string {
+	const inspection = plan.inspection;
+	const checks = [
+		inspection.repository.sameClone ? "- Target belongs to this Git clone." : null,
+		!inspection.directory.insideCommonDir ? "- Target is outside the Git common directory." : null,
+		!inspection.directory.insideAnotherRepository ? "- Target is not nested inside another repository." : null,
+		inspection.session.occupiedBy === null ? "- No live session occupies the target." : null,
+		inspection.claim.status === "live" ? `- Live claim is held by ${inspection.claim.sessionId}.` : null,
+	].filter((entry): entry is string => entry !== null);
+	return [
+		"Capability worktree plan",
+		`Decision: ${plan.decision}`,
+		`Branch: ${inspection.identity.branch}`,
+		`Path: ${inspection.identity.path}`,
+		`Base commit: ${plan.baseCommit ?? "unavailable"}`,
+		"Checks that passed:",
+		...(checks.length > 0 ? checks : ["- None."]),
+		...(plan.diagnostics.length > 0 ? ["Diagnostics:", describeDiagnostics(plan.diagnostics)] : []),
+	].join("\n");
+}
+
+function worktreeRegistrationWarning(message: string): ProjectMapCommandDiagnostic {
+	return { code: "project-map/worktree-registration", path: "$.worktrees", message, severity: "warning" };
+}
+
+export interface ApplyProjectMapWorktreeProvisionOptions {
+	plan: ProjectMapWorktreePlan;
+	provisioned: ProjectMapWorktreeProvisionResult;
+	root: string;
+	capabilityId: string;
+	sessionId: string;
+	now: string;
+	worktrees?: ProjectMapWorktreeRegistrationPort;
+}
+
+export interface ProjectMapWorktreeProvisionReportFragment {
+	wrote: boolean;
+	diagnostics: ProjectMapCommandDiagnostic[];
+	notifications: string[];
+}
+
+/** Applies only the effects that follow a confirmed provisioning attempt. */
+export function applyProjectMapWorktreeProvision(options: ApplyProjectMapWorktreeProvisionOptions): ProjectMapWorktreeProvisionReportFragment {
+	const { provisioned } = options;
+	if (provisioned.created === null) {
+		return {
+			wrote: false,
+			diagnostics: provisioned.diagnostics,
+			notifications: [`Worktree provisioning outcome is uncertain; no registration or binding was written.\n${describeDiagnostics(provisioned.diagnostics)}`],
+		};
+	}
+	if (provisioned.decision === "refuse") {
+		return {
+			wrote: false,
+			diagnostics: provisioned.diagnostics,
+			notifications: [`Worktree provisioning was refused.\n${describeDiagnostics(provisioned.diagnostics)}`],
+		};
+	}
+	const diagnostics: ProjectMapCommandDiagnostic[] = [...provisioned.diagnostics];
+	if (options.worktrees === undefined) diagnostics.push(worktreeRegistrationWarning("The capability worktree was provisioned, but no session worktree registry is available."));
+	else {
+		try {
+			options.worktrees.register(provisioned.path, `capability:${options.capabilityId}`);
+		} catch (error) {
+			diagnostics.push(worktreeRegistrationWarning(`The capability worktree was provisioned, but session registration failed: ${error instanceof Error ? error.message : String(error)}`));
+		}
+	}
+	if (provisioned.baseCommit === null) diagnostics.push(worktreeRegistrationWarning("The verified worktree has no base commit, so no durable binding was written."));
+	else diagnostics.push(...bindProjectMapStoreWorktree({
+		root: options.root,
+		capabilityId: options.capabilityId,
+		branch: provisioned.branch,
+		worktreeRoot: provisioned.path,
+		sessionId: options.sessionId,
+		baseCommit: provisioned.baseCommit,
+		now: options.now,
+	}).diagnostics);
+	return {
+		wrote: true,
+		diagnostics,
+		notifications: [
+			`Capability worktree ${provisioned.created ? "created" : "reused"}: ${provisioned.branch} at ${provisioned.path}.`,
+			...(diagnostics.length > 0 ? [`${diagnostics.some((diagnostic) => diagnostic.severity === "warning") ? "warning diagnostics:\n" : ""}${describeDiagnostics(diagnostics)}`] : []),
+		],
+	};
 }
 
 function storeRoot(cwd: string): { root: string | null; diagnostics: ProjectMapStoreDiagnostic[] } {
@@ -256,6 +352,62 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 	const artifactPath = join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
 	const now = options.now ?? (() => new Date());
+
+	if (parsed.action === "worktree") {
+		const [operation = "", capabilityId = "", ...extra] = parsed.argument.split(/\s+/);
+		if (!( ["inspect", "provision", "list"] as const).includes(operation as "inspect" | "provision" | "list")
+			|| (operation === "list" && (capabilityId.length > 0 || extra.length > 0))
+			|| (operation !== "list" && (capabilityId.length === 0 || extra.length > 0))) {
+			const message = `A worktree operation needs ${operation === "list" ? "no capability id" : "a capability id"}. ${USAGE.worktree}`;
+			ctx.ui.notify(message);
+			return emptyReport("worktree", [refusal(message)]);
+		}
+		const sessionId = sessionKey(ctx);
+		if (sessionId.length === 0) {
+			const message = "Worktree operations require this session's identity; nothing was written.";
+			ctx.ui.notify(message);
+			return emptyReport("worktree", [refusal(message, "$.sessionId")]);
+		}
+		const root = storeRoot(ctx.cwd);
+		if (root.root === null) {
+			ctx.ui.notify(`Project Map coordination is unavailable.\n${describeDiagnostics(root.diagnostics)}`);
+			return emptyReport("worktree", root.diagnostics);
+		}
+		if (operation === "list") {
+			const listed = listProjectMapStoreWorktreeBindings({ root: root.root });
+			const lines = listed.bindings.map((binding) => `${binding.capability_id}: ${binding.branch} — ${binding.worktree_root}`);
+			ctx.ui.notify(lines.length === 0 ? "No capability worktree bindings found." : lines.join("\n"));
+			if (listed.diagnostics.length > 0) ctx.ui.notify(describeDiagnostics(listed.diagnostics));
+			return { action: "worktree", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: listed.diagnostics };
+		}
+		const instant = now().toISOString();
+		const plan = planProjectMapWorktree({ cwd: ctx.cwd, capabilityId, sessionId, now: instant });
+		const planText = worktreePlanText(plan);
+		ctx.ui.notify(planText);
+		if (operation === "inspect") return { action: "worktree", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
+		if (plan.decision === "refuse") {
+			ctx.ui.notify(`Worktree provisioning was refused.\n${describeDiagnostics(plan.diagnostics)}`);
+			return { action: "worktree", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
+		}
+		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Provision this capability worktree?", planText) : false;
+		if (!confirmed) {
+			const diagnostic = refusal("Worktree provisioning was declined; nothing was created.");
+			ctx.ui.notify(diagnostic.message);
+			return emptyReport("worktree", [diagnostic]);
+		}
+		const provisioned = provisionProjectMapWorktree({ cwd: ctx.cwd, capabilityId, sessionId, now: instant, approvedPlan: plan });
+		const applied = applyProjectMapWorktreeProvision({
+			plan,
+			provisioned,
+			root: root.root,
+			capabilityId,
+			sessionId,
+			now: instant,
+			worktrees: options.worktrees,
+		});
+		for (const notification of applied.notifications) ctx.ui.notify(notification);
+		return { action: "worktree", wrote: applied.wrote, map: null, assumptions: [], omissions: [], diagnostics: applied.diagnostics };
+	}
 
 	if (parsed.action === "lead" || parsed.action === "contract") {
 		const root = storeRoot(ctx.cwd);
@@ -603,10 +755,19 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	};
 
 	pi.registerCommand(PROJECT_MAP_COMMAND_NAME, {
-		description: "Generate, declare, inspect, approve, show, or hide the repository Project Map.",
+		description: "Generate, declare, inspect, approve, show, hide, or provision repository Project Map worktrees.",
 		handler: async (args, ctx) => {
 			const commandCtx = ctx as unknown as ProjectMapCommandContext;
-			await runProjectMapCommand(args, commandCtx, { onShow: () => { record(commandCtx).visibility = true; mount(commandCtx); }, onHide: () => { record(commandCtx).visibility = false; unmount(commandCtx); } });
+			const manager = commandCtx.sessionManager;
+			const registry = manager === undefined ? undefined : new SessionWorktreeRegistry(pi, {
+				getSessionId: () => manager.getSessionId() ?? "",
+				getEntries: () => (manager as unknown as { getEntries?: () => readonly { type: string; customType?: string; data?: unknown }[] }).getEntries?.() ?? [],
+			}, commandCtx.cwd);
+			await runProjectMapCommand(args, commandCtx, {
+				onShow: () => { record(commandCtx).visibility = true; mount(commandCtx); },
+				onHide: () => { record(commandCtx).visibility = false; unmount(commandCtx); },
+				worktrees: registry === undefined ? undefined : { register: (path, evidence) => registry.register(path, evidence) },
+			});
 		},
 	});
 
