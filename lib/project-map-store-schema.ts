@@ -17,6 +17,12 @@ export const PROJECT_MAP_STORE_DIAGNOSTIC_CODES = {
 	STORE_NOT_EMPTY: "project-map-store/store-not-empty",
 	QUARANTINE_EXISTS: "project-map-store/quarantine-exists",
 	STORE_LOCKED: "project-map-store/store-locked",
+	CLAIM_HELD: "project-map-store/claim-held",
+	CLAIM_ABSENT: "project-map-store/claim-absent",
+	CLAIM_NOT_HELD: "project-map-store/claim-not-held",
+	CLAIM_EXPIRED: "project-map-store/claim-expired",
+	RENEWAL_TOO_EARLY: "project-map-store/renewal-too-early",
+	STALE_CLAIM_RECOVERED: "project-map-store/stale-claim-recovered",
 } as const;
 export type ProjectMapStoreDiagnosticCode = (typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES)[keyof typeof PROJECT_MAP_STORE_DIAGNOSTIC_CODES];
 
