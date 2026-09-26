@@ -7,6 +7,7 @@ import { readProjectMapCoordinationState } from "./project-map-coordination-stat
 import { resolveProjectMapStoreRoot } from "./project-map-store-root.ts";
 import { projectMapStoreBindingProvesDead, readProjectMapStoreHeartbeat } from "./project-map-store-heartbeats.ts";
 import { parseProjectMapStoreValue, PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue, type ProjectMapStoreSessionBindingV1 } from "./project-map-store-schema.ts";
+import { isIsoInstant } from "./shell-project-map-schema.ts";
 import { planProjectMapWorktree, type ProjectMapWorktreePlan } from "./project-map-worktrees.ts";
 import { withoutInteractiveHost } from "./rpc-host.ts";
 import { worktreeGitEnvironment } from "./session-worktree-registry.ts";
@@ -37,9 +38,9 @@ export interface ProjectMapOpenPiConfirmation {
 
 /** Observes durable child evidence without extending the launch command's lifetime. */
 export async function awaitProjectMapOpenPiConfirmation({
-	root, worktree, since, timeoutMs = 5000, pollMs = 250, now = () => new Date().toISOString(), sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), readdir = readdirSync, readFile = readFileSync, readHeartbeat = readProjectMapStoreHeartbeat,
+	root, worktree, since, expectedPid = null, timeoutMs = 5000, pollMs = 250, now = () => new Date().toISOString(), sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), readdir = readdirSync, readFile = readFileSync, readHeartbeat = readProjectMapStoreHeartbeat,
 }: {
-	root: string; worktree: string; since: string; timeoutMs?: number; pollMs?: number;
+	root: string; worktree: string; since: string; expectedPid?: number | null; timeoutMs?: number; pollMs?: number;
 	now?: () => string; sleep?: (ms: number) => Promise<void>;
 	readdir?: (path: string) => string[]; readFile?: (path: string, encoding: "utf8") => string;
 	readHeartbeat?: typeof readProjectMapStoreHeartbeat;
@@ -47,13 +48,13 @@ export async function awaitProjectMapOpenPiConfirmation({
 	const diagnostics: ProjectMapOpenPiDiagnostic[] = [];
 	const timeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 0;
 	const poll = Number.isFinite(pollMs) ? Math.max(1, pollMs) : 1;
-	const unconfirmed = (): ProjectMapOpenPiConfirmation => ({ confirmed: false, sessionId: null, heartbeat: null, observation: `no binding for "${worktree}" written after ${since} appeared within ${timeoutMs}ms, so the child never proved it started.`, diagnostics });
+	const unconfirmed = (): ProjectMapOpenPiConfirmation => ({ confirmed: false, sessionId: null, heartbeat: null, observation: `no binding for "${worktree}" written at or after ${since} was observed during ${timeoutMs}ms of polling, so the child never proved it started.`, diagnostics });
 	let remaining = timeout;
 	for (;;) {
 		let entries: string[] = [];
 		try { entries = readdir(join(root, "sessions")).sort(); }
 		catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session bindings could not be read: ${error instanceof Error ? error.message : String(error)}`));
+			if ((error as { code?: unknown } | null | undefined)?.code !== "ENOENT") diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session bindings could not be read: ${error instanceof Error ? error.message : String(error)}`));
 		}
 		let instant: string;
 		try { instant = now(); } catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `The observation clock failed: ${error instanceof Error ? error.message : String(error)}`)); return unconfirmed(); }
@@ -71,11 +72,22 @@ export async function awaitProjectMapOpenPiConfirmation({
 					diagnostics.push(diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED, `Session binding "${entry}" is not in canonical form, so it cannot confirm a launch.`));
 					continue;
 				}
-				if (projectMapStoreBindingProvesDead(binding) || resolve(binding.workspace_root) !== resolve(worktree) || binding.bound_at < since) continue;
+				if (projectMapStoreBindingProvesDead(binding) || resolve(binding.workspace_root) !== resolve(worktree)) continue;
+				// A pid identifies this launch's child where the host exposes it; without one
+				// the evidence identifies the worktree, and the observation says so.
+				if (expectedPid !== null && binding.pid !== expectedPid) continue;
+				// Instants, not strings: an offset spelling sorts differently than it compares.
+				if (!isIsoInstant(binding.bound_at) || !isIsoInstant(since) || Date.parse(binding.bound_at) < Date.parse(since)) continue;
 				const result = readHeartbeat({ root, sessionId: binding.session_id, now: instant });
 				appendUnique(diagnostics, result.diagnostics);
 				const heartbeat = result.status === "free" ? "missing" : result.status;
-				if (heartbeat === "fresh") return { confirmed: true, sessionId: binding.session_id, heartbeat, observation: `session "${binding.session_id}" wrote its own binding for "${worktree}" at ${binding.bound_at} with a fresh heartbeat.`, diagnostics };
+				// The binding and the heartbeat must describe the same process, not a mixed pair.
+				if (heartbeat === "fresh" && result.heartbeat?.pid === binding.pid) {
+					const identity = expectedPid === null
+						? "this identifies the capability worktree rather than the exact child, because this host does not expose the launched child's pid"
+						: `the binding pid ${expectedPid} matches the child this launch started`;
+					return { confirmed: true, sessionId: binding.session_id, heartbeat, observation: `session "${binding.session_id}" (pid ${binding.pid}) wrote its own binding for "${worktree}" at ${binding.bound_at} with a fresh heartbeat, and ${identity}.`, diagnostics };
+				}
 			} catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session binding "${entry}" could not be observed: ${error instanceof Error ? error.message : String(error)}`)); }
 		}
 		if (remaining <= 0) return unconfirmed();
@@ -223,18 +235,23 @@ export function planProjectMapOpenPi({
 	const target = readiness.worktree.inspection.identity.path;
 	const text = handoff(readiness, sessionId, cwd, now);
 	const sessionName = deriveProjectMapOpenPiSessionName(capabilityId);
+	const launchIdentity = JSON.stringify({ capabilityId, parentSessionId: sessionId });
 	const diagnostics = [...readiness.diagnostics];
 	if (launcher === null) diagnostics.push(diagnostic("project-map-open-pi/launcher-unavailable", "gentle-shell could not be resolved from this package or PATH."));
 	else if (sessionExists(sessionName)) diagnostics.push(diagnostic("project-map-open-pi/session-name-occupied", `tmux session "${sessionName}" already exists; it was not modified.`));
 	const executable = launcher ?? { command: "", path: "", source: "path" as const };
 	const launcherArgv = executable.source === "package-local" ? [executable.command, executable.path] : [executable.command];
-	const argv = ["tmux", "new-session", "-d", "-s", sessionName, "-c", target, ...launcherArgv, text].filter((entry) => entry.length > 0);
+	// tmux does not forward a new client variable to a session it creates: only the variables in its
+	// own global environment arrive (verified against tmux 3.6: a session created with an exported
+	// parent variable reports it as unknown). The launch identity therefore travels with `-e`, which
+	// is what makes the child's receiver able to write its own binding.
+	const argv = ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${launchIdentity}`, "-s", sessionName, "-c", target, ...launcherArgv, text].filter((entry) => entry.length > 0);
 	return {
 		readiness,
 		decision: diagnostics.every((entry) => entry.severity !== "error") ? "open" : "refuse",
 		argv,
 		cwd: target,
-		env: { ...worktreeGitEnvironment(), [PROJECT_MAP_OPEN_PI_ENV]: JSON.stringify({ capabilityId, parentSessionId: sessionId }) },
+		env: { ...worktreeGitEnvironment(), [PROJECT_MAP_OPEN_PI_ENV]: launchIdentity },
 		handoff: text,
 		sessionName,
 		attachCommand: ["tmux", "attach-session", "-t", sessionName],
