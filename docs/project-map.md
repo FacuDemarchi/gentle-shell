@@ -54,7 +54,7 @@ Every generated map is a draft. The generator never marks a map approved, and it
 
 ## Command surface
 
-`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with nine validated sub-actions:
+`/gentle:project-map` (`extensions/gentle-project-map.ts`) is the human entry point, with ten validated sub-actions:
 
 - `status` reads the artifact and reports its approval state and counts. It never writes.
 - `draft` reads the repository sources, generates a draft, shows the assumptions and omissions it could not resolve, and writes only after an explicit confirmation. It replaces whatever the artifact held, an approved map included, so it is not a way to edit an approved plan in place.
@@ -65,6 +65,7 @@ Every generated map is a draft. The generator never marks a map approved, and it
 - `lead claim|renew|release|status` manages the reserved lead claim for the current session. The session identity comes from the command's own session manager, never from a free-text argument, and a session that cannot be identified is refused rather than guessed.
 - `contract propose|accept|reject|list ...` drives the shared-contract protocol described below; `accept` is the only one of them that writes the artifact.
 - `worktree inspect|provision|list ...` plans, provisions, or lists capability worktrees as described below; only `provision` can write.
+- `open <capability-id>` plans an Open Pi launch, shows the plan, asks once, and starts one session in the capability worktree as described below; it writes no artifact.
 
 An unknown sub-action lists the valid ones and writes nothing. An approval without an actor is refused, because an approval nobody can attribute is not auditable. A declaration refuses an unknown or repeated surface and names the frozen vocabulary; it also refuses an approved map, because declaration is a draft-time action and no plan-preserving return to draft exists. The transition takes its timestamp as an argument rather than reading the clock, so the tests inject it; the command is what supplies the current time. Every artifact-writing sub-action re-reads the artifact after its confirmation: when the file changed while the decision was pending, the write is refused and the change reported instead of clobbering the other writer. `worktree provision` writes no artifact; it re-inspects the plan's compared facts under the store lock and refuses when they changed.
 
@@ -172,6 +173,28 @@ The command is `worktree inspect|provision|list <capability-id>` (`list` takes n
 Nothing deletes, prunes, or rewrites a worktree or branch automatically. Cleanup only inspects and asks. Provisioning a worktree or creating a branch grants no commit, push, PR, merge, or release authority.
 
 The sibling layout keeps the path-race boundary decided on 2026-09-25. Before creating a new worktree, a pre-existing symlinked base is refused, and a missing base is created `0o700` without unchecked recursive symlink traversal; identity and containment are revalidated after Git runs. This guarantee assumes the repository's parent directory is not concurrently replaced by an uncooperative filesystem actor. Node pathname checks followed by `git worktree add` cannot atomically exclude that actor, so this protocol claims no atomic protection from a hostile path race.
+
+## Open Pi
+
+`open <capability-id>` starts one session in the capability worktree and nothing else. It is the only sub-action that starts a process, and it commits, pushes, creates a PR, merges, deletes no branch or worktree, and writes no artifact.
+
+`projectMapOpenPiReadiness` composes the whole launch gate and names every disqualifier as a diagnostic instead of returning a boolean: `capability-not-found`, `capability-not-approved`, `capability-not-ready`, `dependencies-not-ready`, `open-blocker`, `proposed-contract`, `host-unavailable`, and `worktree-not-provisioned`, alongside the refusals the worktree plan already names. Only a capability declared `ready` may be opened; a capability declared `active` whose session died keeps that friction until a human returns it to `ready`, because the map does not infer that a declaration is stale. The launch target must exist: a worktree plan of `create` means provisioning has not happened yet, so the action stays absent until `worktree provision` runs.
+
+The inspector renders `[Open Pi]` only for a capability the runtime gate permits. The line is absent rather than disabled, so the map never offers an action that a guess says will fail.
+
+`probeProjectMapOpenPiHost` is the one place that runs a subprocess for availability — a bounded `tmux -V` with a sanitized environment — and returns the version; the predicate receives that result as input, which keeps the predicate deterministic and free of the real binary. The host is `tmux` in this version; desktop terminal emulators are an explicit non-goal until their behaviour can be verified for real, and the tmux integration tests skip themselves where the binary is missing.
+
+`planProjectMapOpenPi` builds an inert request and starts nothing. It carries the exact `argv` array (never a shell string, so no capability-derived value can be interpolated), the capability worktree as `cwd`, the structured handoff, the named `project-map-open-pi-<capability-id>` session, the printed attach command, and the launcher resolution: the package-local `bin/gentle-shell.mjs` through the running Node first, a verified `PATH` entry second, and a named `launcher-unavailable` refusal when neither exists. An occupied session name is refused rather than reused.
+
+The handoff is assembled from the approved map and the coordination projection, never retyped by hand: capability and outcome, approved surfaces, dependencies with their projected readiness, accepted contracts, feature documents, the parent session, and the verification requirements. The versioned map does not model per-capability verification requirements yet, so the handoff says `Verification requirements: not declared by the map.` rather than inventing a list.
+
+`open` prints that plan and asks exactly once; a plan that already refuses is never confirmed. Two launch paths exist and the choice is visible, never a silent behaviour change: `Open in tmux (interactive session)` and `Start a background subagent instead`. When `tmux` is unusable, the background path is offered through its own affirmative confirmation that names the real refusal, and declining — or dismissing the prompt — leaves everything untouched. A context with no UI refuses rather than guessing, and a rejected dialog is reported as not confirmed rather than as a decline, because the user was never asked.
+
+The fallback reuses the runner's argument construction (`childArguments`) instead of writing a second runner, with one deliberate change: the `--mode rpc` pair becomes `--print`. An rpc child is driven, and with no driver it reads EOF on standard input and exits without running a turn, so a detached background child runs its own one-shot turn and the handoff is appended as that turn's message; every other argument still comes from the shared contract. The child receives its capability and parent session through the environment, keeps the capability worktree as `cwd`, gets the parent's interactive-host signal stripped the way every subagent child does, and loads this extension so the receiver can write its own binding.
+
+A launch is reported in two states and the second one is earned. At spawn time the report says the work is not confirmed. `confirmed` requires the child's own durable evidence: a canonical `session-binding` for exactly this worktree, written after this launch, with a fresh heartbeat. Nothing else confirms it — not a tmux session that exists, not a successful spawn, not a PID. A window that ends without that evidence is reported as `stayed unconfirmed`, with what was looked for and for how long. The observation runs detached from the command, because waiting for a child boot would freeze the command surface for an unbounded time, so the confirmation arrives as a later notification after the launch request on both paths.
+
+Two limits belong here rather than in a footnote. The fallback is a detached one-shot launch, not `AgentRunner`: it installs no child markers, no IPC channel and no lifecycle supervision, because a runner-owned marker without a runner would misdescribe the process. And no real `pi` or `gentle-shell` child has been observed writing its binding in the test suite yet — the receiver is proven at the handler level and the evidence filter deterministically — so the end-to-end `confirmed` path stays unverified rather than implied.
 
 ## Approval
 
