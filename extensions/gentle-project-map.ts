@@ -474,6 +474,14 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		const decline = (message = "Opening Pi was declined; nothing was launched.") => {
 			const declined = refusal(message); ctx.ui.notify(declined.message); return emptyReport("open", [declined]);
 		};
+		// A rejected dialog is not a decline: the user was never asked.
+		const unconfirmed = (reason: string) => {
+			const message = `Opening Pi was not confirmed (${reason}); nothing was launched.`;
+			const failed = refusal(message); ctx.ui.notify(failed.message); return emptyReport("open", [failed]);
+		};
+		const askOnce = async <T>(ask: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
+			try { return { ok: true, value: await ask() }; } catch { return { ok: false }; }
+		};
 		const launchTmux = () => {
 			const launched = (options.launch ?? openProjectMapPi)(plan);
 			if (!launched.launched) { const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
@@ -487,18 +495,23 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		if (plan.decision === "open") {
 			if (!ctx.hasUI) return decline("Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
 			if (ctx.ui.select) {
-				const choice = await ctx.ui.select("Open Pi for this capability?", [OPEN_PI_TMUX_CHOICE, OPEN_PI_SUBAGENT_CHOICE]);
+				const answer = await askOnce(() => ctx.ui.select!("Open Pi for this capability?", [OPEN_PI_TMUX_CHOICE, OPEN_PI_SUBAGENT_CHOICE]));
+				if (!answer.ok) return unconfirmed("the choice prompt failed");
+				const choice = answer.value;
 				if (choice === OPEN_PI_TMUX_CHOICE) return launchTmux();
 				if (choice === OPEN_PI_SUBAGENT_CHOICE && fallback.decision === "offer") return await launchSubagent();
 				if (choice === OPEN_PI_SUBAGENT_CHOICE) ctx.ui.notify(describeDiagnostics(fallback.diagnostics));
 				return decline();
 			}
-			return await ctx.ui.confirm("Open Pi for this capability?", text) ? launchTmux() : decline();
+			const answer = await askOnce(() => ctx.ui.confirm("Open Pi for this capability?", text));
+			if (!answer.ok) return unconfirmed("the confirmation failed");
+			return answer.value ? launchTmux() : decline();
 		}
 		if (fallback.decision === "offer") {
 			if (!ctx.hasUI) return decline("Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
-			const confirmedFallback = await ctx.ui.confirm(openPiFallbackOfferTitle(plan), [text, describeDiagnostics(fallback.diagnostics)].filter(Boolean).join("\n"));
-			return confirmedFallback ? await launchSubagent() : decline();
+			const answer = await askOnce(() => ctx.ui.confirm(openPiFallbackOfferTitle(plan), [text, describeDiagnostics(fallback.diagnostics)].filter(Boolean).join("\n")));
+			if (!answer.ok) return unconfirmed("the confirmation failed");
+			return answer.value ? await launchSubagent() : decline();
 		}
 		ctx.ui.notify(`Opening Pi was refused.\n${describeDiagnostics(plan.diagnostics)}`);
 		return { action: "open", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
