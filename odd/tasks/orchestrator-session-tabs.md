@@ -1,6 +1,6 @@
 # Orchestrator session-tab layer
 
-Status: **planned, not implemented.** One shape decision is open (see "Open decision" below) and blocks the first source write.
+Status: **planned, decision settled 2026-09-26 (option C), implementation starting.**
 
 ## Objective
 
@@ -45,15 +45,17 @@ The ratified order is PM-7 → this unit → PM-8 → PM-9. PM-7 is closed, and 
 - **Fail closed.** A corrupted or unavailable store shows that honestly and renders no tabs, exactly as the map card degrades to an unavailable overlay rather than inventing state.
 - **Width safety.** The header row has a hard 140-column gate and the row is full-width; every line must be measured, never assumed.
 
-## Open decision (needs the user before the first source write)
+## Row shape (decided by the user, 2026-09-26: option C)
 
-Decision 2's literal form — a capability repeated under each surface it requires — is a **list** shape, while the agreed placement is a **single full-width row** between the host bar and the `✿ Gentle Shell` bar. At 140 columns, a row that repeats capabilities across up to seven surfaces overflows as soon as a project has a handful of live sessions. Three ways to reconcile it, and the plan does not choose silently:
+Decision 2's literal form — a capability repeated under each surface it requires — is a **list** shape, while the agreed placement is a **single full-width row** between the host bar and the `✿ Gentle Shell` bar. At 140 columns a row that repeats capabilities across up to seven surfaces overflows as soon as a project has a handful of live sessions. Three ways to reconcile it were put to the user, and **C was chosen**:
 
-| Option | Row shows | Cost |
+| Option | Row shows | Outcome |
 |---|---|---|
-| A. Section labels in the row, capability repeated | `Web · Merchant catalog, Checkout   API · Checkout` | Closest to decision 2 verbatim; truncates soonest. |
-| B. One tab per capability, surface tags on the tab | `[Merchant catalog · Web API DB] [Checkout · Web API DB]` | Never repeats a capability, so it fits far more; the surface grouping becomes an attribute instead of a section. |
-| C. Sections in the row, capability repeated, but only for surfaces with a live session | As A, filtered | Fits best in practice; hides a surface with no live session, which is the common case. |
+| A. Section labels in the row, capability repeated | `Web · Merchant catalog, Checkout   API · Checkout` | Not chosen: closest to decision 2 verbatim, but truncates soonest. |
+| B. One tab per capability, surface tags on the tab | `[Merchant catalog · Web API DB] [Checkout · Web API DB]` | Not chosen: fits the most, but demotes the surface grouping from section to attribute. |
+| **C. Sections in the row, capability repeated, only for surfaces with a live session** | As A, filtered to live surfaces | **Chosen.** Keeps the surface reading that makes layer imbalance visible, while bounding the width to what is actually running now. |
+
+The consequence is a defined rule rather than a truncation accident: **a surface section is rendered only while at least one session bound to a capability of this repository, under that capability's declared surfaces, is live.** Its acceptance criterion is number 8 below. A surface whose only sessions are stale renders no section, and the capability disappears from it — which is the intended behaviour, not a bug to file.
 
 ## Collision map
 
@@ -76,7 +78,9 @@ Anything outside this list is a scope question, not an edit.
 
 ## Task list
 
-- [ ] **TAB-1 — Pure tab projection.** `deriveOrchestratorSessionTabs(...)`: join the coordination state's satellites (capability, session, claim, lease status, heartbeat freshness) with the worktree bindings (branch, worktree root) and the approved map (objective, surfaces, declared state), then group and order deterministically. Readers injected; no I/O of its own. Forecast ≈ 280 lines with fixtures.
+- [x] **TAB-1 — Pure tab projection.** `deriveOrchestratorSessionTabs(...)`: join the coordination state's satellites (capability, session, claim, lease status, heartbeat freshness) with the worktree bindings (branch, worktree root) and the approved map (objective, surfaces, declared state), then group by surface keeping only live ones (option C) and order deterministically. Readers injected; no I/O of its own. **Delivered 2026-09-26**, 362 new lines in `lib/shell-project-map-tabs.ts` and its suite (373 with this document), just under the 400-line budget and over the 280-line forecast.
+  - **Two precedence rules the plan left implicit and the tests now pin.** *Liveness*: presence is authoritative when it is available (present means live, absent means stale) and the store's own lease status decides it when presence is unavailable, so one rule covers both the desktop case and the headless one. *Worktrees*: the store keeps one binding per capability, so a binding written by an earlier session still names this capability's worktree, but when two exist the one whose session matches wins, so a re-provisioned worktree cannot be shadowed by a stale binding.
+  - **Two judgement calls recorded rather than buried.** A session holding a capability the approved map does not declare is dropped and named by a `warning`, because that is map drift worth surfacing. A **stale** session stays visible inside a section that a live peer keeps on screen: dropping it would make acceptance criterion 4 — a dead session distinguishable from a live one — impossible to satisfy, while option C still keeps a purely stale surface off screen entirely.
 - [ ] **TAB-2 — Row and detail rendering.** Measured, width-safe lines for the row and for the read-only detail of the selected tab, behind the same decision that names the diagnostic when the store is unavailable. Forecast ≈ 260 lines.
 - [ ] **TAB-3 — Header wiring and selection.** Compose the row into the existing header region with a digest, wire selection, and prove the narrow-mode rule by the existing gate rather than a new one. Forecast ≈ 220 lines.
 - [ ] **TAB-4 — Documentation and unit verification.** `docs/gentle-shell.md` and `docs/project-map.md`, the acceptance trace, and the honest record of what was not verified. Forecast ≈ 150 lines.
@@ -92,6 +96,7 @@ Every slice stays under the 400-line review budget and is its own commit. The PM
 5. The row hides below the 140-column breakpoint with the rest of the chrome, by the existing gate.
 6. The layer writes nothing to the store and adds no map field.
 7. The rail digest changes when the painted tab state changes.
+8. **Only live surfaces get a section (option C).** A surface renders while at least one session bound to one of its capabilities is live; with no live session the section is absent, and a stale session never keeps a section on screen.
 
 ## Review disposition
 
@@ -99,4 +104,6 @@ RDD is **off** for this clone, as it was for PM-4 through PM-7. The unit therefo
 
 ## Progress
 
-- 2026-09-26: **unit planned** after a read-only surface recon. The findings that shaped the plan: the header row is already a single full-width sibling registered through `sidebarHeader(...)`, so the tabs extend it and inherit its 140-column gate instead of adding a second narrow-mode rule; the coordination state already exposes exactly the five facts a tab needs (capability, session, lease status, heartbeat freshness, blockers) and `listProjectMapStoreWorktreeBindings` supplies branch and root, so **no store or schema change is required**; and decision 2's list shape collides with the agreed single-row placement, which is recorded above as the one open decision rather than resolved silently. Nothing has been implemented; TAB-1 is the next work unit once the open decision is settled.
+- 2026-09-26: **unit planned** after a read-only surface recon. The findings that shaped the plan: the header row is already a single full-width sibling registered through `sidebarHeader(...)`, so the tabs extend it and inherit its 140-column gate instead of adding a second narrow-mode rule; the coordination state already exposes exactly the five facts a tab needs (capability, session, lease status, heartbeat freshness, blockers) and `listProjectMapStoreWorktreeBindings` supplies branch and root, so **no store or schema change is required**; and decision 2's list shape collides with the agreed single-row placement, which is recorded above as the one open decision rather than resolved silently. Nothing has been implemented at that point; TAB-1 was the next work unit once the shape decision was settled.
+- 2026-09-26: **shape decision settled — option C** (a surface section renders while at least one session bound to one of its capabilities is live; a purely stale surface renders no section), recorded above with its three rejected alternatives and pinned as acceptance criterion 8.
+- 2026-09-26: **TAB-1 delivered** (`lib/shell-project-map-tabs.ts`, 362 new lines with its suite). `deriveOrchestratorSessionTabs` is a pure function over already-read values: no filesystem access, no `process.env`, no store write, and every reader stays injected at the composition site. It joins the satellites to the map, resolves liveness by the presence precedence rule, resolves the worktree binding per capability, and builds the surface sections in the schema's own surface order. Closure evidence: focused **21/21**, neighbours **502/502**, full suite **3,859 (3,821 passed, 38 skipped, 0 failed)**, type gate **195** with no regressions, provider contract, runtime harness and `git diff --check` all exiting 0. Deliberately not verified: nothing is rendered yet, so no acceptance criterion beyond the projection's own is met by this slice; criteria 3 to 5 and 7 belong to TAB-2 and TAB-3.
