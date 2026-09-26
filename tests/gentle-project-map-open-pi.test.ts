@@ -5,9 +5,12 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import gentleProjectMap, { handleProjectMapOpenPiSessionStart, runProjectMapCommand, type ProjectMapCommandContext } from "../extensions/gentle-project-map.ts";
+import gentleProjectMap, { handleProjectMapOpenPiSessionStart, OPEN_PI_SUBAGENT_CHOICE, OPEN_PI_TMUX_CHOICE, openPiFallbackOfferTitle, openPiSubagentSessionDir, runProjectMapCommand, type ProjectMapCommandContext } from "../extensions/gentle-project-map.ts";
+import { planProjectMapOpenPi } from "../lib/project-map-open-pi.ts";
+import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
+import { agentRuntimePaths } from "../extensions/gentle-agents.ts";
 import { readProjectMapCoordinationState } from "../lib/project-map-coordination-state.ts";
-import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
+import { acquireProjectMapClaim, releaseProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { readProjectMapStoreHeartbeat, readProjectMapStoreSessionBinding } from "../lib/project-map-store-heartbeats.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
@@ -45,23 +48,82 @@ function withFixture(run: (fixture: { sandbox: string; cwd: string; store: strin
 	return execute().finally(() => rmSync(sandbox, { recursive: true, force: true }));
 }
 
-function context(cwd: string, sessionId = "parent", answers: boolean[] = [true]) {
-	const notified: string[] = [], confirmations: Array<{ title: string; message: string; notified: string[] }> = [];
-	const ctx: ProjectMapCommandContext = { cwd, hasUI: true, sessionManager: { getSessionId: () => sessionId }, ui: { notify: (message) => notified.push(message), confirm: async (title, message) => { confirmations.push({ title, message, notified: [...notified] }); return answers.shift() ?? true; } } };
-	return { ctx, notified, confirmations };
+function context(cwd: string, sessionId = "parent", answers: boolean[] = [true], selections?: Array<string | undefined>) {
+	const notified: string[] = [], confirmations: Array<{ title: string; message: string; notified: string[] }> = [], selected: Array<{ title: string; options: string[] }> = [];
+	const ui: ProjectMapCommandContext["ui"] = { notify: (message) => notified.push(message), confirm: async (title, message) => { confirmations.push({ title, message, notified: [...notified] }); return answers.shift() ?? true; } };
+	if (selections !== undefined) ui.select = async (title, options) => { selected.push({ title, options }); return selections.shift(); };
+	const ctx: ProjectMapCommandContext = { cwd, hasUI: true, sessionManager: { getSessionId: () => sessionId }, ui };
+	return { ctx, notified, confirmations, selected };
 }
 
-test("open prints the real plan before its confirmation, and refusal never asks or launches", async () => {
+test("open offers explicit tmux or background choices and never silently falls back", async () => {
 	await withFixture(async ({ cwd, store }) => {
 		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
-		const open = context(cwd), launches: unknown[] = [];
-		await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; } });
-		assert.equal(open.confirmations.length, 1); assert.ok(open.confirmations[0]!.notified.includes(open.confirmations[0]!.message));
-		assert.match(open.confirmations[0]!.message, /Decision: open/); assert.match(open.confirmations[0]!.message, new RegExp(`Path: ${launches[0] && (launches[0] as { cwd: string }).cwd}`)); assert.match(open.confirmations[0]!.message, /Attach: tmux attach-session -t project-map-open-pi-catalog/); assert.equal(launches.length, 1);
-		const refused = context(cwd), noLaunches: unknown[] = [];
-		await runProjectMapCommand("open catalog", refused.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, launch: (plan) => { noLaunches.push(plan); return { launched: true, error: null }; } });
-		assert.equal(refused.confirmations.length, 0); assert.equal(noLaunches.length, 0);
+		for (const [choice, tmuxCalls, subagentCalls] of [[OPEN_PI_TMUX_CHOICE, 1, 0], [OPEN_PI_SUBAGENT_CHOICE, 0, 1], [undefined, 0, 0]] as const) {
+			const open = context(cwd, "parent", [true], [choice]), launches: unknown[] = [], subagents: unknown[] = [];
+			await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; }, subagentSessionDir: () => "/sessions" });
+			assert.deepEqual(open.selected, [{ title: "Open Pi for this capability?", options: [OPEN_PI_TMUX_CHOICE, OPEN_PI_SUBAGENT_CHOICE] }]); assert.equal(open.confirmations.length, 0); assert.equal(launches.length, tmuxCalls); assert.equal(subagents.length, subagentCalls);
+			if (subagents.length) { const fallback = subagents[0] as { cwd: string; argv: string[]; handoff: string }; assert.match(fallback.cwd, /catalog$/); assert.ok(fallback.argv.includes(fallback.handoff)); assert.ok(open.notified.some((message) => message.includes("Background subagent launch requested"))); }
+			if (choice === undefined) assert.ok(open.notified.includes("Opening Pi was declined; nothing was launched."));
+		}
+		for (const [answer, expected] of [[false, 0], [true, 1]] as const) {
+			const open = context(cwd, "parent", [answer]), launches: unknown[] = [], subagents: unknown[] = [];
+			await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; } });
+			assert.equal(open.confirmations.length, 1); assert.equal(launches.length, expected); assert.equal(subagents.length, 0);
+			assert.ok(open.confirmations[0]!.notified.includes(open.confirmations[0]!.message), "the plan is displayed before the confirmation");
+			assert.match(open.confirmations[0]!.message, /Decision: open/);
+			assert.match(open.confirmations[0]!.message, /Path: /);
+			assert.match(open.confirmations[0]!.message, /Attach: tmux attach-session -t project-map-open-pi-catalog/);
+		}
 	});
+});
+
+test("open never launches the fallback when the fallback plan itself refuses", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		const open = context(cwd, "parent", [true], [OPEN_PI_SUBAGENT_CHOICE]), launches: unknown[] = [], subagents: unknown[] = [];
+		await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; }, subagentSessionDir: () => " " });
+		assert.equal(open.selected.length, 1); assert.equal(launches.length, 0); assert.equal(subagents.length, 0);
+		assert.ok(open.notified.some((message) => message.includes("project-map-open-pi/session-dir-required")));
+		assert.ok(open.notified.includes("Opening Pi was declined; nothing was launched."));
+	});
+});
+
+test("the fallback offer names the real refusal and reports a failed background launch honestly", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		const refusedLauncher = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "parent", now: NOW, host: { available: true, version: "tmux test" }, launcher: null });
+		assert.match(openPiFallbackOfferTitle(refusedLauncher), /The tmux launch was refused/);
+		const hostless = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "parent", now: NOW, host: { available: false, version: null } });
+		assert.match(openPiFallbackOfferTitle(hostless), /tmux is unavailable/);
+		const failed = context(cwd, "parent", [true]);
+		await runProjectMapCommand("open catalog", failed.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, subagentLaunch: async () => ({ launched: false, pid: null, error: "spawn ENOENT" }) });
+		assert.ok(failed.notified.some((message) => message.includes("Background subagent launch failed: spawn ENOENT.")));
+		assert.equal(failed.notified.some((message) => message.includes("launch requested")), false);
+	});
+});
+
+test("open offers background launch only after an affirmative host-unavailable confirmation", async () => {
+	await withFixture(async ({ sandbox, cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		for (const answer of [true, false]) {
+			const open = context(cwd, "parent", [answer]), launches: unknown[] = [], subagents: unknown[] = [], before = snapshot(sandbox);
+			await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; }, subagentSessionDir: () => "/sessions" });
+			assert.equal(open.confirmations.length, 1); assert.match(open.confirmations[0]!.title, /tmux is unavailable/); assert.equal(launches.length, 0); assert.equal(subagents.length, answer ? 1 : 0); assert.equal(open.notified.some((message) => message.includes("Pi launch requested")), false); if (!answer) assert.deepEqual(snapshot(sandbox), before);
+		}
+		const headless = context(cwd), headlessCtx = { ...headless.ctx, hasUI: false }, none: unknown[] = [];
+		await runProjectMapCommand("open catalog", headlessCtx, { now: () => new Date(NOW), host: { available: false, version: null }, launch: () => { throw new Error("must not launch"); }, subagentLaunch: async (fallback) => { none.push(fallback); return { launched: true, pid: 1, error: null }; } });
+		assert.equal(headless.confirmations.length, 0); assert.equal(none.length, 0); assert.ok(headless.notified.some((message) => message.includes("no UI")));
+		assert.equal(releaseProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).released, true);
+		const noClaim = context(cwd), blocked: unknown[] = [];
+		await runProjectMapCommand("open catalog", noClaim.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, subagentLaunch: async (fallback) => { blocked.push(fallback); return { launched: true, pid: 1, error: null }; } });
+		assert.equal(noClaim.confirmations.length, 0); assert.equal(blocked.length, 0); assert.ok(noClaim.notified.some((message) => message.includes("Opening Pi was refused.")));
+	});
+});
+
+test("open subagent session path matches the agent runtime layout", () => {
+	const env = { GENTLE_PI_AGENT_HOME: "/agent-home" };
+	assert.equal(openPiSubagentSessionDir(env), agentRuntimePaths("/unused", resolveGentlePiAgentHome(env)).sessions);
 });
 
 test("open reports a spawn failure and a declined confirmation without claiming launch", async () => {

@@ -2,7 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
 import { acquireProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
@@ -16,7 +17,8 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
-import { openProjectMapPi, planProjectMapOpenPi, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
+import { openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
+import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
 import {
@@ -43,6 +45,24 @@ export const PROJECT_MAP_WIDGET_KEY = "gentle-project-map";
 export const PROJECT_MAP_COLLAPSE_KEY_DEFAULT = "alt+m";
 export const PROJECT_MAP_NEXT_KEY_DEFAULT = "alt+j";
 export const PROJECT_MAP_PREV_KEY_DEFAULT = "alt+k";
+export const OPEN_PI_TMUX_CHOICE = "Open in tmux (interactive session)";
+export const OPEN_PI_SUBAGENT_CHOICE = "Start a background subagent instead";
+
+// agentRuntimePaths in gentle-agents.ts owns this layout: join(agentHome, "gentle-agents") + /sessions.
+export function openPiSubagentSessionDir(env: NodeJS.ProcessEnv = process.env): string {
+	return join(resolveGentlePiAgentHome(env), "gentle-agents", "sessions");
+}
+
+export function openPiExtensionPath(exists: (path: string) => boolean = existsSync): string[] {
+	const path = join(dirname(dirname(fileURLToPath(import.meta.url))), "extensions", "gentle-project-map.ts");
+	return exists(path) ? [path] : [];
+}
+
+/** Names the real refusal instead of always blaming the host. */
+export function openPiFallbackOfferTitle(plan: ProjectMapOpenPiPlan): string {
+	const hostOnly = plan.diagnostics.every((entry) => entry.severity !== "error" || entry.code === "project-map-open-pi/host-unavailable");
+	return hostOnly ? "tmux is unavailable. Start a background subagent instead?" : "The tmux launch was refused. Start a background subagent instead?";
+}
 
 function projectMapKey(value: string | undefined, fallback: string): string | undefined {
 	if (value === undefined || value === "") return fallback;
@@ -83,6 +103,7 @@ export interface ProjectMapCommandContext {
 	ui: {
 		notify: (message: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
+		select?: (title: string, options: string[]) => Promise<string | undefined>;
 		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
 	};
 	sessionManager?: {
@@ -117,6 +138,8 @@ export interface ProjectMapCommandOptions {
 	worktrees?: ProjectMapWorktreeRegistrationPort;
 	host?: ProjectMapOpenPiHost;
 	launch?: typeof openProjectMapPi;
+	subagentLaunch?: typeof runProjectMapOpenPiFallback;
+	subagentSessionDir?: (env: NodeJS.ProcessEnv) => string;
 }
 
 export interface ProjectMapSubActionParse {
@@ -447,24 +470,38 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		const plan = planProjectMapOpenPi({ cwd: ctx.cwd, capabilityId, sessionId, now: now().toISOString(), host: options.host ?? probeProjectMapOpenPiHost({ env: process.env, timeoutMs: 1000 }), sessionExists: (name) => projectMapOpenPiSessionExists({ name, env: process.env }) });
 		const text = openPiPlanText(plan);
 		ctx.ui.notify(text);
-		if (plan.decision === "refuse") {
-			ctx.ui.notify(`Opening Pi was refused.\n${describeDiagnostics(plan.diagnostics)}`);
-			return { action: "open", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
+		const fallback = planProjectMapOpenPiFallback(plan, { sessionDir: (options.subagentSessionDir ?? openPiSubagentSessionDir)(process.env), extensionPaths: openPiExtensionPath() });
+		const decline = (message = "Opening Pi was declined; nothing was launched.") => {
+			const declined = refusal(message); ctx.ui.notify(declined.message); return emptyReport("open", [declined]);
+		};
+		const launchTmux = () => {
+			const launched = (options.launch ?? openProjectMapPi)(plan);
+			if (!launched.launched) { const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
+			ctx.ui.notify("Pi launch requested; work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
+		};
+		const launchSubagent = async () => {
+			const launched = await (options.subagentLaunch ?? runProjectMapOpenPiFallback)(fallback);
+			if (!launched.launched) { const failure = refusal(`Background subagent launch failed: ${launched.error ?? "the runner did not start"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
+			ctx.ui.notify("Background subagent launch requested; this is a separate lifecycle from an interactive session, and work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
+		};
+		if (plan.decision === "open") {
+			if (!ctx.hasUI) return decline("Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
+			if (ctx.ui.select) {
+				const choice = await ctx.ui.select("Open Pi for this capability?", [OPEN_PI_TMUX_CHOICE, OPEN_PI_SUBAGENT_CHOICE]);
+				if (choice === OPEN_PI_TMUX_CHOICE) return launchTmux();
+				if (choice === OPEN_PI_SUBAGENT_CHOICE && fallback.decision === "offer") return await launchSubagent();
+				if (choice === OPEN_PI_SUBAGENT_CHOICE) ctx.ui.notify(describeDiagnostics(fallback.diagnostics));
+				return decline();
+			}
+			return await ctx.ui.confirm("Open Pi for this capability?", text) ? launchTmux() : decline();
 		}
-		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Open Pi for this capability?", text) : false;
-		if (!confirmed) {
-			const declined = refusal(ctx.hasUI ? "Opening Pi was declined; nothing was launched." : "Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
-			ctx.ui.notify(declined.message);
-			return emptyReport("open", [declined]);
+		if (fallback.decision === "offer") {
+			if (!ctx.hasUI) return decline("Opening Pi needs a visible confirmation and this context has no UI; nothing was launched.");
+			const confirmedFallback = await ctx.ui.confirm(openPiFallbackOfferTitle(plan), [text, describeDiagnostics(fallback.diagnostics)].filter(Boolean).join("\n"));
+			return confirmedFallback ? await launchSubagent() : decline();
 		}
-		const launched = (options.launch ?? openProjectMapPi)(plan);
-		if (!launched.launched) {
-			const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`);
-			ctx.ui.notify(failure.message);
-			return emptyReport("open", [failure]);
-		}
-		ctx.ui.notify("Pi launch requested; work is not confirmed until the child writes its own binding or heartbeat.");
-		return emptyReport("open");
+		ctx.ui.notify(`Opening Pi was refused.\n${describeDiagnostics(plan.diagnostics)}`);
+		return { action: "open", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: plan.diagnostics };
 	}
 
 	if (parsed.action === "lead" || parsed.action === "contract") {

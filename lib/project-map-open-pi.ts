@@ -1,11 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFileSync, spawn as nodeSpawn } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readProjectMapCoordinationState } from "./project-map-coordination-state.ts";
 import { resolveProjectMapStoreRoot } from "./project-map-store-root.ts";
 import { planProjectMapWorktree, type ProjectMapWorktreePlan } from "./project-map-worktrees.ts";
+import { withoutInteractiveHost } from "./rpc-host.ts";
 import { worktreeGitEnvironment } from "./session-worktree-registry.ts";
+import { childArguments, piCommand, type TaskRequest } from "./agents-runner.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, type ProjectMapCapabilityV1 } from "./shell-project-map-schema.ts";
 
 export const PROJECT_MAP_OPEN_PI_ENV = "GENTLE_PI_PROJECT_MAP_OPEN_PI";
@@ -84,6 +86,24 @@ export interface ProjectMapOpenPiPlan {
 	diagnostics: ProjectMapOpenPiDiagnostic[];
 }
 
+export interface ProjectMapOpenPiFallback {
+	decision: "offer" | "refuse";
+	argv: string[];
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	handoff: string;
+	sessionDir: string;
+	diagnostics: ProjectMapOpenPiDiagnostic[];
+}
+
+type ProjectMapOpenPiChild = {
+	pid?: number;
+	unref?: () => void;
+	once: (event: "spawn" | "error", listener: (error?: unknown) => void) => unknown;
+};
+type ProjectMapOpenPiSpawn = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; detached: boolean; stdio: "ignore"; windowsHide: boolean }) => ProjectMapOpenPiChild;
+type ProjectMapOpenPiMkdir = (path: string, options: { recursive: true }) => unknown;
+
 export function deriveProjectMapOpenPiSessionName(capabilityId: string): string {
 	return `project-map-open-pi-${capabilityId}`;
 }
@@ -160,6 +180,81 @@ export function planProjectMapOpenPi({
 		launcher: executable,
 		diagnostics,
 	};
+}
+
+/** Builds the explicitly selected runner fallback without weakening the readiness gate. */
+export function planProjectMapOpenPiFallback(plan: ProjectMapOpenPiPlan, {
+	sessionDir, extensionPaths = [], pi = piCommand(), exists = existsSync,
+}: {
+	sessionDir: string; extensionPaths?: string[]; pi?: ReturnType<typeof piCommand>; exists?: (path: string) => boolean;
+}): ProjectMapOpenPiFallback {
+	const readinessErrors = plan.readiness.diagnostics.filter((entry) => entry.severity === "error");
+	// A background child is a subagent child: it must never inherit the parent's
+	// interactive-host signal, which agents-runner also strips from every child.
+	const env = withoutInteractiveHost({ ...plan.env });
+	const sessionDirectoryDiagnostic = sessionDir.trim().length === 0 ? diagnostic("project-map-open-pi/session-dir-required", "A background subagent requires a session directory.") : null;
+	if (sessionDirectoryDiagnostic !== null || readinessErrors.some((entry) => entry.code !== "project-map-open-pi/host-unavailable")) {
+		return { decision: "refuse", argv: [], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, diagnostics: [...readinessErrors, ...(sessionDirectoryDiagnostic === null ? [] : [sessionDirectoryDiagnostic])] };
+	}
+	let parentSessionId = "";
+	try {
+		const identity = JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? "") as { parentSessionId?: unknown };
+		if (typeof identity.parentSessionId === "string") parentSessionId = identity.parentSessionId;
+	} catch {}
+	// The RPC handshake that normally delivers prompt is deliberately not reimplemented.
+	// The shared child contract opens rpc mode, and an rpc child is driven: with no driver
+	// it reads EOF on stdin and exits without running a turn (resolved against the real
+	// binary: `pi --mode rpc --no-tools "<prompt>" < /dev/null` exits 0 with no response,
+	// while `pi --print "<prompt>" < /dev/null` answers). A detached background child must
+	// run its own turn, so this plan replaces the mode pair with `--print` and appends the
+	// handoff as the one-shot message; every other flag still comes from childArguments.
+	const request: TaskRequest = {
+		prompt: plan.handoff, label: undefined, context: undefined, mode: "task", cwd: plan.cwd, parentSessionId,
+		model: undefined, thinking: undefined, sessionDir, resumeSessionPath: undefined, env, extensionPaths,
+		agent: { name: "project-map-open-pi", description: "Project Map Open Pi background launch", filePath: extensionPaths.find((path) => exists(path)) ?? "", scope: "project", instructions: plan.handoff, model: undefined, thinking: undefined, mode: undefined, tools: [] },
+	};
+	return { decision: "offer", argv: [pi.command, ...pi.args, ...oneShotPrintArguments(childArguments(request)), plan.handoff], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, diagnostics: [] };
+}
+
+/** Swaps the runner's driven rpc mode for pi's one-shot print mode; every other flag is untouched. */
+function oneShotPrintArguments(args: string[]): string[] {
+	return args[0] === "--mode" && args[1] === "rpc" ? ["--print", ...args.slice(2)] : args;
+}
+
+/**
+ * A spawn that succeeded synchronously can still fail asynchronously (missing
+ * executable, invalid cwd); without this wait the failure escapes as an
+ * uncaught child-process error after a "launch requested" report.
+ */
+async function settleProjectMapOpenPiChild(child: ProjectMapOpenPiChild, settleMs: number): Promise<{ spawned: boolean; error: string | null }> {
+	return await new Promise((resolve) => {
+		let settled = false;
+		const timer = setTimeout(() => finish(false, `the background runner did not report a spawn within ${settleMs}ms.`), settleMs);
+		function finish(spawned: boolean, error: string | null): void {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve({ spawned, error });
+		}
+		child.once("spawn", () => finish(true, null));
+		child.once("error", (error) => finish(false, error instanceof Error ? error.message : String(error)));
+	});
+}
+
+/** Executes an explicitly approved background fallback; a spawn ACK is not work confirmation. */
+export async function runProjectMapOpenPiFallback(fallback: ProjectMapOpenPiFallback, { spawn = nodeSpawn as unknown as ProjectMapOpenPiSpawn, mkdir = mkdirSync as unknown as ProjectMapOpenPiMkdir, settleMs = 2000 }: { spawn?: ProjectMapOpenPiSpawn; mkdir?: ProjectMapOpenPiMkdir; settleMs?: number } = {}): Promise<{ launched: boolean; pid: number | null; error: string | null }> {
+	if (fallback.decision === "refuse") return { launched: false, pid: null, error: null };
+	let child: ProjectMapOpenPiChild;
+	try {
+		mkdir(fallback.sessionDir, { recursive: true });
+		child = spawn(fallback.argv[0]!, fallback.argv.slice(1), { cwd: fallback.cwd, env: fallback.env, detached: true, stdio: "ignore", windowsHide: true });
+	} catch (error) {
+		return { launched: false, pid: null, error: error instanceof Error ? error.message : String(error) };
+	}
+	child.unref?.();
+	const settled = await settleProjectMapOpenPiChild(child, settleMs);
+	if (!settled.spawned) return { launched: false, pid: null, error: settled.error };
+	return { launched: true, pid: child.pid ?? null, error: null };
 }
 
 /** Starts exactly an already-approved plan; a tmux ACK is not work confirmation. */
