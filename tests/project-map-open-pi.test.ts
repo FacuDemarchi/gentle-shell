@@ -13,7 +13,8 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapCapabilityV1, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
-import { deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher, runProjectMapOpenPiFallback } from "../lib/project-map-open-pi.ts";
+import { serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
+import { awaitProjectMapOpenPiConfirmation, deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher, runProjectMapOpenPiFallback } from "../lib/project-map-open-pi.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
@@ -298,6 +299,53 @@ test("tmux adapter creates a detached session only in a temporary sandbox", (t) 
 		try { execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" }); } catch {}
 		rmSync(sandbox, { recursive: true, force: true });
 	}
+});
+
+function confirmationBinding(sessionId: string, workspaceRoot: string, boundAt: string, pid = process.pid): string {
+	const serialized = serializeProjectMapStoreValue("session-binding", { schema: "gentle-shell.project-map-store/v1", kind: "session-binding", session_id: sessionId, pid, incarnation: INCARNATION, workspace_root: workspaceRoot, bound_at: boundAt });
+	assert.ok(serialized.record);
+	return serialized.record;
+}
+
+function confirmationEntry(sessionId: string): string {
+	return `${createHash("sha256").update(sessionId).digest("hex")}.json`;
+}
+
+test("confirmation requires this child's fresh post-launch binding through injected readers", async () => {
+	const result = await awaitProjectMapOpenPiConfirmation({
+		root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => "2026-09-26T12:00:01.000Z",
+		readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"),
+		readHeartbeat: (() => ({ heartbeat: null, status: "fresh", diagnostics: [] })) as never,
+		sleep: async () => { throw new Error("a confirmed first attempt must not sleep"); },
+	});
+	assert.deepEqual(result, { confirmed: true, sessionId: "child", heartbeat: "fresh", observation: 'session "child" wrote its own binding for "/worktree" at 2026-09-26T12:00:00.001Z with a fresh heartbeat.', diagnostics: [] });
+});
+
+test("confirmation rejects stale, dead, foreign, and pre-launch evidence without sleeping at timeout", async () => {
+	let sleeps = 0, heartbeatReads = 0;
+	const records = new Map([
+		[confirmationEntry("stale"), confirmationBinding("stale", "/worktree", "2026-09-26T12:00:00.001Z")],
+		[confirmationEntry("dead"), confirmationBinding("dead", "/worktree", "2026-09-26T12:00:00.001Z", 999_999)],
+		[confirmationEntry("foreign"), confirmationBinding("foreign", "/other-worktree", "2026-09-26T12:00:00.001Z")],
+		[confirmationEntry("old"), confirmationBinding("old", "/worktree", "2026-09-26T11:59:59.999Z")],
+	]);
+	const result = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW,
+		readdir: () => [...records.keys()], readFile: (path) => records.get(path.slice(path.lastIndexOf("/") + 1))!,
+		readHeartbeat: (() => { heartbeatReads += 1; return { heartbeat: null, status: "stale", diagnostics: [] }; }) as never,
+		sleep: async () => { sleeps += 1; },
+	});
+	assert.deepEqual(result, { confirmed: false, sessionId: null, heartbeat: null, observation: 'no binding for "/worktree" written after 2026-09-26T12:00:00.000Z appeared within 0ms, so the child never proved it started.', diagnostics: [] });
+	assert.equal(heartbeatReads, 1); assert.equal(sleeps, 0);
+});
+
+test("confirmation reports corrupted records and treats a missing sessions directory as no evidence", async () => {
+	const corrupted = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: () => [confirmationEntry("bad")], readFile: () => "{ bad", readHeartbeat: (() => { throw new Error("corrupted bindings do not read heartbeats"); }) as never });
+	assert.equal(corrupted.confirmed, false); assert.ok(corrupted.diagnostics.some((entry) => entry.code === "project-map-store/invalid-json"));
+	// A parseable record whose bytes are not the store's canonical form is corrupted, not evidence.
+	const nonCanonical = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z").replace("{", "{ "), readHeartbeat: (() => { throw new Error("non-canonical bindings do not read heartbeats"); }) as never });
+	assert.equal(nonCanonical.confirmed, false); assert.ok(nonCanonical.diagnostics.some((entry) => entry.code === "project-map-store/store-corrupted"));
+	const missing = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: (() => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); }) as never });
+	assert.equal(missing.confirmed, false); assert.deepEqual(missing.diagnostics, []);
 });
 
 test("readiness names every readiness disqualifier", () => {

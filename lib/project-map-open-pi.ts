@@ -1,9 +1,12 @@
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readProjectMapCoordinationState } from "./project-map-coordination-state.ts";
 import { resolveProjectMapStoreRoot } from "./project-map-store-root.ts";
+import { projectMapStoreBindingProvesDead, readProjectMapStoreHeartbeat } from "./project-map-store-heartbeats.ts";
+import { parseProjectMapStoreValue, PROJECT_MAP_STORE_DIAGNOSTIC_CODES, serializeProjectMapStoreValue, type ProjectMapStoreSessionBindingV1 } from "./project-map-store-schema.ts";
 import { planProjectMapWorktree, type ProjectMapWorktreePlan } from "./project-map-worktrees.ts";
 import { withoutInteractiveHost } from "./rpc-host.ts";
 import { worktreeGitEnvironment } from "./session-worktree-registry.ts";
@@ -22,6 +25,64 @@ export interface ProjectMapOpenPiDiagnostic {
 	path: string;
 	message: string;
 	severity: "error" | "warning";
+}
+
+export interface ProjectMapOpenPiConfirmation {
+	confirmed: boolean;
+	sessionId: string | null;
+	heartbeat: "fresh" | "stale" | "missing" | "corrupted" | "unreadable" | null;
+	observation: string;
+	diagnostics: ProjectMapOpenPiDiagnostic[];
+}
+
+/** Observes durable child evidence without extending the launch command's lifetime. */
+export async function awaitProjectMapOpenPiConfirmation({
+	root, worktree, since, timeoutMs = 5000, pollMs = 250, now = () => new Date().toISOString(), sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), readdir = readdirSync, readFile = readFileSync, readHeartbeat = readProjectMapStoreHeartbeat,
+}: {
+	root: string; worktree: string; since: string; timeoutMs?: number; pollMs?: number;
+	now?: () => string; sleep?: (ms: number) => Promise<void>;
+	readdir?: (path: string) => string[]; readFile?: (path: string, encoding: "utf8") => string;
+	readHeartbeat?: typeof readProjectMapStoreHeartbeat;
+}): Promise<ProjectMapOpenPiConfirmation> {
+	const diagnostics: ProjectMapOpenPiDiagnostic[] = [];
+	const timeout = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 0;
+	const poll = Number.isFinite(pollMs) ? Math.max(1, pollMs) : 1;
+	const unconfirmed = (): ProjectMapOpenPiConfirmation => ({ confirmed: false, sessionId: null, heartbeat: null, observation: `no binding for "${worktree}" written after ${since} appeared within ${timeoutMs}ms, so the child never proved it started.`, diagnostics });
+	let remaining = timeout;
+	for (;;) {
+		let entries: string[] = [];
+		try { entries = readdir(join(root, "sessions")).sort(); }
+		catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session bindings could not be read: ${error instanceof Error ? error.message : String(error)}`));
+		}
+		let instant: string;
+		try { instant = now(); } catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `The observation clock failed: ${error instanceof Error ? error.message : String(error)}`)); return unconfirmed(); }
+		for (const entry of entries) {
+			let text: string, parsed: ReturnType<typeof parseProjectMapStoreValue>;
+			try { text = readFile(join(root, "sessions", entry), "utf8"); parsed = parseProjectMapStoreValue("session-binding", text); }
+			catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session binding "${entry}" could not be read: ${error instanceof Error ? error.message : String(error)}`)); continue; }
+			if (parsed.record === null) { appendUnique(diagnostics, parsed.diagnostics); continue; }
+			const binding = parsed.record as ProjectMapStoreSessionBindingV1;
+			try {
+				// The store's own readers treat a non-canonical record as corrupted, so a
+				// hand-edited file must not be able to confirm a launch.
+				const canonical = serializeProjectMapStoreValue("session-binding", binding);
+				if (canonical.record !== text || entry !== `${createHash("sha256").update(binding.session_id).digest("hex")}.json`) {
+					diagnostics.push(diagnostic(PROJECT_MAP_STORE_DIAGNOSTIC_CODES.STORE_CORRUPTED, `Session binding "${entry}" is not in canonical form, so it cannot confirm a launch.`));
+					continue;
+				}
+				if (projectMapStoreBindingProvesDead(binding) || resolve(binding.workspace_root) !== resolve(worktree) || binding.bound_at < since) continue;
+				const result = readHeartbeat({ root, sessionId: binding.session_id, now: instant });
+				appendUnique(diagnostics, result.diagnostics);
+				const heartbeat = result.status === "free" ? "missing" : result.status;
+				if (heartbeat === "fresh") return { confirmed: true, sessionId: binding.session_id, heartbeat, observation: `session "${binding.session_id}" wrote its own binding for "${worktree}" at ${binding.bound_at} with a fresh heartbeat.`, diagnostics };
+			} catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session binding "${entry}" could not be observed: ${error instanceof Error ? error.message : String(error)}`)); }
+		}
+		if (remaining <= 0) return unconfirmed();
+		const delay = Math.min(poll, remaining);
+		try { await sleep(delay); } catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Confirmation polling failed: ${error instanceof Error ? error.message : String(error)}`)); return unconfirmed(); }
+		remaining -= delay;
+	}
 }
 
 export interface ProjectMapOpenPiReadiness {

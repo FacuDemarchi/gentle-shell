@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import gentleProjectMap, { handleProjectMapOpenPiSessionStart, OPEN_PI_SUBAGENT_CHOICE, OPEN_PI_TMUX_CHOICE, openPiFallbackOfferTitle, openPiSubagentSessionDir, runProjectMapCommand, type ProjectMapCommandContext } from "../extensions/gentle-project-map.ts";
-import { planProjectMapOpenPi } from "../lib/project-map-open-pi.ts";
+import { awaitProjectMapOpenPiConfirmation, planProjectMapOpenPi } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import { agentRuntimePaths } from "../extensions/gentle-agents.ts";
 import { readProjectMapCoordinationState } from "../lib/project-map-coordination-state.ts";
@@ -176,6 +176,40 @@ test("the receiver is inert without launch identity and writes its child binding
 		const child = context(cwd, "child"); handleProjectMapOpenPiSessionStart(child.ctx, ENV, () => NOW);
 		assert.equal(readProjectMapStoreSessionBinding({ root: store, sessionId: "child" }).binding?.workspace_root, cwd); assert.equal(readProjectMapStoreSessionBinding({ root: store, sessionId: "child" }).binding?.session_id, "child"); assert.equal(readProjectMapStoreHeartbeat({ root: store, sessionId: "child", now: NOW }).heartbeat?.session_id, "child");
 		assert.equal(readProjectMapStoreSessionBinding({ root: store, sessionId: "parent" }).binding, null); assert.equal(readProjectMapCoordinationState({ root: store, mapPath: join(cwd, PROJECT_MAP_ARTIFACT_PATH), now: NOW }).satellites.find((claim) => claim.capabilityId === "catalog")?.sessionId, "parent");
+	});
+});
+
+test("open observes confirmation separately without changing its report or sandbox", async () => {
+	await withFixture(async ({ sandbox, cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		const confirmed = { confirmed: true, sessionId: "child", heartbeat: "fresh" as const, observation: 'session "child" wrote its own binding for "worktree" with a fresh heartbeat.', diagnostics: [] };
+		for (const [choice, label] of [[OPEN_PI_TMUX_CHOICE, "Pi launch"], [OPEN_PI_SUBAGENT_CHOICE, "Background subagent launch"]] as const) {
+			const open = context(cwd, "parent", [true], [choice]), before = snapshot(sandbox);
+			const report = await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), subagentLaunch: async () => ({ launched: true, pid: 1, error: null }), confirmLaunch: async () => confirmed });
+			await Promise.resolve(); await Promise.resolve(); assert.equal(report.diagnostics.length, 0); assert.ok(open.notified.includes(`${label} confirmed: ${confirmed.observation}`)); assert.deepEqual(snapshot(sandbox), before);
+			const requested = open.notified.findIndex((message) => message.includes("launch requested"));
+			assert.ok(requested >= 0 && open.notified.indexOf(`${label} confirmed: ${confirmed.observation}`) > requested, "the launch request is reported before its confirmation");
+		}
+		const unconfirmed = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		await runProjectMapCommand("open catalog", unconfirmed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => ({ confirmed: false, sessionId: null, heartbeat: null, observation: "the child never proved it started.", diagnostics: [] }) });
+		await Promise.resolve(); assert.ok(unconfirmed.notified.includes("Pi launch stayed unconfirmed: the child never proved it started.")); assert.equal(unconfirmed.notified.some((message) => message.includes("work began")), false);
+		const failed = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		await runProjectMapCommand("open catalog", failed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => { throw new Error("observation failed"); } });
+		await Promise.resolve(); assert.ok(failed.notified.includes("Pi launch observation failed: observation failed."));
+		const unavailable = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		await runProjectMapCommand("open catalog", unavailable.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => { renameSync(join(cwd, ".git"), join(cwd, ".git-hidden")); return { launched: true, error: null }; } });
+		renameSync(join(cwd, ".git-hidden"), join(cwd, ".git")); assert.ok(unavailable.notified.includes("Pi launch stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed."));
+		// The request must still be reported before the observation, even on the synchronous unavailable path.
+		assert.ok(unavailable.notified.findIndex((message) => message.includes("launch requested")) < unavailable.notified.indexOf("Pi launch stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed."));
+	});
+});
+
+test("confirmation defaults to the real heartbeat reader", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		handleProjectMapOpenPiSessionStart(context(cwd, "child").ctx, ENV, () => NOW);
+		const result = await awaitProjectMapOpenPiConfirmation({ root: store, worktree: cwd, since: NOW, now: () => NOW });
+		assert.equal(result.confirmed, true); assert.equal(result.sessionId, "child");
 	});
 });
 
