@@ -75,7 +75,7 @@ test("open offers explicit tmux or background choices and never silently falls b
 			assert.equal(open.confirmations.length, 1); assert.equal(launches.length, expected); assert.equal(subagents.length, 0);
 			assert.ok(open.confirmations[0]!.notified.includes(open.confirmations[0]!.message), "the plan is displayed before the confirmation");
 			assert.match(open.confirmations[0]!.message, /Decision: open/);
-			assert.match(open.confirmations[0]!.message, /Path: /);
+			assert.ok(open.confirmations[0]!.message.includes(`Path: ${deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path}`), "the plan shows the real worktree path");
 			assert.match(open.confirmations[0]!.message, /Attach: tmux attach-session -t project-map-open-pi-catalog/);
 		}
 	});
@@ -114,13 +114,29 @@ test("open offers background launch only after an affirmative host-unavailable c
 			await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; }, subagentSessionDir: () => "/sessions" });
 			assert.equal(open.confirmations.length, 1); assert.match(open.confirmations[0]!.title, /tmux is unavailable/); assert.equal(launches.length, 0); assert.equal(subagents.length, answer ? 1 : 0); assert.equal(open.notified.some((message) => message.includes("Pi launch requested")), false); if (!answer) assert.deepEqual(snapshot(sandbox), before);
 		}
-		const headless = context(cwd), headlessCtx = { ...headless.ctx, hasUI: false }, none: unknown[] = [];
+		const headless = context(cwd), headlessCtx = { ...headless.ctx, hasUI: false }, none: unknown[] = [], beforeHeadless = snapshot(sandbox);
 		await runProjectMapCommand("open catalog", headlessCtx, { now: () => new Date(NOW), host: { available: false, version: null }, launch: () => { throw new Error("must not launch"); }, subagentLaunch: async (fallback) => { none.push(fallback); return { launched: true, pid: 1, error: null }; } });
-		assert.equal(headless.confirmations.length, 0); assert.equal(none.length, 0); assert.ok(headless.notified.some((message) => message.includes("no UI")));
+		assert.equal(headless.confirmations.length, 0); assert.equal(none.length, 0); assert.ok(headless.notified.some((message) => message.includes("no UI"))); assert.deepEqual(snapshot(sandbox), beforeHeadless);
 		assert.equal(releaseProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).released, true);
-		const noClaim = context(cwd), blocked: unknown[] = [];
+		const noClaim = context(cwd), blocked: unknown[] = [], beforeNoClaim = snapshot(sandbox);
 		await runProjectMapCommand("open catalog", noClaim.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, subagentLaunch: async (fallback) => { blocked.push(fallback); return { launched: true, pid: 1, error: null }; } });
-		assert.equal(noClaim.confirmations.length, 0); assert.equal(blocked.length, 0); assert.ok(noClaim.notified.some((message) => message.includes("Opening Pi was refused.")));
+		assert.equal(noClaim.confirmations.length, 0); assert.equal(blocked.length, 0); assert.ok(noClaim.notified.some((message) => message.includes("Opening Pi was refused."))); assert.deepEqual(snapshot(sandbox), beforeNoClaim);
+	});
+});
+
+test("open reports a failed dialog instead of throwing when the UI rejects the prompt", async () => {
+	await withFixture(async ({ sandbox, cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
+		for (const kind of ["select", "confirm"] as const) {
+			const base = context(cwd), launches: unknown[] = [], subagents: unknown[] = [], before = snapshot(sandbox);
+			const rejected = async (): Promise<never> => { throw new Error("dialog closed"); };
+			const ctx: ProjectMapCommandContext = { ...base.ctx, ui: { ...base.ctx.ui, ...(kind === "select" ? { select: rejected } : { confirm: rejected }) } };
+			const report = await runProjectMapCommand("open catalog", ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: (plan) => { launches.push(plan); return { launched: true, error: null }; }, subagentLaunch: async (fallback) => { subagents.push(fallback); return { launched: true, pid: 1, error: null }; }, subagentSessionDir: () => "/sessions" });
+			assert.equal(report.diagnostics.length, 1); assert.match(report.diagnostics[0]!.message, /Opening Pi was not confirmed \(the (choice prompt|confirmation) failed\); nothing was launched\./);
+			assert.ok(base.notified.some((message) => message.includes("not confirmed")));
+			assert.equal(launches.length, 0); assert.equal(subagents.length, 0);
+			assert.deepEqual(snapshot(sandbox), before);
+		}
 	});
 });
 
