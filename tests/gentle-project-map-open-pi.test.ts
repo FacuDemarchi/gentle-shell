@@ -120,7 +120,7 @@ test("open offers background launch only after an affirmative host-unavailable c
 		assert.equal(releaseProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).released, true);
 		const noClaim = context(cwd), blocked: unknown[] = [], beforeNoClaim = snapshot(sandbox);
 		await runProjectMapCommand("open catalog", noClaim.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, subagentLaunch: async (fallback) => { blocked.push(fallback); return { launched: true, pid: 1, error: null }; } });
-		assert.equal(noClaim.confirmations.length, 0); assert.equal(blocked.length, 0); assert.ok(noClaim.notified.some((message) => message.includes("Opening Pi was refused."))); assert.deepEqual(snapshot(sandbox), beforeNoClaim);
+		assert.equal(noClaim.confirmations.length, 0); assert.equal(blocked.length, 0); assert.ok(noClaim.notified.some((message) => message.includes("Opening Pi was refused."))); assert.ok(noClaim.notified.some((message) => message.includes("project-map-store/worktree-claim-required"))); assert.deepEqual(snapshot(sandbox), beforeNoClaim);
 	});
 });
 
