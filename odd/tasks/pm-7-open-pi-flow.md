@@ -157,8 +157,23 @@ PM7-2 closure limit: the receiver's durable `session-binding` and `heartbeat` wr
 
 **PM7-4 records two limits and one debt.** `worktree-path-escapes` has no readiness-level fixture, because the derived worktree path cannot be inside the repository's common directory; PM-6's own suite pins that code at the layer that can reach it. The worktree comparison is lexical (`resolve`), so a symlinked alias of the same worktree stays unconfirmed rather than wrongly confirmed. The debt: `confirmed` on the tmux path cannot distinguish *this* launch's child from another live session that binds the same worktree inside the window, because a launch nonce would need a field in the `session-binding` schema; PM-8 already owns a schema-growth decision and owns deciding this one.
 
+## Native review pass (closed 2026-09-26)
+
+**PM-7 is complete as a unit, including its deferred native review pass.** All four candidates were approved with their authority burned, each one reviewed from a worktree pinned at its own tip with `baseRef` set to the previous slice's tip, with RDD enabled for the pass and returned to `off` afterwards.
+
+| Slice | Candidate range | Lineage | Outcome | Advisory findings |
+|---|---|---|---|---|
+| PM7-1 | `44096896..5cae623d` | `review-acf83d5f5f9353d6` | approved, burned | 1 |
+| PM7-2 | `5cae623d..d53d34ab` | `review-ddc56437f14018d4` | approved, burned | 4 |
+| PM7-3 | `d53d34ab..45da3471` | `review-250a8c717f694672` | approved, burned | 1 |
+| PM7-4 | `45da3471..6b9e87f1` | `review-34e872a914418e22` | approved, burned | 3 |
+
+No correction round was opened: every closure is `approved`, and the nine findings are non-blocking informational advisories — `R3-001` in PM7-1; `R2-001`, `R3-001`, `R3-002` and `R4-child-environment` in PM7-2; `R4-001` in PM7-3; `R2-001`, `R3-001` and `R4-hidden-observation-errors` in PM7-4. They are later work against those files, never a reason to re-run a closed candidate.
+
+The pass changed no code: the reviewed tip is `6b9e87f1`, identical to the delivered unit. Each candidate's review tree was removed and its branch deleted after acknowledgement; the acknowledgements stay local under `.git/gentle-ai` by design.
+
 ## Next decision
 
-**PM-7 is complete as a unit**: PM7-1 through PM7-4 are delivered, measured and documented. The next work is the **deferred native review pass** over the unit, one candidate per slice, from a worktree pinned at that slice's tip with `baseRef` set to the previous slice's tip — PM7-1 `44096896..5cae623d`, PM7-2 `5cae623d..d53d34ab`, PM7-3 `d53d34ab..45da3471`, PM7-4 `45da3471..<tip>` — with RDD enabled for the pass and returned to `off` afterwards.
+**PM-7 is closed.** The next unit in the user's ratified order is the **orchestrator session-tab layer**, whose four product decisions are already settled and which consumes only data PM-7 already produces (the capability identity of a `session-binding` and the declared coverage surfaces of the map). As a consequence, the PM-7 handoff needed no new field for the tabs, and no tab decision blocked this unit. **PM-8** (integration-readiness sequencing) comes after it and owns two schema-growth decisions recorded by this unit: per-capability verification requirements, and a launch nonce for exact tmux identity.
 
 The readiness coverage limits recorded under PM7-2 remain open and are carried into PM-8 rather than closed here: no stale-claim fixture, no lead-held-claim allowance fixture, no separate nested-repository / foreign-clone / path-escape cases, and no test of the returned `claim` field when the lead holds the claim. PM7-3 added the `unprovisioned worktree` and `other claim` cases to the disqualifier table but did not close those four.
