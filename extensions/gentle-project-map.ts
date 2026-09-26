@@ -484,28 +484,35 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		const askOnce = async <T>(ask: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
 			try { return { ok: true, value: await ask() }; } catch { return { ok: false }; }
 		};
+		// A notification failure must never reject the detached observation.
+		const safeNotify = (message: string): void => { try { ctx.ui.notify(message); } catch { /* the report is already returned; a lost notification changes nothing */ } };
 		// This stays detached: waiting for a child boot would freeze the command surface for an unbounded time.
-		const observeLaunch = async (label: string, instant: string): Promise<void> => {
+		const observeLaunch = async (label: string, instant: string, expectedPid: number | null): Promise<void> => {
 			try {
 				await Promise.resolve();
 				const root = resolveProjectMapStoreRoot(ctx.cwd);
-				if (root.root === null) { ctx.ui.notify(`${label} stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed.`); return; }
-				const confirmation = await (options.confirmLaunch ?? awaitProjectMapOpenPiConfirmation)({ root: root.root, worktree: plan.cwd, since: instant, timeoutMs: options.confirmTimeoutMs });
-				ctx.ui.notify(confirmation.confirmed ? `${label} confirmed: ${confirmation.observation}` : `${label} stayed unconfirmed: ${confirmation.observation}`);
-			} catch (error) { ctx.ui.notify(`${label} observation failed: ${error instanceof Error ? error.message : String(error)}.`); }
+				if (root.root === null) { safeNotify(`${label} stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed.`); return; }
+				const confirmation = await (options.confirmLaunch ?? awaitProjectMapOpenPiConfirmation)({ root: root.root, worktree: plan.cwd, since: instant, expectedPid, timeoutMs: options.confirmTimeoutMs });
+				safeNotify(confirmation.confirmed ? `${label} confirmed: ${confirmation.observation}` : `${label} stayed unconfirmed: ${confirmation.observation}`);
+			} catch (error) { safeNotify(`${label} observation failed: ${error instanceof Error ? error.message : String(error)}.`); }
 		};
 		const launchTmux = () => {
 			const instant = now().toISOString();
-			const launched = (options.launch ?? openProjectMapPi)(plan);
+			let launched: { launched: boolean; error: string | null };
+			try { launched = (options.launch ?? openProjectMapPi)(plan); }
+			catch (error) { launched = { launched: false, error: error instanceof Error ? error.message : String(error) }; }
 			if (!launched.launched) { const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
-			void observeLaunch("Pi launch", instant);
+			// The tmux wrapper does not expose the launched child's pid, so the observation identifies the worktree.
+			void observeLaunch("Pi launch", instant, null);
 			ctx.ui.notify("Pi launch requested; work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
 		};
 		const launchSubagent = async () => {
 			const instant = now().toISOString();
-			const launched = await (options.subagentLaunch ?? runProjectMapOpenPiFallback)(fallback);
+			let launched: { launched: boolean; pid: number | null; error: string | null };
+			try { launched = await (options.subagentLaunch ?? runProjectMapOpenPiFallback)(fallback); }
+			catch (error) { launched = { launched: false, pid: null, error: error instanceof Error ? error.message : String(error) }; }
 			if (!launched.launched) { const failure = refusal(`Background subagent launch failed: ${launched.error ?? "the runner did not start"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
-			void observeLaunch("Background subagent launch", instant);
+			void observeLaunch("Background subagent launch", instant, launched.pid);
 			ctx.ui.notify("Background subagent launch requested; this is a separate lifecycle from an interactive session, and work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
 		};
 		if (plan.decision === "open") {

@@ -184,9 +184,12 @@ test("open observes confirmation separately without changing its report or sandb
 		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "parent", now: NOW }).claim);
 		const confirmed = { confirmed: true, sessionId: "child", heartbeat: "fresh" as const, observation: 'session "child" wrote its own binding for "worktree" with a fresh heartbeat.', diagnostics: [] };
 		for (const [choice, label] of [[OPEN_PI_TMUX_CHOICE, "Pi launch"], [OPEN_PI_SUBAGENT_CHOICE, "Background subagent launch"]] as const) {
-			const open = context(cwd, "parent", [true], [choice]), before = snapshot(sandbox);
-			const report = await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), subagentLaunch: async () => ({ launched: true, pid: 1, error: null }), confirmLaunch: async () => confirmed });
+			const open = context(cwd, "parent", [true], [choice]), before = snapshot(sandbox), observed: Array<{ worktree: string; since: string; expectedPid: number | null }> = [];
+			const report = await runProjectMapCommand("open catalog", open.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), subagentLaunch: async () => ({ launched: true, pid: 1, error: null }), confirmLaunch: async (options) => { observed.push({ worktree: options.worktree, since: options.since, expectedPid: options.expectedPid ?? null }); return confirmed; } });
 			await Promise.resolve(); await Promise.resolve(); assert.equal(report.diagnostics.length, 0); assert.ok(open.notified.includes(`${label} confirmed: ${confirmed.observation}`)); assert.deepEqual(snapshot(sandbox), before);
+			// The observation must target this launch: its instant, the capability worktree, and the child pid only where the host exposes one.
+			assert.equal(observed.length, 1); assert.equal(observed[0]!.since, NOW); assert.match(observed[0]!.worktree, /catalog$/);
+			assert.equal(observed[0]!.expectedPid, choice === OPEN_PI_TMUX_CHOICE ? null : 1);
 			const requested = open.notified.findIndex((message) => message.includes("launch requested"));
 			assert.ok(requested >= 0 && open.notified.indexOf(`${label} confirmed: ${confirmed.observation}`) > requested, "the launch request is reported before its confirmation");
 		}
@@ -194,8 +197,19 @@ test("open observes confirmation separately without changing its report or sandb
 		await runProjectMapCommand("open catalog", unconfirmed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => ({ confirmed: false, sessionId: null, heartbeat: null, observation: "the child never proved it started.", diagnostics: [] }) });
 		await Promise.resolve(); assert.ok(unconfirmed.notified.includes("Pi launch stayed unconfirmed: the child never proved it started.")); assert.equal(unconfirmed.notified.some((message) => message.includes("work began")), false);
 		const failed = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
-		await runProjectMapCommand("open catalog", failed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => { throw new Error("observation failed"); } });
-		await Promise.resolve(); assert.ok(failed.notified.includes("Pi launch observation failed: observation failed."));
+		await runProjectMapCommand("open catalog", failed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => { throw new Error("host exploded"); }, confirmLaunch: async () => confirmed });
+		assert.ok(failed.notified.some((message) => message.includes("Pi launch failed: host exploded."))); assert.equal(failed.notified.some((message) => message.includes("Pi launch requested")), false);
+		const rejectedFallback = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		const rejectedReport = await runProjectMapCommand("open catalog", rejectedFallback.ctx, { now: () => new Date(NOW), host: { available: false, version: null }, subagentLaunch: async () => { throw new Error("runner exploded"); } });
+		assert.ok(rejectedFallback.notified.some((message) => message.includes("Background subagent launch failed: runner exploded."))); assert.equal(rejectedReport.diagnostics.length, 1);
+		const observerFailed = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		await runProjectMapCommand("open catalog", observerFailed.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => { throw new Error("observation failed"); } });
+		await Promise.resolve(); assert.ok(observerFailed.notified.includes("Pi launch observation failed: observation failed."));
+		// A notification that fails while reporting an observation must not reject the detached promise.
+		const hostileUi = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
+		const throwingCtx: ProjectMapCommandContext = { ...hostileUi.ctx, ui: { ...hostileUi.ctx.ui, notify: (message) => { if (message.includes("observation failed")) throw new Error("notify exploded"); hostileUi.notified.push(message); } } };
+		await runProjectMapCommand("open catalog", throwingCtx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => ({ launched: true, error: null }), confirmLaunch: async () => { throw new Error("observation failed"); } });
+		await Promise.resolve(); await Promise.resolve();
 		const unavailable = context(cwd, "parent", [true], [OPEN_PI_TMUX_CHOICE]);
 		await runProjectMapCommand("open catalog", unavailable.ctx, { now: () => new Date(NOW), host: { available: true, version: "tmux test" }, launch: () => { renameSync(join(cwd, ".git"), join(cwd, ".git-hidden")); return { launched: true, error: null }; } });
 		renameSync(join(cwd, ".git-hidden"), join(cwd, ".git")); assert.ok(unavailable.notified.includes("Pi launch stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed."));

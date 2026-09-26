@@ -12,6 +12,7 @@ import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
+import { PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapCapabilityV1, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
 import { serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
 import { awaitProjectMapOpenPiConfirmation, deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher, runProjectMapOpenPiFallback } from "../lib/project-map-open-pi.ts";
@@ -163,7 +164,7 @@ test("plans a named detached tmux session, attach command, and structured handof
 		assert.equal(plan.decision, "open");
 		assert.equal(plan.sessionName, "project-map-open-pi-catalog");
 		assert.deepEqual(plan.attachCommand, ["tmux", "attach-session", "-t", plan.sessionName]);
-		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
+		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" })}`, "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
 		assert.equal(plan.cwd, plan.readiness.worktree.inspection.identity.path);
 		assert.deepEqual(JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? ""), { capabilityId: "catalog", parentSessionId: "session-a" });
 		assert.equal(plan.handoff, [
@@ -177,6 +178,42 @@ test("plans a named detached tmux session, attach command, and structured handof
 			"Parent session: session-a",
 			"Verification requirements: not declared by the map.",
 		].join("\n"));
+	});
+});
+
+test("the launch paths feed only non-destructive commands to their executors", async () => {
+	await withAsyncFixture(async ({ cwd, store }) => {
+		claim(store);
+		const planned = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		const fallback = planProjectMapOpenPiFallback(planned, { sessionDir: "/sessions" });
+		// The unit launches; it never delivers. These are the exact values handed to the executors.
+		const forbidden = ["commit", "push", "pull-request", "merge", "branch", "worktree", "rm", "reset", "clean", "--force", "-D"];
+		for (const argv of [planned.argv, fallback.argv]) for (const token of forbidden) assert.equal(argv.includes(token), false, `${token} must not appear in ${JSON.stringify(argv)}`);
+		assert.equal(planned.argv[0], "tmux"); assert.equal(planned.argv[1], "new-session");
+		const spawned: string[][] = [];
+		await runProjectMapOpenPiFallback(fallback, { mkdir: (() => {}) as never, spawn: ((command: string, args: string[]) => { spawned.push([command, ...args]); return { pid: 1, once: (event: string, listener: () => void) => { if (event === "spawn") listener(); } }; }) as never });
+		assert.equal(spawned.length, 1);
+		for (const token of forbidden) assert.equal(spawned[0]!.includes(token), false, `${token} must not be spawned`);
+	});
+});
+
+test("the tmux session receives the launch identity in its own environment", (t) => {
+	if (!probeProjectMapOpenPiHost({ env: process.env, timeoutMs: 1000 }).available) return t.skip("tmux is not installed");
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		// Run the real plan's own -e argument against a real tmux server: tmux does not forward new
+		// client variables on its own, so this fails if the identity travels by environment alone.
+		const name = `project-map-open-pi-identity-${process.pid}`;
+		try {
+			const opened = openProjectMapPi({ ...plan, argv: [...plan.argv.slice(0, 5), "-s", name, "-c", cwd, "sleep", "20"] });
+			assert.equal(opened.launched, true);
+			// The session environment is set when the session is created, so this needs no waiting.
+			const value = String(execFileSync("tmux", ["show-environment", "-t", name, PROJECT_MAP_OPEN_PI_ENV], { encoding: "utf8" })).trim();
+			assert.equal(value, `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" })}`);
+		} finally {
+			try { execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" }); } catch {}
+		}
 	});
 });
 
@@ -312,13 +349,23 @@ function confirmationEntry(sessionId: string): string {
 }
 
 test("confirmation requires this child's fresh post-launch binding through injected readers", async () => {
+	const freshBinding = { heartbeat: { session_id: "child", pid: process.pid, incarnation: INCARNATION, beat_at: "2026-09-26T12:00:00.001Z" }, status: "fresh", diagnostics: [] };
 	const result = await awaitProjectMapOpenPiConfirmation({
 		root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => "2026-09-26T12:00:01.000Z",
 		readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"),
-		readHeartbeat: (() => ({ heartbeat: null, status: "fresh", diagnostics: [] })) as never,
+		readHeartbeat: (() => freshBinding) as never,
 		sleep: async () => { throw new Error("a confirmed first attempt must not sleep"); },
 	});
-	assert.deepEqual(result, { confirmed: true, sessionId: "child", heartbeat: "fresh", observation: 'session "child" wrote its own binding for "/worktree" at 2026-09-26T12:00:00.001Z with a fresh heartbeat.', diagnostics: [] });
+	assert.deepEqual(result, { confirmed: true, sessionId: "child", heartbeat: "fresh", observation: `session "child" (pid ${process.pid}) wrote its own binding for "/worktree" at 2026-09-26T12:00:00.001Z with a fresh heartbeat, and this identifies the capability worktree rather than the exact child, because this host does not expose the launched child's pid.`, diagnostics: [] });
+	// With the launched child's pid known, the same evidence says so and requires the match.
+	const matched = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, expectedPid: process.pid, timeoutMs: 0, now: () => NOW, readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"), readHeartbeat: (() => freshBinding) as never });
+	assert.equal(matched.confirmed, true); assert.match(matched.observation, /matches the child this launch started/);
+	// A permissive heartbeat keeps the pid filter the only reason this cannot confirm.
+	const otherPid = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, expectedPid: 4242, timeoutMs: 0, now: () => NOW, readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"), readHeartbeat: (() => freshBinding) as never });
+	assert.equal(otherPid.confirmed, false);
+	// A fresh heartbeat belonging to a different process is a mixed pair, not evidence.
+	const mixed = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: () => [confirmationEntry("child")], readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"), readHeartbeat: (() => ({ heartbeat: { session_id: "child", pid: 4242, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] })) as never });
+	assert.equal(mixed.confirmed, false);
 });
 
 test("confirmation rejects stale, dead, foreign, and pre-launch evidence without sleeping at timeout", async () => {
@@ -334,8 +381,14 @@ test("confirmation rejects stale, dead, foreign, and pre-launch evidence without
 		readHeartbeat: (() => { heartbeatReads += 1; return { heartbeat: null, status: "stale", diagnostics: [] }; }) as never,
 		sleep: async () => { sleeps += 1; },
 	});
-	assert.deepEqual(result, { confirmed: false, sessionId: null, heartbeat: null, observation: 'no binding for "/worktree" written after 2026-09-26T12:00:00.000Z appeared within 0ms, so the child never proved it started.', diagnostics: [] });
+	assert.deepEqual(result, { confirmed: false, sessionId: null, heartbeat: null, observation: 'no binding for "/worktree" written at or after 2026-09-26T12:00:00.000Z was observed during 0ms of polling, so the child never proved it started.', diagnostics: [] });
 	assert.equal(heartbeatReads, 1); assert.equal(sleeps, 0);
+	// An offset spelling that is earlier than the launch must not pass as post-launch evidence,
+	// even with a permissive fresh heartbeat, so the instant comparison is the only filter here.
+	const offset = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: "2026-09-26T12:00:00.000Z", timeoutMs: 0, now: () => NOW,
+		readdir: () => [confirmationEntry("offset")], readFile: () => confirmationBinding("offset", "/worktree", "2026-09-26T13:00:00+02:00"),
+		readHeartbeat: (() => ({ heartbeat: { session_id: "offset", pid: process.pid, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] })) as never });
+	assert.equal(offset.confirmed, false);
 });
 
 test("confirmation reports corrupted records and treats a missing sessions directory as no evidence", async () => {
@@ -346,6 +399,36 @@ test("confirmation reports corrupted records and treats a missing sessions direc
 	assert.equal(nonCanonical.confirmed, false); assert.ok(nonCanonical.diagnostics.some((entry) => entry.code === "project-map-store/store-corrupted"));
 	const missing = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: (() => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); }) as never });
 	assert.equal(missing.confirmed, false); assert.deepEqual(missing.diagnostics, []);
+	// A reader that fails without an error object must still be contained.
+	const thrownNull = await awaitProjectMapOpenPiConfirmation({ root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW, readdir: (() => { throw null; }) as never });
+	assert.equal(thrownNull.confirmed, false); assert.ok(thrownNull.diagnostics.some((entry) => entry.code === "project-map-open-pi/confirmation-unreadable"));
+});
+
+test("readiness refuses a target nested inside another repository and forwards the boundary code", () => {
+	// No provisioned worktree here: the target must be a plain directory inside another repository.
+	withFixture(({ cwd, store }) => {
+		claim(store);
+		const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path;
+		// A repository at the worktree base makes the derived target a subdirectory of another working tree, and its
+		// common directory is a different clone, so both boundary refusals are forwarded by readiness unchanged.
+		execFileSync("git", ["init", "--initial-branch=main", dirname(target)], { stdio: "ignore" });
+		mkdirSync(target, { recursive: true }); writeFileSync(join(target, "occupied"), "x");
+		const result = readiness(cwd);
+		assert.equal(result.permitted, false);
+		assert.ok(result.diagnostics.some((entry) => entry.code === "project-map-store/worktree-nested-repository"), result.diagnostics.map((entry) => entry.code).join(","));
+		assert.ok(result.diagnostics.some((entry) => entry.code === "project-map-store/worktree-foreign-clone"), result.diagnostics.map((entry) => entry.code).join(","));
+	}, projectMap(), false);
+});
+
+test("readiness permits the live lead to open a capability claimed by another session and reports the claim owner", () => {
+	withFixture(({ cwd, store }) => {
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "session-b", now: NOW }).claim);
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId: "session-a", now: NOW }).claim);
+		const result = readiness(cwd);
+		assert.equal(result.permitted, true, result.diagnostics.map((entry) => `${entry.code}: ${entry.message}`).join("\n"));
+		assert.equal(result.claim?.sessionId, "session-b");
+		assert.equal(result.claim?.status, "live");
+	});
 });
 
 test("readiness names every readiness disqualifier", () => {
@@ -356,6 +439,7 @@ test("readiness names every readiness disqualifier", () => {
 		{ name: "open blocker", prepare: ({ store }) => { claim(store); raiseProjectMapStoreBlocker({ root: store, capabilityId: "catalog", blockerId: "blocker", owner: "test", reason: "Blocked", sessionId: "session-a", now: NOW }); }, code: "project-map-open-pi/open-blocker" },
 		{ name: "proposed contract", prepare: ({ store }) => { claim(store); assert.ok(proposeProjectMapContract({ root: store, capabilityId: "catalog", contractId: "contract", title: "Contract", digest: `sha256:${"a".repeat(64)}`, sessionId: "session-a", now: NOW }).contract); }, code: "project-map-open-pi/proposed-contract" },
 		{ name: "missing live claim", code: "project-map-store/worktree-claim-required" },
+		{ name: "stale claim", prepare: ({ store }) => { assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "session-a", now: "2026-09-20T00:00:00.000Z" }).claim); }, code: "project-map-store/worktree-claim-required" },
 		{ name: "unprovisioned worktree", prepare: ({ store }) => claim(store), code: "project-map-open-pi/worktree-not-provisioned" },
 		{ name: "other claim", prepare: ({ store }) => claim(store, "catalog", "session-b"), code: "project-map-store/claim-held" },
 		{ name: "refused worktree", prepare: ({ cwd, store }) => { claim(store); const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path; mkdirSync(target, { recursive: true }); writeFileSync(join(target, "occupied"), "x"); }, code: "project-map-store/worktree-target-not-empty" },
