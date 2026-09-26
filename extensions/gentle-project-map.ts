@@ -17,7 +17,7 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
-import { openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
+import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
@@ -140,6 +140,8 @@ export interface ProjectMapCommandOptions {
 	launch?: typeof openProjectMapPi;
 	subagentLaunch?: typeof runProjectMapOpenPiFallback;
 	subagentSessionDir?: (env: NodeJS.ProcessEnv) => string;
+	confirmLaunch?: typeof awaitProjectMapOpenPiConfirmation;
+	confirmTimeoutMs?: number;
 }
 
 export interface ProjectMapSubActionParse {
@@ -482,14 +484,28 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		const askOnce = async <T>(ask: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false }> => {
 			try { return { ok: true, value: await ask() }; } catch { return { ok: false }; }
 		};
+		// This stays detached: waiting for a child boot would freeze the command surface for an unbounded time.
+		const observeLaunch = async (label: string, instant: string): Promise<void> => {
+			try {
+				await Promise.resolve();
+				const root = resolveProjectMapStoreRoot(ctx.cwd);
+				if (root.root === null) { ctx.ui.notify(`${label} stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed.`); return; }
+				const confirmation = await (options.confirmLaunch ?? awaitProjectMapOpenPiConfirmation)({ root: root.root, worktree: plan.cwd, since: instant, timeoutMs: options.confirmTimeoutMs });
+				ctx.ui.notify(confirmation.confirmed ? `${label} confirmed: ${confirmation.observation}` : `${label} stayed unconfirmed: ${confirmation.observation}`);
+			} catch (error) { ctx.ui.notify(`${label} observation failed: ${error instanceof Error ? error.message : String(error)}.`); }
+		};
 		const launchTmux = () => {
+			const instant = now().toISOString();
 			const launched = (options.launch ?? openProjectMapPi)(plan);
 			if (!launched.launched) { const failure = refusal(`Pi launch failed: ${launched.error ?? "the host did not acknowledge the request"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
+			void observeLaunch("Pi launch", instant);
 			ctx.ui.notify("Pi launch requested; work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
 		};
 		const launchSubagent = async () => {
+			const instant = now().toISOString();
 			const launched = await (options.subagentLaunch ?? runProjectMapOpenPiFallback)(fallback);
 			if (!launched.launched) { const failure = refusal(`Background subagent launch failed: ${launched.error ?? "the runner did not start"}.`); ctx.ui.notify(failure.message); return emptyReport("open", [failure]); }
+			void observeLaunch("Background subagent launch", instant);
 			ctx.ui.notify("Background subagent launch requested; this is a separate lifecycle from an interactive session, and work is not confirmed until the child writes its own binding or heartbeat."); return emptyReport("open");
 		};
 		if (plan.decision === "open") {
