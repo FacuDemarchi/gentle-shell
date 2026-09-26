@@ -13,7 +13,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapCapabilityV1, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
-import { deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher } from "../lib/project-map-open-pi.ts";
+import { deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher, runProjectMapOpenPiFallback } from "../lib/project-map-open-pi.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
@@ -37,25 +37,43 @@ function snapshot(root: string, relative = ""): Array<{ path: string; bytes: str
 	return entries;
 }
 
-function withFixture(run: (fixture: { sandbox: string; cwd: string; store: string; git: (args: string[]) => string }) => void, map = projectMap()): void {
+type OpenPiFixture = { sandbox: string; cwd: string; store: string; git: (args: string[]) => string };
+
+function setupFixture(map = projectMap()): { fixture: OpenPiFixture; cleanup: () => void } {
 	const sandbox = mkdtempSync(join(tmpdir(), "project-map-open-pi-"));
+	const cwd = join(sandbox, "main");
+	const empty = join(sandbox, "empty");
+	mkdirSync(empty);
+	const env = { ...process.env, GIT_CONFIG_GLOBAL: join(empty, "config"), GIT_CONFIG_NOSYSTEM: "1", GIT_ATTR_NOSYSTEM: "1" };
+	writeFileSync(join(empty, "config"), "", "utf8");
+	execFileSync("git", ["init", "--initial-branch=main", cwd], { env, stdio: "ignore" });
+	const git = (args: string[]) => String(execFileSync("git", ["-C", cwd, "-c", `core.hooksPath=${empty}`, "-c", "commit.gpgsign=false", ...args], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+	git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture"]);
+	mkdirSync(dirname(join(cwd, PROJECT_MAP_ARTIFACT_PATH)), { recursive: true });
+	writeFileSync(join(cwd, PROJECT_MAP_ARTIFACT_PATH), serializeProjectMap(map), "utf8");
+	const resolved = resolveProjectMapStoreRoot(cwd);
+	assert.ok(resolved.root && resolved.repositoryId, resolved.diagnostics.map((entry) => entry.message).join("\n"));
+	mkdirSync(resolved.root, { recursive: true, mode: 0o700 });
+	assert.ok(initializeProjectMapStore({ root: resolved.root, repositoryId: resolved.repositoryId, epoch: EPOCH, now: NOW }).descriptor);
+	return { fixture: { sandbox, cwd, store: resolved.root, git }, cleanup: () => rmSync(sandbox, { recursive: true, force: true }) };
+}
+
+function withFixture(run: (fixture: OpenPiFixture) => void, map = projectMap()): void {
+	let cleanup = (): void => {};
 	try {
-		const cwd = join(sandbox, "main");
-		const empty = join(sandbox, "empty");
-		mkdirSync(empty);
-		const env = { ...process.env, GIT_CONFIG_GLOBAL: join(empty, "config"), GIT_CONFIG_NOSYSTEM: "1", GIT_ATTR_NOSYSTEM: "1" };
-		writeFileSync(join(empty, "config"), "", "utf8");
-		execFileSync("git", ["init", "--initial-branch=main", cwd], { env, stdio: "ignore" });
-		const git = (args: string[]) => String(execFileSync("git", ["-C", cwd, "-c", `core.hooksPath=${empty}`, "-c", "commit.gpgsign=false", ...args], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
-		git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture"]);
-		mkdirSync(dirname(join(cwd, PROJECT_MAP_ARTIFACT_PATH)), { recursive: true });
-		writeFileSync(join(cwd, PROJECT_MAP_ARTIFACT_PATH), serializeProjectMap(map), "utf8");
-		const resolved = resolveProjectMapStoreRoot(cwd);
-		assert.ok(resolved.root && resolved.repositoryId, resolved.diagnostics.map((entry) => entry.message).join("\n"));
-		mkdirSync(resolved.root, { recursive: true, mode: 0o700 });
-		assert.ok(initializeProjectMapStore({ root: resolved.root, repositoryId: resolved.repositoryId, epoch: EPOCH, now: NOW }).descriptor);
-		run({ sandbox, cwd, store: resolved.root, git });
-	} finally { rmSync(sandbox, { recursive: true, force: true }); }
+		const setup = setupFixture(map);
+		cleanup = setup.cleanup;
+		run(setup.fixture);
+	} finally { cleanup(); }
+}
+
+async function withAsyncFixture(run: (fixture: OpenPiFixture) => Promise<void>, map = projectMap()): Promise<void> {
+	let cleanup = (): void => {};
+	try {
+		const setup = setupFixture(map);
+		cleanup = setup.cleanup;
+		await run(setup.fixture);
+	} finally { cleanup(); }
 }
 
 function claim(store: string, capabilityId = "catalog", sessionId = "session-a"): void {
@@ -82,6 +100,10 @@ test("probe reports available, absent, timeout, and unexpected tmux results thro
 		const unavailable = probeProjectMapOpenPiHost({ env: {}, timeoutMs: 123, run: (() => { throw error; }) as typeof execFileSync });
 		assert.deepEqual(unavailable, { available: false, version: null });
 	}
+});
+
+test("probe availability remains deterministic through an injected tmux runner", () => {
+	assert.deepEqual(probeProjectMapOpenPiHost({ env: {}, timeoutMs: 1, run: (() => "tmux 3.6\n") as unknown as typeof execFileSync }), { available: true, version: "tmux 3.6" });
 });
 
 test("probe runs tmux -V when tmux is installed", (t) => {
@@ -195,6 +217,68 @@ test("executes only an open plan's argv and refuses never launches", () => {
 		assert.equal(openProjectMapPi(refused, (() => { refusedCalls += 1; return ""; }) as unknown as typeof execFileSync).launched, false);
 		assert.equal(refusedCalls, 0, "a refusal never reaches the spawner");
 	});
+});
+
+test("fallback plans only around the host gate and executes its planned argv without a real process", async () => {
+	await withAsyncFixture(async ({ cwd, store }) => {
+		claim(store);
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: { available: false, version: null } });
+		const fallback = planProjectMapOpenPiFallback(plan, { sessionDir: "/sessions", extensionPaths: ["/extension.ts"], pi: { command: "/pi", args: ["/cli.js"] }, exists: () => true });
+		assert.equal(fallback.decision, "offer"); assert.equal(fallback.cwd, plan.cwd); assert.equal(fallback.handoff, plan.handoff); assert.deepEqual(JSON.parse(fallback.env[PROJECT_MAP_OPEN_PI_ENV] ?? ""), { capabilityId: "catalog", parentSessionId: "session-a" }); assert.deepEqual(fallback.diagnostics, []);
+		assert.deepEqual(fallback.argv, ["/pi", "/cli.js", "--print", "--session-dir", "/sessions", "--extension", "/extension.ts", "--append-system-prompt", plan.handoff, plan.handoff]);
+		const ready = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		assert.equal(planProjectMapOpenPiFallback(ready, { sessionDir: "/sessions" }).decision, "offer");
+		const refused = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: { available: false, version: null } });
+		// A live claim held by another session is a non-host readiness denial.
+		const noClaim = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-b", now: NOW, host: { available: false, version: null } });
+		const denied = planProjectMapOpenPiFallback(noClaim, { sessionDir: "/sessions" });
+		assert.equal(denied.decision, "refuse"); assert.ok(denied.diagnostics.some((entry) => entry.code !== "project-map-open-pi/host-unavailable"));
+		assert.ok(planProjectMapOpenPiFallback(refused, { sessionDir: " " }).diagnostics.some((entry) => entry.code === "project-map-open-pi/session-dir-required"));
+		const transport = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST, launcher: null, sessionExists: () => true });
+		assert.equal(planProjectMapOpenPiFallback(transport, { sessionDir: "/sessions" }).decision, "offer");
+		let mkdirs = 0, spawns = 0, unrefs = 0;
+		assert.deepEqual(await runProjectMapOpenPiFallback(denied, { mkdir: (() => { mkdirs += 1; }) as never, spawn: (() => { spawns += 1; return {}; }) as never }), { launched: false, pid: null, error: null });
+		assert.equal(mkdirs, 0); assert.equal(spawns, 0);
+		const result = await runProjectMapOpenPiFallback(fallback, { mkdir: ((path, options) => { mkdirs += 1; assert.equal(path, "/sessions"); assert.deepEqual(options, { recursive: true }); }) as never, spawn: ((command, args, options) => { spawns += 1; assert.equal(command, fallback.argv[0]); assert.deepEqual(args, fallback.argv.slice(1)); assert.deepEqual(options, { cwd: fallback.cwd, env: fallback.env, detached: true, stdio: "ignore", windowsHide: true }); return { pid: 42, unref: () => { unrefs += 1; }, once: (event: string, listener: () => void) => { if (event === "spawn") listener(); } }; }) as never });
+		assert.deepEqual(result, { launched: true, pid: 42, error: null }); assert.equal(mkdirs, 1); assert.equal(spawns, 1); assert.equal(unrefs, 1);
+		assert.deepEqual(await runProjectMapOpenPiFallback(fallback, { mkdir: (() => { throw new Error("mkdir failed"); }) as never }), { launched: false, pid: null, error: "mkdir failed" });
+		assert.deepEqual(await runProjectMapOpenPiFallback(fallback, { mkdir: (() => {}) as never, spawn: (() => { throw new Error("spawn failed"); }) as never }), { launched: false, pid: null, error: "spawn failed" });
+	});
+});
+
+test("fallback reports an asynchronous spawn failure instead of a launch request", async () => {
+	const fallback = { decision: "offer" as const, argv: ["/pi", "--print", "brief"], cwd: "/worktree", env: {}, handoff: "brief", sessionDir: "/sessions", diagnostics: [] };
+	let unrefs = 0;
+	const failed = await runProjectMapOpenPiFallback(fallback, {
+		mkdir: (() => {}) as never,
+		spawn: (() => ({ once: (event: string, listener: (error?: unknown) => void) => { if (event === "error") listener(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" })); }, unref: () => { unrefs += 1; } })) as never,
+	});
+	assert.deepEqual(failed, { launched: false, pid: null, error: "spawn ENOENT" });
+	assert.equal(unrefs, 1);
+	const silent = await runProjectMapOpenPiFallback(fallback, { mkdir: (() => {}) as never, spawn: (() => ({ pid: 7, once: () => undefined })) as never, settleMs: 5 });
+	assert.deepEqual(silent, { launched: false, pid: null, error: "the background runner did not report a spawn within 5ms." });
+});
+
+test("fallback strips the parent's interactive-host signal and keeps its own launch identity", () => {
+	const plan = {
+		decision: "refuse" as const, argv: [], cwd: "/worktree", handoff: "brief", sessionName: "project-map-open-pi-catalog", attachCommand: [], launcher: { command: "", path: "", source: "path" as const }, diagnostics: [],
+		env: { GENTLE_SHELL_INTERACTIVE_HOST: "1", KEEP: "yes", [PROJECT_MAP_OPEN_PI_ENV]: JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" }) },
+		readiness: { diagnostics: [] } as unknown as ReturnType<typeof readiness>,
+	};
+	const fallback = planProjectMapOpenPiFallback(plan, { sessionDir: "/sessions", pi: { command: "/pi", args: [] } });
+	assert.equal(fallback.env.GENTLE_SHELL_INTERACTIVE_HOST, undefined);
+	assert.equal(fallback.env.KEEP, "yes");
+	assert.match(fallback.argv.join(" "), /--append-system-prompt brief brief$/);
+});
+
+test("tmux adapter passes its detached plan through an injected runner", () => {
+	const plan = {
+		decision: "open" as const, argv: ["tmux", "new-session", "-d"], cwd: "/worktree", env: {}, handoff: "test", diagnostics: [],
+		readiness: {} as ReturnType<typeof readiness>, sessionName: "project-map-open-pi-catalog", attachCommand: ["tmux", "attach-session", "-t", "project-map-open-pi-catalog"], launcher: { command: "sh", path: "sh", source: "path" as const },
+	};
+	let call: unknown;
+	assert.deepEqual(openProjectMapPi(plan, ((command, args, options) => { call = { command, args, options }; return ""; }) as typeof execFileSync), { launched: true, error: null });
+	assert.deepEqual(call, { command: "tmux", args: ["new-session", "-d"], options: { cwd: "/worktree", env: {}, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true } });
 });
 
 test("tmux adapter creates a detached session only in a temporary sandbox", (t) => {
