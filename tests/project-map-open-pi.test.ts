@@ -39,7 +39,7 @@ function snapshot(root: string, relative = ""): Array<{ path: string; bytes: str
 
 type OpenPiFixture = { sandbox: string; cwd: string; store: string; git: (args: string[]) => string };
 
-function setupFixture(map = projectMap()): { fixture: OpenPiFixture; cleanup: () => void } {
+function setupFixture(map = projectMap(), provisionWorktree = true): { fixture: OpenPiFixture; cleanup: () => void } {
 	const sandbox = mkdtempSync(join(tmpdir(), "project-map-open-pi-"));
 	const cwd = join(sandbox, "main");
 	const empty = join(sandbox, "empty");
@@ -49,6 +49,8 @@ function setupFixture(map = projectMap()): { fixture: OpenPiFixture; cleanup: ()
 	execFileSync("git", ["init", "--initial-branch=main", cwd], { env, stdio: "ignore" });
 	const git = (args: string[]) => String(execFileSync("git", ["-C", cwd, "-c", `core.hooksPath=${empty}`, "-c", "commit.gpgsign=false", ...args], { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 	git(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture"]);
+	// Open Pi requires a provisioned worktree, so the fixture provisions the real one.
+	if (provisionWorktree) git(["worktree", "add", "-b", "feat/catalog", deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path]);
 	mkdirSync(dirname(join(cwd, PROJECT_MAP_ARTIFACT_PATH)), { recursive: true });
 	writeFileSync(join(cwd, PROJECT_MAP_ARTIFACT_PATH), serializeProjectMap(map), "utf8");
 	const resolved = resolveProjectMapStoreRoot(cwd);
@@ -58,19 +60,19 @@ function setupFixture(map = projectMap()): { fixture: OpenPiFixture; cleanup: ()
 	return { fixture: { sandbox, cwd, store: resolved.root, git }, cleanup: () => rmSync(sandbox, { recursive: true, force: true }) };
 }
 
-function withFixture(run: (fixture: OpenPiFixture) => void, map = projectMap()): void {
+function withFixture(run: (fixture: OpenPiFixture) => void, map = projectMap(), provisionWorktree = true): void {
 	let cleanup = (): void => {};
 	try {
-		const setup = setupFixture(map);
+		const setup = setupFixture(map, provisionWorktree);
 		cleanup = setup.cleanup;
 		run(setup.fixture);
 	} finally { cleanup(); }
 }
 
-async function withAsyncFixture(run: (fixture: OpenPiFixture) => Promise<void>, map = projectMap()): Promise<void> {
+async function withAsyncFixture(run: (fixture: OpenPiFixture) => Promise<void>, map = projectMap(), provisionWorktree = true): Promise<void> {
 	let cleanup = (): void => {};
 	try {
-		const setup = setupFixture(map);
+		const setup = setupFixture(map, provisionWorktree);
 		cleanup = setup.cleanup;
 		await run(setup.fixture);
 	} finally { cleanup(); }
@@ -306,15 +308,18 @@ test("readiness names every readiness disqualifier", () => {
 		{ name: "open blocker", prepare: ({ store }) => { claim(store); raiseProjectMapStoreBlocker({ root: store, capabilityId: "catalog", blockerId: "blocker", owner: "test", reason: "Blocked", sessionId: "session-a", now: NOW }); }, code: "project-map-open-pi/open-blocker" },
 		{ name: "proposed contract", prepare: ({ store }) => { claim(store); assert.ok(proposeProjectMapContract({ root: store, capabilityId: "catalog", contractId: "contract", title: "Contract", digest: `sha256:${"a".repeat(64)}`, sessionId: "session-a", now: NOW }).contract); }, code: "project-map-open-pi/proposed-contract" },
 		{ name: "missing live claim", code: "project-map-store/worktree-claim-required" },
+		{ name: "unprovisioned worktree", prepare: ({ store }) => claim(store), code: "project-map-open-pi/worktree-not-provisioned" },
 		{ name: "other claim", prepare: ({ store }) => claim(store, "catalog", "session-b"), code: "project-map-store/claim-held" },
 		{ name: "refused worktree", prepare: ({ cwd, store }) => { claim(store); const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path; mkdirSync(target, { recursive: true }); writeFileSync(join(target, "occupied"), "x"); }, code: "project-map-store/worktree-target-not-empty" },
 		{ name: "occupied worktree", prepare: ({ cwd, store, git }) => { claim(store); const target = deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path; git(["worktree", "add", "-b", "feat/catalog", target]); assert.ok(bindProjectMapStoreSession({ root: store, sessionId: "session-b", workspaceRoot: target, pid: 1, incarnation: INCARNATION, now: NOW }).binding); assert.ok(beatProjectMapStoreHeartbeat({ root: store, sessionId: "session-b", pid: 1, incarnation: INCARNATION, now: NOW }).heartbeat); }, code: "project-map-store/worktree-occupied" },
 		{ name: "host unavailable", prepare: ({ store }) => claim(store), host: { available: false, version: null }, code: "project-map-open-pi/host-unavailable" },
 	];
+	// Three cases own the worktree path themselves: two conflict with a provisioned target, one needs it absent.
+	const selfProvisioned = new Set(["refused worktree", "occupied worktree", "unprovisioned worktree"]);
 	for (const entry of cases) withFixture(({ cwd, store, git }) => {
 		entry.prepare?.({ cwd, store, git });
 		const result = readiness(cwd, entry.capabilityId, "session-a", entry.host ?? HOST);
 		assert.equal(result.permitted, false, entry.name);
 		assert.ok(hasCode(result, entry.code), `${entry.name} should report ${entry.code}`);
-	}, entry.map ?? projectMap());
+	}, entry.map ?? projectMap(), !selfProvisioned.has(entry.name));
 });

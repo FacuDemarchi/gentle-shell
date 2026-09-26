@@ -14,6 +14,7 @@ import { acquireProjectMapClaim, releaseProjectMapClaim } from "../lib/project-m
 import { readProjectMapStoreHeartbeat, readProjectMapStoreSessionBinding } from "../lib/project-map-store-heartbeats.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
+import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap } from "../lib/shell-project-map-schema.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";
@@ -39,6 +40,8 @@ function withFixture(run: (fixture: { sandbox: string; cwd: string; store: strin
 	const execute = async () => {
 		execFileSync("git", ["init", "--initial-branch=main", cwd], { env, stdio: "ignore" });
 		execFileSync("git", ["-C", cwd, "-c", `core.hooksPath=${empty}`, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Fixture"], { env, stdio: "ignore" });
+		// Open Pi requires a provisioned worktree, so the fixture provisions the real one.
+		execFileSync("git", ["-C", cwd, "-c", `core.hooksPath=${empty}`, "worktree", "add", "-b", "feat/catalog", deriveProjectMapWorktreeIdentity({ repositoryRoot: cwd, capabilityId: "catalog" }).path], { env, stdio: "ignore" });
 		mkdirSync(dirname(join(cwd, PROJECT_MAP_ARTIFACT_PATH)), { recursive: true });
 		writeFileSync(join(cwd, PROJECT_MAP_ARTIFACT_PATH), serializeProjectMap({ version: PROJECT_MAP_SCHEMA_V1, project: { id: "example", name: "Example" }, approval: { state: "approved", approvedAt: NOW, approvedBy: "test" }, foundations: [], capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "ready" }] }));
 		const resolved = resolveProjectMapStoreRoot(cwd); assert.ok(resolved.root && resolved.repositoryId);

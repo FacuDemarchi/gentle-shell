@@ -279,6 +279,7 @@ export function projectMapOpenPiReadiness({ cwd, capabilityId, sessionId, now, h
 	const diagnostics: ProjectMapOpenPiDiagnostic[] = [];
 	appendUnique(diagnostics, storeDiagnostics);
 	appendUnique(diagnostics, worktree.diagnostics);
+	if (worktree.decision === "create") diagnostics.push(diagnostic("project-map-open-pi/worktree-not-provisioned", `Capability worktree "${worktree.inspection.identity.path}" is not provisioned yet; provision it before opening Pi.`));
 
 	if (capability === null) diagnostics.push(diagnostic("project-map-open-pi/capability-not-found", `Capability "${capabilityId}" is not declared in the approved Project Map.`));
 	else {
