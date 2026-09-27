@@ -60,7 +60,13 @@ function isBlockScalarMarker(value: string): boolean {
 	return /^[|>][+-]?$/.test(value.trim());
 }
 
-function readSimpleConfigEntries(text: string): Map<string, string> {
+/**
+ * Reads the simple `section.key: value` entries of a project config, skipping block
+ * scalars, comments and nested structures it does not interpret. Exported because the
+ * integration-readiness report needs the project's own test command, and a second copy
+ * of this parser is how two readers of the same file drift apart.
+ */
+export function readSimpleConfigEntries(text: string): Map<string, string> {
 	const entries = new Map<string, string>();
 	let section = "";
 	let blockScalarIndent: number | null = null;
