@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	checkProjectMapIntegrationFreshness,
 	checkProjectMapIntegrationOverlap,
+	projectMapIntegrationGitExecutor,
 	resolveProjectMapIntegrationTarget,
 	type ProjectMapIntegrationGitExecutor,
 	type ProjectMapIntegrationGitOutcome,
@@ -82,11 +83,37 @@ test("a base contained in the target is fresh, and the distance is reported", ()
 });
 
 test("a base the target does not contain is a mismatch, because the branch has diverged", () => {
-	const { run } = executor({ "merge-base --is-ancestor": { ok: false, reason: "exit 1" } });
+	const { run } = executor({ "merge-base --is-ancestor": { ok: false, exitCode: 1, reason: "exit 1" } });
 	const result = checkProjectMapIntegrationFreshness({ cwd: "/projects/shop", run, target: "main", baseCommit: "a".repeat(40) });
 	assert.equal(result.check, "mismatched");
 	assert.equal(result.behindBy, null);
 	assert.match(result.reason!, /diverged|not contained/i);
+});
+
+test("a freshness query that could not run is unverified, never a divergence", () => {
+	const { run } = executor({ "merge-base --is-ancestor": { ok: false, exitCode: 128, reason: "fatal: Not a valid object name" } });
+	const result = checkProjectMapIntegrationFreshness({ cwd: "/projects/shop", run, target: "main", baseCommit: "a".repeat(40) });
+	assert.equal(result.check, "unverified");
+	assert.equal(result.behindBy, null);
+	assert.doesNotMatch(result.reason!, /diverged/i);
+	assert.match(result.reason!, /could not be checked/i);
+});
+
+test("a freshness query that never ran is unverified, because no exit code was observed", () => {
+	const { run } = executor({ "merge-base --is-ancestor": { ok: false, reason: "spawn git ENOENT" } });
+	const result = checkProjectMapIntegrationFreshness({ cwd: "/projects/shop", run, target: "main", baseCommit: "a".repeat(40) });
+	assert.equal(result.check, "unverified");
+	assert.equal(result.behindBy, null);
+});
+
+test("the real executor reports the exit code of a command that ran and failed", () => {
+	const run = projectMapIntegrationGitExecutor();
+	const failed = run(["rev-parse", "--verify", "refs/heads/definitely-not-a-branch"], process.cwd());
+	assert.equal(failed.ok, false);
+	assert.equal(failed.exitCode, 128);
+	const succeeded = run(["rev-parse", "--verify", "HEAD"], process.cwd());
+	assert.equal(succeeded.ok, true);
+	assert.equal(succeeded.exitCode, undefined);
 });
 
 test("a git failure while measuring freshness is unverified, never a pass", () => {

@@ -21,6 +21,12 @@ import type { ProjectMapIntegrationCheck, ProjectMapIntegrationDiagnostic } from
 export interface ProjectMapIntegrationGitOutcome {
 	ok: boolean;
 	output?: string;
+	/**
+	 * The process exit code, present only when the command actually ran and exited non-zero.
+	 * It is absent when the command could not be run at all, so a caller can tell a Git
+	 * answer ("this is not an ancestor") from a failure to ask ("the query broke").
+	 */
+	exitCode?: number;
 	reason?: string;
 }
 export type ProjectMapIntegrationGitExecutor = (arguments_: readonly string[], cwd: string) => ProjectMapIntegrationGitOutcome;
@@ -33,7 +39,10 @@ export function projectMapIntegrationGitExecutor(): ProjectMapIntegrationGitExec
 			const output = execFileSync("git", ["-C", cwd, ...arguments_], { env: environment, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 			return { ok: true, output: String(output) };
 		} catch (error) {
-			return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+			const status = (error as { status?: unknown } | null)?.status;
+			const exitCode = typeof status === "number" ? status : undefined;
+			const reason = error instanceof Error ? error.message : String(error);
+			return exitCode === undefined ? { ok: false, reason } : { ok: false, exitCode, reason };
 		}
 	};
 }
@@ -74,11 +83,19 @@ export interface ProjectMapIntegrationFreshness {
  * A base the target does not contain means the branch has diverged, which is a mismatch
  * rather than a distance; a base that is merely old is verified and its distance is
  * reported, because being behind is information, not a defect.
+ *
+ * `git merge-base --is-ancestor` exits 1 for a genuine non-ancestor, but it also fails
+ * when the query itself cannot run (a broken revision, an unreadable object). Only the
+ * first is a divergence; the second stays unverified, because reporting it as divergence
+ * would claim something Git never said.
  */
 export function checkProjectMapIntegrationFreshness(options: { cwd: string; run: ProjectMapIntegrationGitExecutor; target: string | null; baseCommit: string | null }): ProjectMapIntegrationFreshness {
 	if (options.target === null || options.baseCommit === null) return { check: "unverified", behindBy: null, reason: "the integration target or the branch base is unknown" };
 	const contained = options.run(["merge-base", "--is-ancestor", options.baseCommit, options.target], options.cwd);
-	if (!contained.ok) return { check: "mismatched", behindBy: null, reason: `the branch base is not contained in ${options.target}, so the branch has diverged` };
+	if (!contained.ok) {
+		if (contained.exitCode === 1) return { check: "mismatched", behindBy: null, reason: `the branch base is not contained in ${options.target}, so the branch has diverged` };
+		return { check: "unverified", behindBy: null, reason: `it could not be checked whether the branch base is contained in ${options.target}: ${contained.reason ?? "unknown failure"}` };
+	}
 	const counted = options.run(["rev-list", "--count", `${options.baseCommit}..${options.target}`], options.cwd);
 	if (!counted.ok) return { check: "unverified", behindBy: null, reason: `the distance to ${options.target} could not be measured: ${counted.reason ?? "unknown failure"}` };
 	const behindBy = Number.parseInt((counted.output ?? "").trim(), 10);
