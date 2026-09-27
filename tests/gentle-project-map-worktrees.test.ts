@@ -7,10 +7,11 @@ import { join } from "node:path";
 import test from "node:test";
 import {
 	applyProjectMapWorktreeProvision,
-	runProjectMapCommand,
+	runProjectMapCommand as runProjectMapCommandWithGate,
 	type ProjectMapCommandContext,
 	type ProjectMapWorktreeRegistrationPort,
 } from "../extensions/gentle-project-map.ts";
+import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree, listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
@@ -18,6 +19,11 @@ import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity, planProjectMapWorktree } from "../lib/project-map-worktrees.ts";
 
 const NOW = new Date("2026-09-26T12:00:00.000Z");
+// PM9-1: the executable half is opt-in and these cases drive it, so every call runs with the
+// gate explicitly on unless a case overrides `env`. What is under test is the route's own
+// behavior, not the switch that guards it — the switch has its own cases.
+const ENABLED_ENV: NodeJS.ProcessEnv = { [PROJECT_MAP_EXECUTABLE_ENV]: "1" };
+const runProjectMapCommand: typeof runProjectMapCommandWithGate = (command, ctx, options = {}) => runProjectMapCommandWithGate(command, ctx, { env: ENABLED_ENV, ...options });
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
 
 interface Harness {

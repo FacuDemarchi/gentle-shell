@@ -13,6 +13,7 @@ import { withoutInteractiveHost } from "./rpc-host.ts";
 import { worktreeGitEnvironment } from "./session-worktree-registry.ts";
 import { childArguments, piCommand, type TaskRequest } from "./agents-runner.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, type ProjectMapCapabilityV1 } from "./shell-project-map-schema.ts";
+import { PROJECT_MAP_EXECUTABLE_ENV } from "./shell-project-map-gate.ts";
 
 export const PROJECT_MAP_OPEN_PI_ENV = "GENTLE_PI_PROJECT_MAP_OPEN_PI";
 
@@ -258,14 +259,18 @@ export function planProjectMapOpenPi({
 	// tmux does not forward a new client variable to a session it creates: only the variables in its
 	// own global environment arrive (verified against tmux 3.6: a session created with an exported
 	// parent variable reports it as unknown). The launch identity therefore travels with `-e`, which
-	// is what makes the child's receiver able to write its own binding.
-	const argv = ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${launchIdentity}`, "-s", sessionName, "-c", target, ...launcherArgv, text].filter((entry) => entry.length > 0);
+	// is what makes the child's receiver able to write its own binding. The same door is the only one
+	// that can carry the executable opt-in to a child, and it must: a launch is reachable only while
+	// this session's gate is open, so the child that inherits the work would otherwise be unable to
+	// use the very surfaces it was opened to use.
+	const forwarded = [`${PROJECT_MAP_OPEN_PI_ENV}=${launchIdentity}`, `${PROJECT_MAP_EXECUTABLE_ENV}=1`];
+	const argv = ["tmux", "new-session", "-d", ...forwarded.flatMap((entry) => ["-e", entry]), "-s", sessionName, "-c", target, ...launcherArgv, text].filter((entry) => entry.length > 0);
 	return {
 		readiness,
 		decision: diagnostics.every((entry) => entry.severity !== "error") ? "open" : "refuse",
 		argv,
 		cwd: target,
-		env: { ...worktreeGitEnvironment(), [PROJECT_MAP_OPEN_PI_ENV]: launchIdentity },
+		env: { ...worktreeGitEnvironment(), [PROJECT_MAP_OPEN_PI_ENV]: launchIdentity, [PROJECT_MAP_EXECUTABLE_ENV]: "1" },
 		handoff: text,
 		sessionName,
 		attachCommand: ["tmux", "attach-session", "-t", sessionName],

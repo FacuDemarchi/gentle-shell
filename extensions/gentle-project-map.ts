@@ -14,6 +14,7 @@ import { planProjectMapWorktree, provisionProjectMapWorktree, type ProjectMapWor
 import { SessionWorktreeRegistry } from "../lib/session-worktree-registry.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
+import { projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
@@ -24,7 +25,7 @@ import { deriveProjectMapIntegrationReadiness, renderProjectMapIntegrationReport
 import { checkProjectMapIntegrationFreshness, checkProjectMapIntegrationOverlap, projectMapIntegrationGitExecutor, resolveProjectMapIntegrationTarget } from "../lib/project-map-integration-repository.ts";
 import { checkProjectMapIntegrationTasks, parseProjectMapTaskDocument, readProjectMapTestCommand } from "../lib/project-map-integration-documents.ts";
 import { issueProjectMapStoreReadinessReceipt } from "../lib/project-map-store-receipts.ts";
-import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
+import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan, type ProjectMapOpenPiReadiness } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
@@ -88,6 +89,16 @@ export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): st
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
 export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"] as const;
+
+export function projectMapOpenPiDecision(readiness: ProjectMapOpenPiReadiness, env: NodeJS.ProcessEnv = process.env): ProjectMapOpenPiReadiness {
+	const message = projectMapExecutableRefusal(env);
+	if (message === undefined) return readiness;
+	return {
+		...readiness,
+		permitted: false,
+		diagnostics: [...readiness.diagnostics, { code: "project-map-open-pi/executable-disabled", path: "$.executable", message, severity: "error" }],
+	};
+}
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
 const USAGE = {
@@ -141,6 +152,8 @@ export interface ProjectMapWorktreeRegistrationPort {
 
 export interface ProjectMapCommandOptions {
 	now?: () => Date;
+	/** The environment the opt-in gate is read from; the registration site supplies it, defaulting to the process. */
+	env?: NodeJS.ProcessEnv;
 	onShow?: () => void;
 	onHide?: () => void;
 	worktrees?: ProjectMapWorktreeRegistrationPort;
@@ -408,6 +421,18 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 	const artifactPath = join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
 	const now = options.now ?? (() => new Date());
+	const environment = options.env ?? process.env;
+	/**
+	 * Refuses a route that acts outside the map artifact while the opt-in gate is off. It sits
+	 * after a command's own argument validation, so a malformed command still reports its usage
+	 * error, and before any work, so a refusal costs nothing and writes nothing.
+	 */
+	const executableGate = (action: ProjectMapSubAction, path: string): ProjectMapCommandReport | undefined => {
+		const message = projectMapExecutableRefusal(environment);
+		if (message === undefined) return undefined;
+		ctx.ui.notify(message);
+		return emptyReport(action, [{ code: "project-map/executable-disabled", path, message, severity: "error" }]);
+	};
 
 	if (parsed.action === "worktree") {
 		const [operation = "", capabilityId = "", ...extra] = parsed.argument.split(/\s+/);
@@ -417,6 +442,10 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			const message = `A worktree operation needs ${operation === "list" ? "no capability id" : "a capability id"}. ${USAGE.worktree}`;
 			ctx.ui.notify(message);
 			return emptyReport("worktree", [refusal(message)]);
+		}
+		if (operation === "provision") {
+			const gated = executableGate("worktree", "$.worktree.provision");
+			if (gated !== undefined) return gated;
 		}
 		const sessionId = sessionKey(ctx);
 		if (sessionId.length === 0) {
@@ -471,6 +500,8 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			ctx.ui.notify(USAGE.open);
 			return emptyReport("open", [refusal(USAGE.open)]);
 		}
+		const gatedOpen = executableGate("open", "$.open");
+		if (gatedOpen !== undefined) return gatedOpen;
 		const sessionId = sessionKey(ctx);
 		if (sessionId.length === 0) {
 			const message = "Opening Pi requires this session's identity; nothing was launched.";
@@ -549,6 +580,16 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 
 	if (parsed.action === "lead" || parsed.action === "contract") {
+		const [routeOperation = ""] = parsed.argument.split(/\s+/);
+		// Writes to the shared store are gated. Reads are not, and neither is a release: a switch
+		// that refused to release a claim would strand the very state it exists to protect.
+		const gatePath = parsed.action === "lead"
+			? (routeOperation === "claim" || routeOperation === "renew" ? `$.lead.${routeOperation}` : undefined)
+			: (routeOperation === "propose" || routeOperation === "accept" || routeOperation === "reject" ? `$.contract.${routeOperation}` : undefined);
+		if (gatePath !== undefined) {
+			const gated = executableGate(parsed.action, gatePath);
+			if (gated !== undefined) return gated;
+		}
 		const root = storeRoot(ctx.cwd);
 		if (root.root === null) {
 			ctx.ui.notify(`Project Map coordination is unavailable.\n${describeDiagnostics(root.diagnostics)}`);
@@ -712,6 +753,9 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			ctx.ui.notify(message);
 			return emptyReport("integrate", [refusal(message)]);
 		}
+		// Readiness is read-only, but it issues a receipt, and a receipt is a store write.
+		const gatedIntegrate = executableGate("integrate", "$.integrate");
+		if (gatedIntegrate !== undefined) return gatedIntegrate;
 		const root = storeRoot(ctx.cwd);
 		if (root.root === null) {
 			ctx.ui.notify(`Project Map coordination is unavailable, so integration readiness cannot be measured.\n${describeDiagnostics(root.diagnostics)}`);
@@ -1062,7 +1106,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				} catch { return undefined; }
 			})();
 			const part = projectMapCardPart(tui, path, theme, session, collapseKey, (capabilityId) => {
-				try { return projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost }); }
+				try { return projectMapOpenPiDecision(projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost })); }
 				catch { return { permitted: false, diagnostics: [{ code: "project-map-open-pi/unavailable" }] }; }
 			}, tabs === undefined ? undefined : {
 				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
@@ -1097,6 +1141,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				onShow: () => { record(commandCtx).visibility = true; mount(commandCtx); },
 				onHide: () => { record(commandCtx).visibility = false; unmount(commandCtx); },
 				worktrees: registry === undefined ? undefined : { register: (path, evidence) => registry.register(path, evidence) },
+				env,
 			});
 		},
 	});

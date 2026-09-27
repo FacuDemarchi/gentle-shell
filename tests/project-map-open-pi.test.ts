@@ -13,6 +13,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
+import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapCapabilityV1, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
 import { serializeProjectMapStoreValue } from "../lib/project-map-store-schema.ts";
 import { awaitProjectMapOpenPiConfirmation, deriveProjectMapOpenPiSessionName, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, resolveProjectMapOpenPiLauncher, runProjectMapOpenPiFallback } from "../lib/project-map-open-pi.ts";
@@ -164,7 +165,8 @@ test("plans a named detached tmux session, attach command, and structured handof
 		assert.equal(plan.decision, "open");
 		assert.equal(plan.sessionName, "project-map-open-pi-catalog");
 		assert.deepEqual(plan.attachCommand, ["tmux", "attach-session", "-t", plan.sessionName]);
-		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a", launchNonce: plan.launchNonce })}`, "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
+		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a", launchNonce: plan.launchNonce })}`, "-e", `${PROJECT_MAP_EXECUTABLE_ENV}=1`, "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
+		assert.equal(plan.env[PROJECT_MAP_EXECUTABLE_ENV], "1", "the opt-in travels to the child, because tmux forwards no client variable of its own");
 		assert.equal(plan.cwd, plan.readiness.worktree.inspection.identity.path);
 		const identity = JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? "") as { capabilityId?: string; parentSessionId?: string; launchNonce?: string };
 		assert.equal(identity.capabilityId, "catalog");
@@ -272,6 +274,7 @@ test("fallback plans only around the host gate and executes its planned argv wit
 		const fallback = planProjectMapOpenPiFallback(plan, { sessionDir: "/sessions", extensionPaths: ["/extension.ts"], pi: { command: "/pi", args: ["/cli.js"] }, exists: () => true });
 		assert.equal(fallback.decision, "offer"); assert.equal(fallback.cwd, plan.cwd); assert.equal(fallback.handoff, plan.handoff); const fallbackIdentity = JSON.parse(fallback.env[PROJECT_MAP_OPEN_PI_ENV] ?? "") as { capabilityId?: string; parentSessionId?: string; launchNonce?: string }; assert.equal(fallbackIdentity.capabilityId, "catalog"); assert.equal(fallbackIdentity.parentSessionId, "session-a"); assert.equal(fallbackIdentity.launchNonce, plan.launchNonce); assert.deepEqual(fallback.diagnostics, []);
 		assert.deepEqual(fallback.argv, ["/pi", "/cli.js", "--print", "--session-dir", "/sessions", "--extension", "/extension.ts", "--append-system-prompt", plan.handoff, plan.handoff]);
+		assert.equal(fallback.env[PROJECT_MAP_EXECUTABLE_ENV], "1", "the fallback child carries the same opt-in as the tmux path");
 		const ready = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
 		assert.equal(planProjectMapOpenPiFallback(ready, { sessionDir: "/sessions" }).decision, "offer");
 		const refused = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: { available: false, version: null } });

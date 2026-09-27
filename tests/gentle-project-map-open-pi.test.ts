@@ -5,7 +5,8 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import gentleProjectMap, { handleProjectMapOpenPiSessionStart, OPEN_PI_SUBAGENT_CHOICE, OPEN_PI_TMUX_CHOICE, openPiFallbackOfferTitle, openPiSubagentSessionDir, runProjectMapCommand, type ProjectMapCommandContext } from "../extensions/gentle-project-map.ts";
+import gentleProjectMap, { handleProjectMapOpenPiSessionStart, OPEN_PI_SUBAGENT_CHOICE, OPEN_PI_TMUX_CHOICE, openPiFallbackOfferTitle, openPiSubagentSessionDir, runProjectMapCommand as runProjectMapCommandWithGate, type ProjectMapCommandContext } from "../extensions/gentle-project-map.ts";
+import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import { awaitProjectMapOpenPiConfirmation, planProjectMapOpenPi } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import { agentRuntimePaths } from "../extensions/gentle-agents.ts";
@@ -18,6 +19,11 @@ import { deriveProjectMapWorktreeIdentity } from "../lib/project-map-worktrees.t
 import { PROJECT_MAP_ARTIFACT_PATH, PROJECT_MAP_SCHEMA_V1, serializeProjectMap } from "../lib/shell-project-map-schema.ts";
 
 const NOW = "2026-09-26T12:00:00.000Z";
+// PM9-1: the executable half is opt-in and these cases drive it, so every call runs with the
+// gate explicitly on unless a case overrides `env`. What is under test is the route's own
+// behavior, not the switch that guards it — the switch has its own cases.
+const ENABLED_ENV: NodeJS.ProcessEnv = { [PROJECT_MAP_EXECUTABLE_ENV]: "1" };
+const runProjectMapCommand: typeof runProjectMapCommandWithGate = (command, ctx, options = {}) => runProjectMapCommandWithGate(command, ctx, { env: ENABLED_ENV, ...options });
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
 const ENV = JSON.stringify({ capabilityId: "catalog", parentSessionId: "parent" });
 
