@@ -99,6 +99,8 @@ const requiredPaths = [
   // package that silently loses a module is the worst way to find out. They are loaded as
   // TypeScript, deliberately have no `runtime/*.mjs` twin, and are therefore pinned by name.
   "lib/project-map-coordination-state.ts",
+  "lib/project-map-description.ts",
+  "lib/project-map-help-modal.ts",
   "lib/project-map-integration-documents.ts",
   "lib/project-map-integration-repository.ts",
   "lib/project-map-integration.ts",

@@ -32,7 +32,14 @@ function isRecord(value: unknown): value is RecordValue {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeIdentifier(name: string): string | null {
+/**
+ * The identifier a title normalizes to, or `null` when it cannot be one.
+ *
+ * Exported so the reader that explains a capability and the generator that names it share one
+ * definition: two functions that disagree about a title would produce a capability nobody can
+ * look up, which is the same defect class as a reader that cannot read what the writer writes.
+ */
+export function normalizeIdentifier(name: string): string | null {
 	const withoutScope = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
 	const normalized = withoutScope
 		.toLowerCase()
