@@ -225,6 +225,37 @@ test("the marker explains a capability while the rest of the row still selects i
 	});
 });
 
+// Launching is not selecting either: the launch marker has its own target, and a click on it
+// must leave the Inspector where it was.
+test("the launch marker opens the capability while the rest of the row still selects it", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const launched: string[] = [];
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: (id) => launched.push(id) });
+		const lines = rail.render(56);
+		const header = lines.findIndex((line) => line.includes("Product capabilities"));
+		const coverage = lines.findIndex((line) => line.includes("Coverage"));
+		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < coverage && entry.line.includes("? ✿ "))!.index;
+		const click = (x: number) => rail.handleMouse?.({ type: "click", button: "left", x, y: row, screenX: x, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
+		// The launch marker is four body columns in, and the frame spends two before the body.
+		assert.deepEqual(click(6), { handled: true }, "the launch marker is handled, and nothing repaints");
+		assert.deepEqual(launched, ["capability-with-an-unbreakable-identifier"]);
+		assert.deepEqual(current.selected, [], "launching does not select");
+		assert.deepEqual(click(4), { handled: true }, "the help marker keeps its own target");
+		assert.deepEqual(launched, ["capability-with-an-unbreakable-identifier"], "and a click on it does not launch");
+	});
+});
+
+test("the launch marker is painted with the theme's accent role", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const painted: Array<{ role: string; text: string }> = [];
+		const recording = { fg: (role: string, text: string) => { painted.push({ role, text }); return text; } };
+		const rail = projectMapCardRail(path, recording, session(), undefined, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: () => {} });
+		rail.render(56);
+		assert.ok(painted.some((entry) => entry.role === "accent" && entry.text === "✿"), "the marker is painted with the accent role");
+	});
+});
+
 test("a selection change made outside the rail reveals on the next render", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const current = session();

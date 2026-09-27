@@ -33,6 +33,20 @@ export interface ProjectMapCardSession {
 	toggle(group: ProjectMapGroup): void;
 }
 
+/**
+ * The launch affordance the card draws and reports.
+ *
+ * The card paints the marker, but it cannot decide who may be launched — that answer needs the
+ * store — and it cannot run a command, whose handler is an awaited host call. So it asks for the
+ * set and reports the click, exactly like the `?` marker reports the capability it explains.
+ */
+export interface ProjectMapLaunchPort {
+	/** The capabilities that may be opened right now. */
+	launchable(): ReadonlySet<string>;
+	/** Runs the product's own open flow for one capability. */
+	open(capabilityId: string): void;
+}
+
 function state(artifactPath: string): ProjectMapCardState {
 	return projectMapCardState(artifactPath, PROJECT_MAP_OVERLAY_UNAVAILABLE);
 }
@@ -67,9 +81,9 @@ export interface ProjectMapCardDetail {
 	digest(): string;
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
-	const capabilityLines = new Map<number, { id: string; help: number }>();
+	const capabilityLines = new Map<number, { id: string; help: number; launch?: number }>();
 	const capabilityStarts = new Map<string, number>();
 	let revealedSelection: string | undefined;
 	let decisionSelection: string | undefined;
@@ -88,8 +102,12 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		capabilityStarts.clear();
 		const current = state(artifactPath);
 		const openPiDecision = currentDecision();
-		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width));
-		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width));
+		const launchable = launch?.launchable();
+		// The marker is painted with the theme's own role, so the row still follows the configured
+		// theme; the descriptor and the hit map must be built from the same call.
+		const paint = (role: string, text: string) => theme.fg(role, text);
+		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width), launchable, paint);
+		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width), launchable, paint);
 		const lines = renderCard(descriptor, theme, width, { expanded: true, hint });
 		// `renderCard` starts with the frame top, then wraps each body line in order. Map
 		// body indices through that wrapping rather than reading control text back from paint.
@@ -108,7 +126,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 				height += wrapTextAnsi(body.lines[index]!, cardInnerWidth(width)).length;
 			}
 			capabilityStarts.set(capability.id, start);
-			for (let line = start; line < start + height; line++) capabilityLines.set(line, { id: capability.id, help: capability.help });
+			for (let line = start; line < start + height; line++) capabilityLines.set(line, { id: capability.id, help: capability.help, ...(capability.launch === undefined ? {} : { launch: capability.launch }) });
 		}
 		// The layout that shows the new selection is the one that reveals it, whoever changed
 		// it — a click, a shortcut, or the artifact — and a render that does not change the
@@ -127,7 +145,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 	return {
 		render,
-		digest: () => `${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision())}|${detail?.digest() ?? ""}`,
+		digest: () => `${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision(), launch?.launchable())}|${detail?.digest() ?? ""}`,
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -138,10 +156,14 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 			}
 			const capability = capabilityLines.get(event.y);
 			if (capability === undefined) return undefined;
-			// The marker has its own target: explaining a capability is not selecting it, and a
-			// click that lands on the marker must not change what the Inspector shows.
+			// Each marker has its own target: explaining is not launching and neither is selecting,
+			// and a click that lands on a marker must not change what the Inspector shows.
 			if (event.x === CARD_FRAME_COLUMNS + capability.help) {
 				onExplain?.(capability.id);
+				return { handled: true };
+			}
+			if (capability.launch !== undefined && event.x === CARD_FRAME_COLUMNS + capability.launch) {
+				launch?.open(capability.id);
 				return { handled: true };
 			}
 			session.select(capability.id === session.selection() ? undefined : capability.id);
@@ -162,7 +184,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
 		artifactPath,
 		theme,
@@ -172,6 +194,7 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		decisionFor,
 		detail,
 		onExplain,
+		launch,
 	));
 }
 

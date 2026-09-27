@@ -99,7 +99,7 @@ export interface ProjectMapCardBody {
 	headers: Array<{ line: number; group: ProjectMapGroup }>;
 	selected?: number;
 	/** Capability targets share the same body indices as the rendered descriptor. */
-	capabilities: Array<{ line: number; id: string; height: number; /** The body column of the marker that explains it. */ help: number }>;
+	capabilities: Array<{ line: number; id: string; height: number; /** The body column of the marker that explains it. */ help: number; /** The body column of the launch marker, absent when the row does not carry one. */ launch?: number }>;
 }
 
 export interface ProjectMapCardDescriptor {
@@ -257,6 +257,8 @@ function inspectorLines(map: ProjectMapV1, selection: string, openPiReadiness?: 
  * inner width, which is why the real width is threaded down from the render path.
  */
 const CARD_BODY_BUDGET = 60;
+/** The launchable set a caller that does not know one passes: an empty set draws no marker. */
+const EMPTY_LAUNCHABLE: ReadonlySet<string> = new Set<string>();
 
 /**
  * Keeps both ends of an identifier visible: a capability id is read from either end, and an
@@ -277,9 +279,21 @@ function middleTruncate(text: string, room: number): string {
  * range the card tests cannot drift away from the row the card paints.
  */
 export const PROJECT_MAP_HELP_MARKER = "?";
+/**
+ * The marker that opens the capability in a parallel session, drawn only when the capability is
+ * launchable. It is the shell's own petal, in the shell's own accent role, so it needs no
+ * patched font and no color of its own.
+ */
+export const PROJECT_MAP_LAUNCH_MARKER = "✿";
 const ROW_INDENT = "  ";
 const ROW_SELECTED = "▸ ";
 export const PROJECT_MAP_HELP_COLUMN = ROW_INDENT.length;
+/** The launch marker sits one `? ` group to the right of the help marker. */
+export const PROJECT_MAP_LAUNCH_COLUMN = PROJECT_MAP_HELP_COLUMN + 2;
+
+/** Paints one segment of a row with a theme role. The default leaves the row plain. */
+export type ProjectMapRowPaint = (role: string, text: string) => string;
+const IDENTITY_PAINT: ProjectMapRowPaint = (_role, text) => text;
 
 /**
  * One capability row, built to fit the inner width exactly.
@@ -287,14 +301,17 @@ export const PROJECT_MAP_HELP_COLUMN = ROW_INDENT.length;
  * An undeclared surface renders `—`, the same vocabulary Coverage uses: undeclared is an
  * absence of evidence, never a zero.
  */
-function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number): string {
+function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number, launchable: boolean, paint: ProjectMapRowPaint): string {
 	const surfaces = capability.surfaces.length === 0 ? "—" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
-	const head = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
+	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${launchable ? `${PROJECT_MAP_LAUNCH_MARKER} ` : ""}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
+	// The identifier budget is measured on the plain head: the painted marker carries an escape
+	// sequence, and counting its bytes would shorten every launchable row for no reason.
+	const head = launchable ? plainHead.replace(PROJECT_MAP_LAUNCH_MARKER, paint("accent", PROJECT_MAP_LAUNCH_MARKER)) : plainHead;
 	const tail = ` · ${surfaces}`;
-	return `${head}${middleTruncate(capability.id, innerWidth - head.length - tail.length)}${tail}`;
+	return `${head}${middleTruncate(capability.id, innerWidth - plainHead.length - tail.length)}${tail}`;
 }
 
-export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET): ProjectMapCardBody {
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
@@ -329,9 +346,10 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	if (!collapse.capabilities) {
 		for (const capability of map.capabilities) {
 			const selected = capability.id === selection;
-			const line = addRow(capabilityRow(capability, selected, innerWidth));
+			const canLaunch = launchable.has(capability.id);
+			const line = addRow(capabilityRow(capability, selected, innerWidth, canLaunch, paint));
 			// Every capability row is exactly one body line, so the click target is that line.
-			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN });
+			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN, ...(canLaunch ? { launch: PROJECT_MAP_LAUNCH_COLUMN } : {}) });
 			if (selected) body.selected = line;
 		}
 	}
@@ -341,8 +359,8 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	return body;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET): ProjectMapCardDescriptor {
-	const body = projectMapCardBody(state, collapse, selection, openPiReadiness, innerWidth).lines;
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection, openPiReadiness, innerWidth, launchable, paint).lines;
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
@@ -359,7 +377,10 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): string {
-	const descriptor = projectMapCardDescriptor(state, collapse, selection, openPiReadiness);
-	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body })}`;
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, launchable?: ReadonlySet<string>): string {
+	const descriptor = projectMapCardDescriptor(state, collapse, selection, openPiReadiness, CARD_BODY_BUDGET, launchable);
+	// The launch marker is not part of the descriptor's text at this budget (the paint is
+	// identity here), so the set that decides it is folded in explicitly: without it the rail's
+	// section cache would keep painting the previous frame's markers.
+	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body, launchable: launchable === undefined ? [] : [...launchable].sort() })}`;
 }

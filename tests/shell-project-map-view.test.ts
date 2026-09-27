@@ -11,6 +11,7 @@ import {
 import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_HELP_MARKER,
+	PROJECT_MAP_LAUNCH_MARKER,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	PROJECT_MAP_STATE_GLYPH,
 	projectMapCardBody,
@@ -176,6 +177,22 @@ test("a capability row carries the marker left of its lifecycle glyph", () => {
 	const row = body.lines[target.line]!;
 	assert.match(row, /^\s+\? [✓○✕◉◐] /, "the marker precedes the lifecycle glyph");
 	assert.equal(target.help, row.indexOf(PROJECT_MAP_HELP_MARKER), "the recorded column is the one the row paints");
+});
+
+test("a launchable capability carries the launch marker between the help marker and the glyph", () => {
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, undefined, new Set(["merchant-catalog"]));
+	const target = body.capabilities.find((entry) => entry.id === "merchant-catalog")!;
+	const row = body.lines[target.line]!;
+	assert.match(row, /^\s+\? ✿ [✓○✕◉◐] /, "the launch marker sits between the help marker and the lifecycle glyph");
+	assert.equal(target.launch, row.indexOf(PROJECT_MAP_LAUNCH_MARKER), "the recorded column is the one the row paints");
+	assert.equal(target.help, row.indexOf(PROJECT_MAP_HELP_MARKER), "and the help marker keeps its own column");
+});
+
+test("a capability that cannot be launched keeps the row it has today", () => {
+	const withEmptySet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, undefined, new Set());
+	const withoutSet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED);
+	assert.deepEqual(withEmptySet.lines, withoutSet.lines, "an empty launchable set changes nothing");
+	assert.equal(withEmptySet.capabilities[0]!.launch, undefined, "and records no launch column");
 });
 
 test("a capability that declares no surface renders the same absence Coverage uses", () => {
