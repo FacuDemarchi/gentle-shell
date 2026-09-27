@@ -99,7 +99,7 @@ export interface ProjectMapCardBody {
 	headers: Array<{ line: number; group: ProjectMapGroup }>;
 	selected?: number;
 	/** Capability targets share the same body indices as the rendered descriptor. */
-	capabilities: Array<{ line: number; id: string; height: number }>;
+	capabilities: Array<{ line: number; id: string; height: number; /** The body column of the marker that explains it. */ help: number }>;
 }
 
 export interface ProjectMapCardDescriptor {
@@ -270,6 +270,17 @@ function middleTruncate(text: string, room: number): string {
 }
 
 /**
+ * The marker that opens a capability's explanation, and the body column it occupies.
+ *
+ * The column is derived from the row's own prefix rather than written down twice, so the hit
+ * range the card tests cannot drift away from the row the card paints.
+ */
+export const PROJECT_MAP_HELP_MARKER = "?";
+const ROW_INDENT = "  ";
+const ROW_SELECTED = "▸ ";
+export const PROJECT_MAP_HELP_COLUMN = ROW_INDENT.length;
+
+/**
  * One capability row, built to fit the inner width exactly.
  *
  * An undeclared surface renders `—`, the same vocabulary Coverage uses: undeclared is an
@@ -277,7 +288,7 @@ function middleTruncate(text: string, room: number): string {
  */
 function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number): string {
 	const surfaces = capability.surfaces.length === 0 ? "—" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
-	const head = `${selected ? "▸ " : "  "}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
+	const head = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
 	const tail = ` · ${surfaces}`;
 	return `${head}${middleTruncate(capability.id, innerWidth - head.length - tail.length)}${tail}`;
 }
@@ -319,7 +330,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 			const selected = capability.id === selection;
 			const line = addRow(capabilityRow(capability, selected, innerWidth));
 			// Every capability row is exactly one body line, so the click target is that line.
-			body.capabilities.push({ line, id: capability.id, height: 1 });
+			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN });
 			if (selected) body.selected = line;
 		}
 	}

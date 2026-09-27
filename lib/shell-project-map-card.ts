@@ -37,6 +37,12 @@ function state(artifactPath: string): ProjectMapCardState {
 	return projectMapCardState(artifactPath, PROJECT_MAP_OVERLAY_UNAVAILABLE);
 }
 
+/**
+ * The two columns a rendered body line spends before its text: the frame's `│` and the space
+ * after it. A body column is therefore an x coordinate plus this offset.
+ */
+const CARD_FRAME_COLUMNS = 2;
+
 export function renderProjectMapCard(
 	artifactPath: string,
 	theme: CardTheme,
@@ -61,9 +67,9 @@ export interface ProjectMapCardDetail {
 	digest(): string;
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
-	const capabilityLines = new Map<number, string>();
+	const capabilityLines = new Map<number, { id: string; help: number }>();
 	const capabilityStarts = new Map<string, number>();
 	let revealedSelection: string | undefined;
 	let decisionSelection: string | undefined;
@@ -102,7 +108,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 				height += wrapTextAnsi(body.lines[index]!, cardInnerWidth(width)).length;
 			}
 			capabilityStarts.set(capability.id, start);
-			for (let line = start; line < start + height; line++) capabilityLines.set(line, capability.id);
+			for (let line = start; line < start + height; line++) capabilityLines.set(line, { id: capability.id, help: capability.help });
 		}
 		// The layout that shows the new selection is the one that reveals it, whoever changed
 		// it — a click, a shortcut, or the artifact — and a render that does not change the
@@ -132,7 +138,13 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 			}
 			const capability = capabilityLines.get(event.y);
 			if (capability === undefined) return undefined;
-			session.select(capability === session.selection() ? undefined : capability);
+			// The marker has its own target: explaining a capability is not selecting it, and a
+			// click that lands on the marker must not change what the Inspector shows.
+			if (event.x === CARD_FRAME_COLUMNS + capability.help) {
+				onExplain?.(capability.id);
+				return { handled: true };
+			}
+			session.select(capability.id === session.selection() ? undefined : capability.id);
 			return { handled: true, render: true };
 		},
 	};
@@ -150,7 +162,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
 		artifactPath,
 		theme,
@@ -159,6 +171,7 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		(localLine) => sidebarState(tui).reveal?.(PROJECT_MAP_RAIL_KEY, localLine),
 		decisionFor,
 		detail,
+		onExplain,
 	));
 }
 

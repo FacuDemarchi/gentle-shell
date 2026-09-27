@@ -10,6 +10,7 @@ import {
 } from "../lib/shell-project-map-schema.ts";
 import {
 	PROJECT_MAP_EXPANDED,
+	PROJECT_MAP_HELP_MARKER,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	PROJECT_MAP_STATE_GLYPH,
 	projectMapCardBody,
@@ -148,7 +149,7 @@ test("structured card body records group headers and the selected capability row
 	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "checkout");
 	assert.deepEqual(body.headers, [{ line: 0, group: "foundations" }, { line: 2, group: "capabilities" }]);
 	assert.equal(body.selected, 5);
-	assert.match(body.lines[body.selected!], /^▸ ✕ checkout/, "selection replaces the indent while retaining the lifecycle glyph");
+	assert.match(body.lines[body.selected!], /^▸ \? ✕ checkout/, "selection replaces the indent while retaining the lifecycle glyph");
 });
 
 // A capability row is exactly one body line, at any width. A row that spilled onto a second
@@ -165,6 +166,14 @@ test("a capability row is one body line, truncated in the middle when it does no
 	assert.ok(row.includes("· Web"), "the row keeps its surfaces");
 	assert.ok(row.includes("…"), "a row that does not fit truncates its identifier");
 	assert.ok(row.length <= 46, `${row.length} exceeds the body budget`);
+});
+
+test("a capability row carries the marker left of its lifecycle glyph", () => {
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED);
+	const target = body.capabilities[0]!;
+	const row = body.lines[target.line]!;
+	assert.match(row, /^\s+\? [✓○✕◉◐] /, "the marker precedes the lifecycle glyph");
+	assert.equal(target.help, row.indexOf(PROJECT_MAP_HELP_MARKER), "the recorded column is the one the row paints");
 });
 
 test("a capability that declares no surface renders the same absence Coverage uses", () => {
