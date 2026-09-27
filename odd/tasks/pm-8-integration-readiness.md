@@ -134,6 +134,7 @@ Anything outside this list is a scope question, not an edit.
   - Closure evidence: focused **100/100** across the four affected suites, full suite **3,987 (3,949 passed, 38 skipped, 0 failed)**, type gate **195** with no regressions, provider contract, runtime harness and `git diff --check` all exiting 0.
 - [x] **PM8-5 — Documentation and unit verification.** **Delivered 2026-09-26.** `docs/project-map.md` gains an **Integration readiness** section covering the ordering, the nine checks and the eight that gate, the target and what freshness separates, the overlap label, the drift rule, the receipt's `authority: "none"` and the review-attribution limit; the Open Pi section's limits were rewritten because the tmux identity limit is now closed. The seven acceptance criteria are traced above, and the two things no test covers are stated rather than implied.
 - 2026-09-26: **PM8-5 delivered** — the reference's Integration readiness section, the seven criteria traced to the tests that pin them, and the two gaps stated rather than implied: criterion 6 is an argument from inspection, and the review-attribution limit is a finding about the review store's shape rather than a behaviour anyone chose. **PM-8 is complete as a unit**: five slices, 66 tests of its own plus three integration cases, all criteria met.
+- 2026-09-26: **PM-8's native review pass closed 5 of 5 approved with their authority burned**, fourteen reviewer runs, no correction round. Ten informational advisories, of which one cluster is worth naming: **three of PM8-2a's five land on the same two lines** — the freshness check at `lib/project-map-integration-repository.ts:80-81` — raised independently by three lenses. The concern is specific and real: `git merge-base --is-ancestor` exits non-zero both for a genuine non-ancestor and for a query that could not run, and the executor collapses both into one failure, so a broken revision is reported as *the branch has diverged*. Recorded as debt with that description rather than smoothed over; the fix is new work needing its own candidate. RDD returned to `off`.
 
 Each slice stays under the 400-line review budget and is its own commit. The schema field of decision B lands in PM8-4 with its own tests, never as a drive-by edit.
 
@@ -151,7 +152,23 @@ The unit added **66 tests** of its own — 19 for the projection, 14 for the Git
 
 **Not covered by a test, and stated rather than implied**: criterion 6 is an argument from inspection, and the review-attribution limit is a finding about the review store's shape rather than a behaviour anyone chose. Both are recorded above in the slice notes.
 
-## Review disposition
+## Native review pass (closed 2026-09-26)
+
+**All five candidates approved with their authority burned, and no correction round was opened.** RDD was enabled for the clone for the pass and returned to `off` afterwards. Each candidate was reviewed from a worktree pinned at its own tip with `baseRef` set to the previous slice's tip.
+
+| Slice | Candidate range | Lineage | Tier | Lenses | Outcome | Advisory |
+|---|---|---|---|---|---|---|
+| PM8-1 | `5bfff4d8..ecc29b9d` | `review-f16391572dffd5e2` | medium | reliability | approved, burned | 2 |
+| PM8-2a | `ecc29b9d..5a437f82` | `review-dfc334d121c444a2` | high | risk, resilience, readability, reliability | approved, burned | 5 |
+| PM8-2b | `5a437f82..1d733b44` | `review-050e0d01ebde3c72` | medium | reliability | approved, burned | 1 |
+| PM8-3 | `1d733b44..82409cc3` | `review-5cc0e803ca1ddbac` | high | risk, resilience, readability, reliability | approved, burned | 1 |
+| PM8-4 | `82409cc3..808c6406` | `review-6a5660c9c53df4b5` | high | risk, resilience, readability, reliability | approved, burned | 1 |
+
+**The pass cost five forecasts and fourteen reviewer runs** — four each for the three high-tier candidates, one each for the two medium ones. **Not reviewed**: PM8-5 (`808c6406..9d3a622e`) is documentation and the acceptance trace with no executable change, which the entry rule exempts.
+
+**Ten advisories, all informational and none blocking.** Nine are scattered, but the tenth is a cluster worth naming rather than filing: **three of PM8-2a's five advisories land on the same two lines** — `lib/project-map-integration-repository.ts:80-81`, the freshness check — raised independently by the readability, resilience and reliability lenses, with the resilience one naming the class (`R4-freshness-error-classification`). The concern is real and specific: `git merge-base --is-ancestor` exits non-zero both when the base genuinely is not an ancestor **and** when the query itself fails, and the executor collapses every failure into one `{ ok: false }`. So a broken revision or an unreadable object is currently reported as *the branch has diverged* — an overclaim in the one unit whose whole discipline is not overclaiming. The review approved anyway, and the disposition is informational, so this is recorded as **debt with a precise description rather than a silent pass**: the fix is to have the executor distinguish an exit code from a failure to run, and to classify only the former as a divergence. That is new work, and it would need its own candidate.
+
+**The other advisories**: PM8-1 at `lib/project-map-integration.ts:153` and `tests/project-map-integration.test.ts:58-71`; PM8-2a at `lib/project-map-integration-repository.ts:124` and `:130-132`; PM8-2b at `lib/project-map-integration-documents.ts:19-23`; PM8-3 at `extensions/gentle-project-map.ts:739`; PM8-4 at `extensions/gentle-project-map.ts:984`. None reopens its review, and none is a reason to re-run a closed candidate.
 
 RDD is **off** for this clone, as it was for PM-4 through PM-7 and the session-tab layer. The unit therefore carries parent verification plus independent audits, and its deferred native review pass runs when the unit closes, one candidate per slice, from a worktree pinned at that slice's tip with `baseRef` set to the previous slice's tip, with RDD enabled for the pass and returned to `off` afterwards.
 
