@@ -37,7 +37,7 @@ function harness(cwd: string): Harness {
 	const ctx: ProjectMapCommandContext = {
 		cwd,
 		hasUI: true,
-		ui: { notify: (message: string) => { notified.push(message); }, confirm: async () => true, input: async () => "yes" },
+		ui: { notify: (message: string) => { notified.push(message); }, confirm: async () => true },
 	};
 	return { ctx, notified };
 }

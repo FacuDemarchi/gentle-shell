@@ -1,0 +1,618 @@
+{
+  "version": "gentle-shell.project-map/v1",
+  "project": {
+    "id": "gentle-pi",
+    "name": "gentle-pi"
+  },
+  "approval": {
+    "state": "draft"
+  },
+  "foundations": [
+    {
+      "id": "quality-gates",
+      "outcome": "The project declares the automated gates that guard a change.",
+      "state": "done",
+      "evidence": [
+        "openspec/config.yaml"
+      ]
+    },
+    {
+      "id": "repository-tooling",
+      "outcome": "The repository and its declared tooling are present and consistent.",
+      "state": "done",
+      "evidence": [
+        "package.json"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "add-draft-generation-and-human-plan-approval",
+      "outcome": "Add draft generation and human plan approval",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "add-integration-readiness-sequencing",
+      "outcome": "Add integration-readiness sequencing",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "apply-an-accepted-contract-to-the-approved-map",
+      "outcome": "Apply an accepted contract to the approved map",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-5-coordination-protocol.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "approval-contract-in-the-versioned-map",
+      "outcome": "Approval contract in the versioned map",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "approval-transition-and-atomic-persistence",
+      "outcome": "Approval transition and atomic persistence",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "artifact-reading-and-reusable-validation-entry-points",
+      "outcome": "Artifact reading and reusable validation entry points",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "blockers-with-an-owner-and-a-resolution-path",
+      "outcome": "Blockers with an owner and a resolution path",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "build-the-shared-cross-worktree-coordination-store",
+      "outcome": "Build the shared cross-worktree coordination store",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "card-composition-and-shell-wiring",
+      "outcome": "Card composition and shell wiring",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-3-render-and-inspector.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "claims-and-leases",
+      "outcome": "Claims and leases",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "command-surface",
+      "outcome": "Command surface",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "contract-proposals-in-the-store",
+      "outcome": "Contract proposals in the store",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-5-coordination-protocol.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "coordination-projection",
+      "outcome": "Coordination projection",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-5-coordination-protocol.md"
+      ],
+      "surfaces": [],
+      "state": "planned"
+    },
+    {
+      "id": "coverage-explanations-and-grouping",
+      "outcome": "Coverage explanations and grouping",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-3-render-and-inspector.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "cross-worktree-end-to-end",
+      "outcome": "Cross-worktree end to end",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "define-and-validate-the-versioned-project-map",
+      "outcome": "Define and validate the versioned Project Map",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "deterministic-draft-generation-from-structured-sources",
+      "outcome": "Deterministic draft generation from structured sources",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "documentation",
+      "outcome": "Documentation",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "documentation-and-verification",
+      "outcome": "Documentation and verification",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "enforce-the-primary-direct-multi-file-write-boundary",
+      "outcome": "Enforce the primary direct multi-file write boundary.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/odd-runtime-delegation-gate.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "feature-document-references",
+      "outcome": "Feature-document references",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "heartbeats-and-session-bindings",
+      "outcome": "Heartbeats and session bindings",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "honest-launch-uncertainty-documentation-and-verification",
+      "outcome": "Honest launch uncertainty, documentation and verification",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-7-open-pi-flow.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "implement-the-explicit-open-pi-flow",
+      "outcome": "Implement the explicit Open Pi flow",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "interactive-surface-declaration",
+      "outcome": "Interactive surface declaration",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-3-render-and-inspector.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "odd-work-unit-extraction",
+      "outcome": "ODD work-unit extraction",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-2-draft-approval.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "provision-and-manage-capability-worktrees-safely",
+      "outcome": "Provision and manage capability worktrees safely",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "provisioning-behind-a-confirmation",
+      "outcome": "Provisioning, behind a confirmation",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-6-capability-worktrees.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "readiness-predicate-and-the-open-pi-affordance-read-only",
+      "outcome": "Readiness predicate and the `[Open Pi]` affordance (read-only)",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-7-open-pi-flow.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "readiness-receipts-that-grant-nothing",
+      "outcome": "Readiness receipts that grant nothing",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "reference-resolution-and-dependency-cycles",
+      "outcome": "Reference resolution and dependency cycles",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "render-the-real-map-and-capability-inspector",
+      "outcome": "Render the real map and capability inspector",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "reproduce-prompt-ownership-regression-with-a-failing-test",
+      "outcome": "Reproduce prompt ownership regression with a failing test",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/unified-sidebar-and-shell-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "restore-gentle-prompt-and-thinking-continuity",
+      "outcome": "Restore Gentle prompt and thinking continuity",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/unified-sidebar-and-shell-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "roll-out-migrate-document-and-verify-end-to-end",
+      "outcome": "Roll out, migrate, document, and verify end to end",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "row-selection-and-the-capability-inspector",
+      "outcome": "Row selection and the capability inspector",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-3-render-and-inspector.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "satellite-coordination-contracts",
+      "outcome": "Establish lead/satellite coordination contracts",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/project-map-orchestration.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "schema-version-fail-closed-version-gate-and-canonical-form",
+      "outcome": "Schema version, fail-closed version gate, and canonical form",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "session-registration-and-the-command-surface",
+      "outcome": "Session registration and the command surface",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-6-capability-worktrees.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "store-engine-with-compare-and-swap-and-corruption-handling",
+      "outcome": "Store engine with compare-and-swap and corruption handling",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "store-schema-and-canonical-root",
+      "outcome": "Store schema and canonical root",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-4-coordination-store.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "structural-validation",
+      "outcome": "Structural validation",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-durable-worktree-binding",
+      "outcome": "The durable worktree binding",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-6-capability-worktrees.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-launch-plan-and-the-tmux-adapter",
+      "outcome": "The launch plan and the tmux adapter",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-7-open-pi-flow.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-visible-fallback-to-a-background-subagent",
+      "outcome": "The visible fallback to a background subagent",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-7-open-pi-flow.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "unify-sidebar-dashboard",
+      "outcome": "Unify sidebar dashboard",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/unified-sidebar-and-shell-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verification",
+      "outcome": "Verification",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-1-project-map-schema.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verify-delegated-scope",
+      "outcome": "Verify delegated scope",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/unified-sidebar-and-shell-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "worktree-identity-and-safety-inspection-read-only",
+      "outcome": "Worktree identity and safety inspection (read-only)",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-6-capability-worktrees.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    }
+  ]
+}

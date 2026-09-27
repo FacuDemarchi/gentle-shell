@@ -35,12 +35,11 @@ interface Harness {
 	ctx: ProjectMapCommandContext;
 	notified: string[];
 	confirmations: number;
-	prompts: number;
 }
 
-function harness(cwd: string, answers: boolean[] = [], typedAnswers: (string | undefined)[] = []): Harness {
+function harness(cwd: string, answers: boolean[] = []): Harness {
 	const notified: string[] = [];
-	const state = { confirmations: 0, prompts: 0 };
+	const state = { confirmations: 0 };
 	const ctx: ProjectMapCommandContext = {
 		cwd,
 		hasUI: true,
@@ -52,12 +51,6 @@ function harness(cwd: string, answers: boolean[] = [], typedAnswers: (string | u
 				state.confirmations += 1;
 				return answers.shift() ?? true;
 			},
-			input: async () => {
-				state.prompts += 1;
-				// An empty queue answers `yes` so a setup step does not have to spell out
-				// the confirmation it is not the subject of. `[undefined]` is a dismissal.
-				return typedAnswers.length > 0 ? typedAnswers.shift() : "yes";
-			},
 		},
 	};
 	return {
@@ -65,9 +58,6 @@ function harness(cwd: string, answers: boolean[] = [], typedAnswers: (string | u
 		notified,
 		get confirmations() {
 			return state.confirmations;
-		},
-		get prompts() {
-			return state.prompts;
 		},
 	} as Harness;
 }
@@ -148,25 +138,19 @@ test("status reports a draft without touching it", async () => {
 	});
 });
 
-test("generating the plan asks for a typed confirmation and writes only on an affirmative answer", async () => {
+test("generating the plan asks through the confirmation dialog and writes only when it is accepted", async () => {
 	await withRepository(async (directory) => {
-		const dismissed = harness(directory, [], [undefined]);
-		const first = await runProjectMapCommand("draft", dismissed.ctx, { now: () => NOW });
+		const declined = harness(directory, [false]);
+		const first = await runProjectMapCommand("draft", declined.ctx, { now: () => NOW });
 		assert.equal(first.wrote, false);
-		assert.equal(dismissed.prompts, 1);
-		assert.equal(dismissed.confirmations, 0);
+		assert.equal(declined.confirmations, 1);
 		assert.equal(readProjectMapFile(artifactPath(directory)).map, null);
-		assert.ok(dismissed.notified.some((message) => message.includes("nothing was written")));
+		assert.ok(declined.notified.some((message) => message.includes("nothing was written")));
 
-		const answered = harness(directory, [], ["nope"]);
-		const second = await runProjectMapCommand("draft", answered.ctx, { now: () => NOW });
-		assert.equal(second.wrote, false);
-		assert.equal(readProjectMapFile(artifactPath(directory)).map, null);
-		assert.ok(answered.notified.some((message) => message.includes('must be "yes"')));
-
-		const accepted = harness(directory, [], ["YES"]);
-		const third = await runProjectMapCommand("draft", accepted.ctx, { now: () => NOW });
-		assert.equal(third.wrote, true);
+		const accepted = harness(directory, [true]);
+		const second = await runProjectMapCommand("draft", accepted.ctx, { now: () => NOW });
+		assert.equal(second.wrote, true);
+		assert.equal(accepted.confirmations, 1);
 		assert.equal(readProjectMapFile(artifactPath(directory)).map?.approval.state, "draft");
 	});
 });
@@ -174,20 +158,20 @@ test("generating the plan asks for a typed confirmation and writes only on an af
 test("the bare command ensures a map, shows it, and leaves an existing one alone", async () => {
 	await withRepository(async (directory) => {
 		let shown = 0;
-		const first = harness(directory, [], ["yes"]);
+		const first = harness(directory, [true]);
 		const generated = await runProjectMapCommand("", first.ctx, { now: () => NOW, onShow: () => { shown += 1; } });
 		assert.equal(generated.action, "ensure");
 		assert.equal(generated.wrote, true);
-		assert.equal(first.prompts, 1);
+		assert.equal(first.confirmations, 1);
 		assert.equal(shown, 1);
 		assert.ok(first.notified.some((message) => message.toLowerCase().includes("assumption")));
 		const written = readFileSync(artifactPath(directory), "utf8");
 
-		const second = harness(directory, [], [undefined]);
+		const second = harness(directory);
 		const again = await runProjectMapCommand("ensure", second.ctx, { now: () => NOW, onShow: () => { shown += 1; } });
 		assert.equal(again.action, "ensure");
 		assert.equal(again.wrote, false);
-		assert.equal(second.prompts, 0, "an existing map is never regenerated behind the human's back");
+		assert.equal(second.confirmations, 0, "an existing map is never regenerated behind the human's back");
 		assert.equal(shown, 2, "ensuring makes the card visible either way");
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), written);
 		assert.equal(again.map?.project.id, "example-shop");
@@ -198,7 +182,7 @@ test("the bare command replaces an unusable artifact only after saying so", asyn
 	await withRepository(async (directory) => {
 		mkdirSync(join(directory, "openspec"), { recursive: true });
 		writeFileSync(artifactPath(directory), "{ not json", "utf8");
-		const probe = harness(directory, [], ["yes"]);
+		const probe = harness(directory, [true]);
 		const report = await runProjectMapCommand("", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, true);
 		assert.ok(probe.notified.some((message) => message.includes("not a usable map")));
@@ -208,13 +192,13 @@ test("the bare command replaces an unusable artifact only after saying so", asyn
 
 test("draft writes a draft only after the human confirms", async () => {
 	await withRepository(async (directory) => {
-		const declined = harness(directory, [], [undefined]);
+		const declined = harness(directory, [false]);
 		const refused = await runProjectMapCommand("draft", declined.ctx, { now: () => NOW });
 		assert.equal(refused.wrote, false);
-		assert.equal(declined.prompts, 1);
+		assert.equal(declined.confirmations, 1);
 		assert.equal(readProjectMapFile(artifactPath(directory)).map, null);
 
-		const accepted = harness(directory, [], ["yes"]);
+		const accepted = harness(directory, [true]);
 		const written = await runProjectMapCommand("draft", accepted.ctx, { now: () => NOW });
 		assert.equal(written.wrote, true);
 		const read = readProjectMapFile(artifactPath(directory));
@@ -500,9 +484,9 @@ test("refuses to approve when the artifact changed between the read and the conf
 test("refuses to write a draft when the artifact appeared while the human decided", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory);
-		probe.ctx.ui.input = async () => {
+		probe.ctx.ui.confirm = async () => {
 			writeFileSync(artifactPath(directory), "someone else got here first\n", "utf8");
-			return "yes";
+			return true;
 		};
 		const report = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, false);
