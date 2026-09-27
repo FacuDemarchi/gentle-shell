@@ -57,7 +57,7 @@ function map(): ProjectMapV1 {
 		project: { id: "example-shop", name: "Example Shop" },
 		approval: { state: "approved", approvedAt: NOW.toISOString(), approvedBy: "human" },
 		foundations: [],
-		capabilities: [{ id: "catalog", outcome: "Catalog is available.", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "ready" }],
+		capabilities: [{ id: "catalog", outcome: "Catalog is available.", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: ["odd/tasks/catalog.md"], surfaces: ["web"], state: "ready" }],
 	};
 }
 
@@ -92,6 +92,11 @@ function withClone(runScenario: (clone: Clone) => Promise<void> | void): Promise
 	const artifact = join(main, "openspec", "project-map.json");
 	writeFileSync(artifact, serializeProjectMap(map()), "utf8");
 	writeFileSync(join(main, "README.md"), "start\n", "utf8");
+	// The capability declares a feature document with open tasks, so the `tasks` check can agree
+	// with a declared state of `ready`: without it the candidate stays unverified for a reason
+	// that has nothing to do with what this scenario measures.
+	mkdirSync(join(main, "odd", "tasks"), { recursive: true });
+	writeFileSync(join(main, "odd", "tasks", "catalog.md"), "- [x] one\n- [ ] two\n", "utf8");
 	git(main, ["add", "-A"]);
 	git(main, ["commit", "-m", "init"]);
 	const baseCommit = git(main, ["rev-parse", "HEAD"]).trim();
@@ -198,15 +203,14 @@ test("readiness measures a real branch against the real integration target", asy
 		assert.match(text, /behind main by 0/, "the base commit is contained in the target, and the distance is measured");
 		assert.match(text, /Readiness grants nothing/, "the report repeats that it is not permission");
 
-		// PINNED DEFECT (recorded as debt, fix needs its own candidate): coverage gates readiness
-		// on the existence of a readiness receipt, and `integrate` is the only issuer of receipts —
-		// for candidates that are already ready. A fresh store therefore cannot produce one, so the
-		// first receipt is unreachable from inside the product and no candidate is ever `ready`.
+		// F1's regression guard: the run issues the first receipt itself, so the cycle is closed and
+		// the vocabulary of readiness is reachable from a fresh store. It used to be impossible.
 		const first = readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 10 }).receipts.length;
-		assert.equal(first, 0, "nothing was issued, because nothing could be");
-		assert.match(text, /no readiness receipt covers this capability/, "the report says why, in its own words");
+		assert.equal(first, 1, "the first receipt comes from the first run");
+		assert.match(text, /Next safe integration action: catalog/, "and a candidate can actually be ready");
+		assert.match(text, /coverage: no readiness receipt recorded yet/, "the report still states the fact");
 		const again = harness(main, "integrator-session");
 		await run("integrate", again.ctx, NOW);
-		assert.equal(readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 10 }).receipts.length, 0, "and the second run cannot break the circle either");
+		assert.equal(readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 10 }).receipts.length, 2, "every run records its own evidence, and the receipts accumulate by design");
 	});
 });

@@ -772,7 +772,8 @@ test("integrate names the next safe integration action and issues a receipt for 
 		}), "utf8");
 		const head = String(execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" })).trim();
 		execFileSync("git", ["-C", directory, "branch", "feat/catalog"], { stdio: "ignore" });
-		assert.ok(issueProjectMapStoreReadinessReceipt({ root: store, capabilityId: "catalog", issuedBy: "session-integrator", verified: ["coverage"], evidence: ["fixture"], now }).receipt);
+		// No receipt is planted: the run below has to issue the first one itself, which is the whole
+		// point of the coverage check no longer gating on its own product.
 		assert.ok(bindProjectMapStoreWorktree({ root: store, capabilityId: "catalog", branch: "feat/catalog", worktreeRoot: directory, sessionId: "session-catalog", baseCommit: head, now }).binding);
 
 		const extension = projectMapExtension({ GENTLE_PI_AGENT_HOME: agentHome });
@@ -785,7 +786,7 @@ test("integrate names the next safe integration action and issues a receipt for 
 		assert.match(printed, /verification: pnpm test/);
 		assert.match(printed, /tasks: odd\/tasks\/catalog\.md 1\/2/);
 		assert.match(printed, /the review store records candidates, not capabilities/);
-		assert.equal(readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 5 }).receipts.length, 2, "the fixture's receipt plus the one this run issued");
+		assert.equal(readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 5 }).receipts.length, 1, "the run issued the first receipt, with nothing planted for it");
 		assert.ok(probe.notified.some((message) => /authority "none"/.test(message)), printed);
 	});
 });
