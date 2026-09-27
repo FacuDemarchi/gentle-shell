@@ -1,7 +1,7 @@
 # PM-9 — Rollout, migration and end-to-end verification
 
-Status: **planned, frozen and delivered 2026-09-27.** Five slices, six decisions settled by the user, all five delivered; the native review pass is the only thing left.
-This is the last unit of the initiative. PM-1 through PM-8 and the session-tab layer are closed as units with their native review passes.
+Status: **closed 2026-09-27.** Five slices, six decisions settled by the user, all five delivered, and the native review pass closed **6 of 6 approved with their authority burned**.
+This is the last unit of the initiative, and the initiative is now complete: PM-1 through PM-8 and the session-tab layer are closed as units with their native review passes, and PM-9 closes with its own.
 
 ## Objective
 
@@ -176,29 +176,35 @@ One native review candidate per slice, from a worktree pinned at that slice's ti
 4. Multi-session/worktree end-to-end scenarios are exercised on Linux, macOS, Windows, tmux, headless fallback, crash recovery and stale-state cleanup — with each cell's real coverage named.
 5. Observability, rollback, package contents, compatibility and complete-suite behavior are verified.
 
-## Handoff — the PM-9 native review pass (prepared 2026-09-27)
+## Native review pass — closed 2026-09-27
 
-**State at handoff.** Branch `feat/project-map-orchestration` at `ca5d05ff`, working tree clean, in sync with `origin`, a single worktree, no `review/*` branches left behind. `gentle-ai` is on `PATH` (`/home/facundo/.local/bin/gentle-ai`), tmux is 3.6, and RDD reads `off (decided by clone_local)` with `global: on`. Nothing is in flight: the unit is delivered and both findings are closed, so this pass is the only work left on the initiative.
+**Six of six approved with their authority burned, twenty-four reviewer runs, no correction round, no refuter.** Every candidate came back **high with four lenses**, including the two the plan expected to be medium: `fb129b5a..38aa6828` and `23de5e85..2a4f2841` both touch test files that shell out to Git, and **tier follows the process boundary rather than the diff size**. Seven informational advisories, none blocking, none opening a correction. The pass enabled RDD for the clone and returned it to `off (decided by clone_local)`; a single worktree, a clean tree and no `review/*` branches are the evidence that it left nothing behind.
 
-**Candidates, in order** — one per slice and one per fix:
+| # | Range | What it carries | Tier | Lenses | Lineage | Advisories |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `bd427346..4c91b111` | PM9-1, the opt-in gate | high | 4/4 | `review-5cb57b5a1fa428e2` | 3 |
+| 2 | `4c91b111..f1a40935` | PM9-2, initialization and the rollout boundary | high | 4/4 | `review-a82c0ac586027e74` | 2 |
+| 3 | `f1a40935..fb129b5a` | PM9-3, the end-to-end scenarios, the platform matrix and the tmux propagation | high | 4/4 | `review-6d021459ee7fd621` | 0 |
+| 4 | `fb129b5a..38aa6828` | PM9-4, the package pin and the source guard | high | 4/4 | `review-cfcefdc3454b29a5` | 0 |
+| 5 | `38aa6828..23de5e85` | the F2 fix | high | 4/4 | `review-e924cba4197830d2` | 1 |
+| 6 | `23de5e85..2a4f2841` | the F1 fix | high | 4/4 | `review-09be152020fb99c4` | 1 |
 
-| # | Range | What it carries | Expected tier |
-| --- | --- | --- | --- |
-| 1 | `bd427346..4c91b111` | PM9-1, the opt-in gate | high — the touched test files shell out to Git |
-| 2 | `4c91b111..f1a40935` | PM9-2, initialization and the rollout boundary | high, same reason |
-| 3 | `f1a40935..fb129b5a` | PM9-3, the end-to-end scenarios, the platform matrix and the tmux propagation | high |
-| 4 | `fb129b5a..38aa6828` | PM9-4, the package pin and the source guard | medium — a pure change, no process boundary |
-| 5 | `38aa6828..23de5e85` | the F2 fix | high — the touched test files shell out |
-| 6 | `23de5e85..2a4f2841` | the F1 fix | medium — a pure projection change |
+**The seven advisories, with their locations** (all `WARNING`, disposition `informational`, none of them a finding against this unit's behaviour):
 
-Tier follows the **process boundary, not the size**: a projection or a renderer with no subprocess comes back medium with a single lens, and a test fixture that shells out takes a small diff to high. **Exempt by the entry rule** (documentation or records, no executable change): `48a9d6b4` (PM9-5 and the acceptance trace), `31c2ed58`, `ca5d05ff` and `90f7b8f1`.
+- Candidates 1 and 2 each repeat one shape — a WARNING on the refusal path's own readability and reliability: `extensions/gentle-project-map.ts:1109` twice and `:583-592` once, and a second pair on `tests/project-map-rollout.test.ts:157-165` where the fixture resets an approval. All four are style-level notes about code this unit added.
+- Candidates 5 and 6 carry one each, and **both land on `odd/tasks/pm-9-rollout-e2e.md` itself** (`:149`, `:130`): the doc's change context reads thin where the fix narrative sits. Documentation-only, recorded here rather than smoothed over.
+- Candidates 3 and 4 returned nothing at all.
 
-**Recipe, validated more than twenty times across this initiative.** One candidate at a time, and never while a writer runs:
+An advisory never reopens a candidate: this is follow-up work, recorded, and none of it needs a candidate of its own unless a later unit decides the readability of the refusal path is worth one.
 
-1. `gentle-ai review mode enable --scope clone`, then `gentle-ai review mode status` must read `on` for the clone.
+**Exempt by the entry rule** (documentation or records, no executable change): `48a9d6b4` (PM9-5 and the acceptance trace), `31c2ed58`, `ca5d05ff` and `90f7b8f1`.
+
+**Recipe, validated across this initiative, including this pass.** One candidate at a time, and never while a writer runs:
+
+1. `gentle-ai review mode enable --scope clone`; the effective mode must read `on` (with the global switch already on, `enable` clears the clone-local override instead of setting it, and the effective line is the one that matters).
 2. Pin a sibling worktree at the candidate's **tip**, never at its base: `git worktree add -b review/<name> ../pm9-review-<name> <tip-sha>`. A worktree created at the base sha returns `empty_base_diff_bootstrap_required` — terminal, and no lineage is created.
-3. `gentle_review` `{"operation":"inspect"}` with `input` `{"baseRef":"<previous-tip-sha>","committedOnly":true}` and `workspaceRoot` set to the pinned worktree.
-4. `gentle_review` `{"operation":"start"}` with a **fresh** `idempotencyKey` and the **same** `input`. Without the same `baseRef` the route falls into `collect: empty_candidate_base_ref_required`. With RDD on the returned wrapper may be named `answer-consent`: when the lineage already reads `action: created` with no `consentBinding`, that is a name and not a question — continue with STATUS and `result.lineage_id`.
+3. `gentle_review` `{"operation":"inspect"}` with `input` `{"baseRef":"<previous-tip-sha>","committedOnly":true}` and `workspaceRoot` set to the pinned worktree. **`baseRef` must be the full 40-character commit id**: an abbreviated sha is refused as `base-ref-unresolvable`, before authority, so it costs nothing but a retry.
+4. `gentle_review` `{"operation":"start"}` with a **fresh** `idempotencyKey` and the same range expressed as `{"mode":"ordinary","baseRef":"<previous-tip-sha>","committedOnly":true}`. **The `mode` field is load-bearing**: without it the input is read as a graph-v1 controller START, which throws `Judgment Day graph-v1 START requires lineageId` before any mutation. Omitting the `baseRef` altogether falls into `collect: empty_candidate_base_ref_required`. With RDD on the returned wrapper may be named `answer-consent`: when the lineage already reads `action: created` with no `consentBinding`, that is a name and not a question — continue with STATUS and `result.lineage_id`.
 5. `gentle_review` `{"operation":"status","lineageId":"<lineage>","workspaceRoot":"<worktree>"}` and route only from the transition it returns.
 6. `gentle_review_capture_group` with the complete ordered `collectBindings` from that STATUS. The first call returns a **forecast** and runs nothing: relay it, then resubmit the same exact bindings with `reviewerRunAcknowledged: true`.
 7. On `approved`, `gentle_review` `{"operation":"acknowledge-approved","lineageId":"<lineage>","workspaceRoot":"<worktree>"}` — that call burns the authority. Do not issue STATUS after the burn.
@@ -215,4 +221,4 @@ Tier follows the **process boundary, not the size**: a projection or a renderer 
 
 **Gates to re-read before starting and after closing**, on the reviewed tip: `node --experimental-strip-types --test tests/*.test.ts` (**4,012: 3,974 passed, 38 skipped, 0 failed**), `node scripts/check-types.mjs` (**195** recorded diagnostics, no regressions), `node scripts/check-provider-contract.mjs`, `node scripts/build-runtime-modules.mjs --check`, `node --experimental-strip-types tests/runtime-harness.mjs`, `node scripts/verify-package-files.mjs` (**196 files**, exit 0) and `git diff --check`.
 
-**Closing the pass.** One `docs(project-map): close the PM-9 native review pass` commit recording every lineage, tier, lens count and advisory, plus the roadmap history line and the `Next decision` update — the same shape as the PM-7 and PM-8 closures. Push it and leave the branch in sync with `origin`. An advisory never reopens a candidate: it is follow-up work, recorded.
+**Closing the pass, as executed.** One `docs(project-map): close the PM-9 native review pass` commit recording every lineage, tier, lens count and advisory, plus the roadmap history line and the `Next decision` update — the same shape as the PM-7 and PM-8 closures. It is pushed and the branch is left in sync with `origin`. RDD was returned to `off (decided by clone_local)` before the closure ran, and the gates were re-read after the sixth acknowledgement: full suite **4,012 (3,974 passed, 38 skipped, 0 failed)**, type baseline **195** with no regressions, package resource check **196 files / exit 0**, provider contract, generated runtime modules, runtime harness and `git diff --check` all **0** — identical to the pre-pass baseline, because the pass writes nothing to the reviewed candidate.
