@@ -223,6 +223,7 @@ PM-1..PM-8 ──────────────→ PM-9 Rollout and end-to
   - Verify coverage, tests, map/task consistency, branch freshness, unresolved blockers, and review evidence.
   - Detect likely merge conflicts early without pretending to resolve them automatically.
   - Present the next safe integration action while leaving commit, push, PR, and merge to ordinary repository policy.
+  - **Planned 2026-09-26 at recon depth** in `odd/tasks/pm-8-integration-readiness.md`, with six product decisions recorded there and open. The recon's central finding is that this unit is mostly **assembly rather than invention**: the `readiness-receipt` record already carries `verified`/`evidence` with `authority: "none"`, the coordination projection already computes `nextSafeAction` (including `integrate`), the `worktree-binding` already stores the branch's `base_commit` so freshness needs no new field, `lib/review-candidate-view.ts` already defines an injectable `CandidateGitExecutor` with `deriveChangedPathManifest`, and the native review's own library (`lib/review-repository.ts`) exposes the read-only entry points for its evidence. It is also the owner of the two schema decisions PM-7 deferred: per-capability verification requirements, and a launch nonce for exact tmux identity.
 
 - [ ] **PM-9 — Roll out, migrate, document, and verify end to end**
   - Gate the functional system behind an explicit opt-in until schemas and recovery behavior stabilize.
