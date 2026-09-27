@@ -86,7 +86,7 @@ Six decisions were put to the user with the options below and the recommendation
 - `lib/review-*.ts` is the native review's own implementation. PM-8 may read through its public functions and must not change any of them.
 - `extensions/gentle-project-map.ts` owns the command surface; a new sub-action extends the closed list.
 
-## Authorized edit surfaces (provisional, pending the decisions)
+## Authorized edit surfaces
 
 - `lib/project-map-integration.ts` (new: the ordering and verification projection).
 - `tests/project-map-integration.test.ts` (new).
@@ -132,19 +132,24 @@ Anything outside this list is a scope question, not an edit.
   - **The observation now says which identity it established.** With a nonce it reports that the binding carries this launch's nonce; without one it keeps the previous wording, including the honest "this identifies the capability worktree rather than the exact child" for a host that does not expose the child's pid.
   - **Five pre-existing tests needed updating, and all five were assertions that the identity payload is a frozen object** — `deepEqual` against `{ capabilityId, parentSessionId }`, which legitimately gained a field. They now assert the fields they care about, and the real-tmux integration test parses the variable tmux actually set and checks the nonce is in it.
   - Closure evidence: focused **100/100** across the four affected suites, full suite **3,987 (3,949 passed, 38 skipped, 0 failed)**, type gate **195** with no regressions, provider contract, runtime harness and `git diff --check` all exiting 0.
-- [ ] **PM8-5 — Documentation and unit verification.** `docs/project-map.md`, the acceptance trace, and the honest record of what was not verified.
+- [x] **PM8-5 — Documentation and unit verification.** **Delivered 2026-09-26.** `docs/project-map.md` gains an **Integration readiness** section covering the ordering, the nine checks and the eight that gate, the target and what freshness separates, the overlap label, the drift rule, the receipt's `authority: "none"` and the review-attribution limit; the Open Pi section's limits were rewritten because the tmux identity limit is now closed. The seven acceptance criteria are traced above, and the two things no test covers are stated rather than implied.
+- 2026-09-26: **PM8-5 delivered** — the reference's Integration readiness section, the seven criteria traced to the tests that pin them, and the two gaps stated rather than implied: criterion 6 is an argument from inspection, and the review-attribution limit is a finding about the review store's shape rather than a behaviour anyone chose. **PM-8 is complete as a unit**: five slices, 66 tests of its own plus three integration cases, all criteria met.
 
 Each slice stays under the 400-line review budget and is its own commit. The schema field of decision B lands in PM8-4 with its own tests, never as a drive-by edit.
 
-## Acceptance criteria (provisional)
+## Acceptance criteria (all met, traced 2026-09-26)
 
-1. The report orders candidates by dependency and accepted-contract state, deterministically.
-2. Every claim in the report is either verified, mismatched or explicitly unverified — never inferred from a missing answer.
-3. Branch freshness is computed against the integration target and names how far behind a branch is.
-4. Likely conflicts are reported as *likely*, with the overlapping paths named, and nothing is resolved.
-5. A readiness receipt is issued only for a verified candidate, and it grants nothing.
-6. Nothing in the unit writes to the repository, the store or the map.
-7. An unreadable map, store or branch degrades to an explicit "unverified" rather than a silent pass.
+The unit added **66 tests** of its own — 19 for the projection, 14 for the Git readers, 17 for the document readers, 16 for the report — plus the three integration cases in the extension suite that drive the real sub-action against a real repository and a real store.
+
+1. **The report orders candidates by dependency and accepted-contract state, deterministically.** Pinned by `a dependency is ordered before the capability that depends on it`, `the order stays deterministic when nothing depends on anything` and `a dependency cycle is reported and still yields a deterministic order`. Contract state is not an ordering input but a gating one, pinned by `a proposed contract without a decision is a mismatch and keeps the candidate out of ready`.
+2. **Every claim is verified, mismatched or explicitly unverified — never inferred from a missing answer.** Pinned by `every check defaults to unverified, and an unverified check is never read as verified`, `a fully verified, unblocked, complete capability is ready`, and one case per gating check (`an open blocker…`, `an unready dependency…`, `a capability with no readiness receipt is a coverage mismatch`).
+3. **Branch freshness is computed against the integration target and names how far behind a branch is.** Pinned by `the integration target is the branch the main worktree is on`, `a base contained in the target is fresh, and the distance is reported`, `a base the target does not contain is a mismatch, because the branch has diverged`, `a git failure while measuring freshness is unverified, never a pass`, and the report case `the distance behind the target is reported when it was measured`.
+4. **Likely conflicts are reported as *likely*, with the overlapping paths named, and nothing is resolved.** Pinned by `two candidates touching the same path are both a likely conflict, and the path is named`, `every shared path is named, in a deterministic order`, `candidates touching nothing in common are verified`, `one candidate's git failure does not make another candidate unverified`, and the report case `a mismatched check is named with the reason it mismatched`.
+5. **A readiness receipt is issued only for a verified candidate, and it grants nothing.** Pinned end to end by `integrate names the next safe integration action and issues a receipt for it`, which drives the real sub-action, asserts the printed `Next safe integration action: catalog` and the `authority "none"` line, and counts the receipts in the store afterwards; the `authority: "none"` value itself is pinned by the store's own schema suite.
+6. **Nothing in the unit writes to the repository, the store or the map.** Structural rather than tested: the projection and both reader modules import no store writer, every Git call is `worktree list`, `merge-base --is-ancestor`, `rev-list --count` and `diff --name-only`, and the only write in the whole unit is the readiness receipt, which is the durable evidence decision F asks for. The `integrate` report returns `wrote: false`.
+7. **An unreadable map, store or branch degrades to an explicit "unverified" rather than a silent pass.** Pinned by `an absent map reports nothing available and forwards the diagnostics it was given`, `an unreadable worktree list leaves the target unknown rather than guessing`, `freshness is unverified when the target is unknown`, `overlap is unverified when the integration target is unknown`, `a candidate with no branch is unverified, because nothing could be compared`, `a declared feature document that could not be read is a mismatch, not a silent pass`, and the report case `an unavailable readiness says so instead of printing an empty report`.
+
+**Not covered by a test, and stated rather than implied**: criterion 6 is an argument from inspection, and the review-attribution limit is a finding about the review store's shape rather than a behaviour anyone chose. Both are recorded above in the slice notes.
 
 ## Review disposition
 
