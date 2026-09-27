@@ -618,17 +618,22 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 				ctx.ui.notify(message);
 				return emptyReport("lead", [refusal(message, "$.sessionId")]);
 			}
-			const result = operation === "claim"
-				? acquireProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant })
+			// A refusal is an error, not a diagnostic: a recovered stale claim arrives as a *warning*
+			// with the claim already written, and treating that as a failure announced "nothing
+			// happened" while the store had changed hands. Success is the operation's own effect, so
+			// the report cannot disagree with the store.
+			const outcome = operation === "claim"
+				? (() => { const claim = acquireProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: claim.claim !== null, diagnostics: claim.diagnostics }; })()
 				: operation === "renew"
-					? renewProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant })
-					: releaseProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant });
-			if (result.diagnostics.length > 0) {
-				ctx.ui.notify(`Lead ${operation} was refused.\n${describeDiagnostics(result.diagnostics)}`);
-				return emptyReport("lead", result.diagnostics);
+					? (() => { const renewed = renewProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: renewed.claim !== null, diagnostics: renewed.diagnostics }; })()
+					: (() => { const released = releaseProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: released.released === true, diagnostics: released.diagnostics }; })();
+			if (!outcome.effect || outcome.diagnostics.some((entry) => entry.severity === "error")) {
+				ctx.ui.notify(`Lead ${operation} was refused.\n${describeDiagnostics(outcome.diagnostics)}`);
+				return emptyReport("lead", outcome.diagnostics);
 			}
 			ctx.ui.notify(operation === "release" ? "Released the Project Map lead claim." : `${operation === "claim" ? "Claimed" : "Renewed"} the Project Map lead claim for ${sessionId}.`);
-			return emptyReport("lead");
+			if (outcome.diagnostics.length > 0) ctx.ui.notify(describeDiagnostics(outcome.diagnostics));
+			return { action: "lead", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: outcome.diagnostics };
 		}
 
 		const [operation = "", ...arguments_] = parsed.argument.split(/\s+/);
@@ -660,7 +665,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 				return emptyReport("contract", result.diagnostics);
 			}
 			ctx.ui.notify(`Proposed contract ${contractId} for ${capabilityId} with digest ${result.contract.digest}.`);
-			return emptyReport("contract", result.diagnostics);
+			return { action: "contract", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: result.diagnostics };
 		}
 		if (operation === "list") {
 			const [capabilityId = "", ...extra] = arguments_;
@@ -724,15 +729,15 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		}
 		if (operation === "reject") {
 			ctx.ui.notify(`Rejected contract ${contractId}; the Project Map artifact was not changed.`);
-			return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: decision.diagnostics };
+			return { action: "contract", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: decision.diagnostics };
 		}
 		const applied = applyProjectMapContract({ path: artifactPath, capabilityId, contractId });
 		if (applied.map === null) {
 			ctx.ui.notify(`Accepted contract ${contractId} durably, but it could not be applied to the Project Map. The apply can be retried.\n${describeDiagnostics(applied.diagnostics)}`);
-			return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
+			return { action: "contract", wrote: true, map: state.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
 		}
 		ctx.ui.notify(`Accepted contract ${contractId} durably and applied it to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "contract", wrote: applied.applied || applied.removed, map: applied.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
+		return { action: "contract", wrote: true, map: applied.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
 	}
 
 	if (parsed.action === "show") {
