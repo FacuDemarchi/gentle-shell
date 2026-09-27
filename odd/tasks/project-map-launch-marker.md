@@ -45,3 +45,19 @@ Make the card answer, at a glance, which capability can be opened in a parallel 
 - Refusing a second launch while a live claim exists (`nextSafeAction === "work"`). Readiness does not gate on claims today, and changing that is its own decision.
 - The Inspector, its visibility, and the Mustachi block in the launch overlay. The user left the Inspector alone and did not ask for the overlay artwork.
 - Any dependency on a Nerd Font: the package uses no private-use glyphs and keeps it that way.
+
+## Delivered
+
+| Commit | What it carries |
+| --- | --- |
+| `28dc7c64` | The derived predicate: `done` and `blocked` are the only states that still refuse |
+| `d202527e` | `lib/project-map-launchable.ts`, the cheap projection, pinned in the pack list |
+| `4b2bdbec` | The `✿` marker: column, hit range, accent paint, and the digest fold |
+| `45ced984` | The wiring: the launchable set on a two-second cadence, and the click running `open` |
+| `b9e70fa6` | The documentation |
+| `0d0f0d0d`-ish | The two integration cases through the real extension |
+
+Gates at delivery: unit suite 4,058 (4,020 passed, 38 skipped, 0 failed), type
+baseline 195 with no regressions, package resource check 199 files, provider
+contract, generated runtime modules, runtime harness and `git diff --check` all
+0. RDD reads `off (decided by clone_local)`, so no native review ran.
