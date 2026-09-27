@@ -17,8 +17,6 @@ import {
 
 export const PROJECT_MAP_RAIL_KEY = "project-map";
 
-export type ProjectMapOpenPiDecision = { permitted: boolean; diagnostics: Array<{ code: string }> };
-export type ProjectMapOpenPiDecisionFor = (capabilityId: string) => ProjectMapOpenPiDecision;
 let memoizedOpenPiHost: ProjectMapOpenPiHost | undefined;
 
 /** tmux availability cannot change while this Pi process is alive. */
@@ -65,7 +63,7 @@ export function renderProjectMapCard(
 	collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED,
 	hint?: string,
 ): string[] {
-	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, undefined, cardInnerWidth(width)), theme, width, { expanded, hint });
+	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, cardInnerWidth(width)), theme, width, { expanded, hint });
 }
 
 /**
@@ -81,33 +79,22 @@ export interface ProjectMapCardDetail {
 	digest(): string;
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
 	const capabilityLines = new Map<number, { id: string; help: number; launch?: number }>();
 	const capabilityStarts = new Map<string, number>();
 	let revealedSelection: string | undefined;
-	let decisionSelection: string | undefined;
-	let decision: ProjectMapOpenPiDecision | undefined;
-	const currentDecision = () => {
-		const selection = session.selection();
-		if (selection !== decisionSelection) {
-			decisionSelection = selection;
-			decision = selection === undefined ? undefined : decisionFor?.(selection);
-		}
-		return decision;
-	};
 	const renderCardLines = (width: number) => {
 		headerLines.clear();
 		capabilityLines.clear();
 		capabilityStarts.clear();
 		const current = state(artifactPath);
-		const openPiDecision = currentDecision();
 		const launchable = launch?.launchable();
 		// The marker is painted with the theme's own role, so the row still follows the configured
 		// theme; the descriptor and the hit map must be built from the same call.
 		const paint = (role: string, text: string) => theme.fg(role, text);
-		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width), launchable, paint);
-		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width), launchable, paint);
+		const body = projectMapCardBody(current, session.collapse(), session.selection(), cardInnerWidth(width), launchable, paint);
+		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), cardInnerWidth(width), launchable, paint);
 		const lines = renderCard(descriptor, theme, width, { expanded: true, hint });
 		// `renderCard` starts with the frame top, then wraps each body line in order. Map
 		// body indices through that wrapping rather than reading control text back from paint.
@@ -145,7 +132,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 	return {
 		render,
-		digest: () => `${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision(), launch?.launchable())}|${detail?.digest() ?? ""}`,
+		digest: () => `${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), launch?.launchable())}|${detail?.digest() ?? ""}`,
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -176,7 +163,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	return {
 		render: (width) => {
 			const current = state(artifactPath);
-			const descriptor = projectMapCardDescriptor(current, undefined, undefined, undefined, cardInnerWidth(width));
+			const descriptor = projectMapCardDescriptor(current, undefined, undefined, cardInnerWidth(width));
 			const body = current.kind === "ready" ? [projectMapSummaryLine(current.map)] : descriptor.body;
 			return renderCard({ ...descriptor, body }, theme, width, { expanded: false });
 		},
@@ -184,14 +171,13 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
 		artifactPath,
 		theme,
 		session,
 		hint,
 		(localLine) => sidebarState(tui).reveal?.(PROJECT_MAP_RAIL_KEY, localLine),
-		decisionFor,
 		detail,
 		onExplain,
 		launch,

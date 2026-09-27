@@ -131,7 +131,7 @@ test("explaining a capability opens the overlay with what its document says", as
 		const body = opened.join("\n");
 		assert.ok(body.includes(id), "the overlay names the capability");
 		assert.ok(body.includes("The body line the document carries."), "the overlay shows the document's own words");
-		assert.ok(body.includes("What the document says:"), "and labels them as the document's");
+		assert.ok(body.includes("Lo que dice el documento:"), "and labels them as the document's, in Spanish");
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 

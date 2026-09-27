@@ -20,6 +20,7 @@ import {
 	projectMapCardState,
 	projectMapCoverage,
 	projectMapGroupFromHeader,
+	projectMapStaticBlockers,
 	projectMapSummaryLine,
 	toggleProjectMapGroup,
 	type ProjectMapCardState,
@@ -161,7 +162,7 @@ test("structured card body records group headers and the selected capability row
 // read from either end, and the Inspector carries it in full.
 test("a capability row is one body line, truncated in the middle when it does not fit", () => {
 	const longId = `capability-${"x".repeat(53)}`;
-	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED, undefined, undefined, 46);
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED, undefined, 46);
 	const target = body.capabilities[0]!;
 	assert.equal(target.height, 1, "the row is one body line");
 	const row = body.lines[target.line]!;
@@ -180,7 +181,7 @@ test("a capability row carries the marker left of its lifecycle glyph", () => {
 });
 
 test("a launchable capability carries the launch marker between the help marker and the glyph", () => {
-	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, undefined, new Set(["merchant-catalog"]));
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, new Set(["merchant-catalog"]));
 	const target = body.capabilities.find((entry) => entry.id === "merchant-catalog")!;
 	const row = body.lines[target.line]!;
 	assert.match(row, /^\s+\? ✿ [✓○✕◉◐] /, "the launch marker sits between the help marker and the lifecycle glyph");
@@ -189,7 +190,7 @@ test("a launchable capability carries the launch marker between the help marker 
 });
 
 test("a capability that cannot be launched keeps the row it has today", () => {
-	const withEmptySet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, undefined, new Set());
+	const withEmptySet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, new Set());
 	const withoutSet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED);
 	assert.deepEqual(withEmptySet.lines, withoutSet.lines, "an empty launchable set changes nothing");
 	assert.equal(withEmptySet.capabilities[0]!.launch, undefined, "and records no launch column");
@@ -200,39 +201,28 @@ test("a capability that declares no surface renders the same absence Coverage us
 	assert.ok(body.includes("shopping-cart · —"));
 });
 
-test("inspector renders every field, empty lists, and static blockers without runtime data", () => {
-	const inspected = map({
+test("static blockers name the state, the foundations and the dependencies that are not done", () => {
+	const state = map({
 		foundations: [{ id: "tooling", outcome: "Tooling", state: "planned", evidence: [] }],
 		capabilities: [
-			{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "done" },
-			{ id: "checkout", outcome: "Complete a purchase.", foundationRefs: ["tooling"], dependsOn: ["catalog"], contracts: ["checkout-api"], featureDocs: ["odd/tasks/checkout.md"], surfaces: ["web"], state: "blocked" },
+			{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" },
+			{ id: "checkout", outcome: "Complete a purchase.", foundationRefs: ["tooling"], dependsOn: ["catalog"], contracts: [], featureDocs: [], surfaces: ["web"], state: "blocked" },
 		],
 	});
-	const body = projectMapCardDescriptor(ready(inspected), PROJECT_MAP_EXPANDED, "checkout").body.join("\n");
-	for (const text of ["Inspector", "✕ checkout", "Outcome: Complete a purchase.", "Surfaces: Web", "Foundations: tooling ○", "Dependencies: catalog ✓", "Contracts: checkout-api", "Feature documents: odd/tasks/checkout.md", "Static blockers: state is blocked, foundation tooling ○", "Runtime overlay: not wired yet."]) assert.ok(body.includes(text), `expected ${text}`);
-	assert.equal(body.includes("lease"), false, "runtime blockers are not invented");
-	const empty = projectMapCardDescriptor(ready(map()), PROJECT_MAP_EXPANDED, "shopping-cart").body.join("\n");
-	for (const field of ["Surfaces: none", "Foundations: none", "Dependencies: none", "Contracts: none", "Feature documents: none", "Static blockers: none"]) assert.ok(empty.includes(field), `expected ${field}`);
+	assert.deepEqual(projectMapStaticBlockers(state, "checkout"), ["estado bloqueado", "fundamento tooling ○", "dependencia catalog ○"]);
+	assert.deepEqual(projectMapStaticBlockers(state, "catalog"), [], "a planned capability with no references is not blocked");
+	assert.deepEqual(projectMapStaticBlockers(state, "missing"), [], "a capability the map does not declare has no blockers");
 });
 
-test("inspector renders Open Pi only for an injected permitted readiness decision", () => {
-	const state = ready(map());
-	const permitted = projectMapCardDescriptor(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: true, diagnostics: [] }).body;
-	assert.ok(permitted.includes("[Open Pi]"));
-	const refused = projectMapCardDescriptor(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: false, diagnostics: [{ code: "project-map-open-pi/host-unavailable" }] }).body;
-	assert.equal(refused.includes("[Open Pi]"), false);
-	assert.equal(refused.some((line) => line.toLowerCase().includes("disabled")), false);
-	assert.notEqual(projectMapCardDigest(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: true, diagnostics: [] }), projectMapCardDigest(state, PROJECT_MAP_EXPANDED, "merchant-catalog", { permitted: false, diagnostics: [{ code: "project-map-open-pi/host-unavailable" }] }));
+test("static blockers skip references the map does not declare", () => {
+	const state = map({ capabilities: [{ id: "checkout", outcome: "Checkout", foundationRefs: ["missing"], dependsOn: ["gone"], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" }] });
+	assert.deepEqual(projectMapStaticBlockers(state, "checkout"), []);
 });
 
-test("inspector content and selection move the digest within the body budget", () => {
+test("the selection adds no Inspector and still moves the descriptor", () => {
 	const base = ready(map());
-	const selected = projectMapCardDigest(base, PROJECT_MAP_EXPANDED, "checkout");
-	assert.notEqual(selected, projectMapCardDigest(base), "selection adds the inspector to the descriptor");
-	const changed = map({ capabilities: [map().capabilities[0], map().capabilities[1], { ...map().capabilities[2], outcome: "A changed selected outcome." }] });
-	assert.notEqual(projectMapCardDigest(ready(changed), PROJECT_MAP_EXPANDED, "checkout"), selected, "selected inspector content moves the digest");
-	const long = map({ capabilities: [{ ...map().capabilities[0], outcome: "x".repeat(180), contracts: ["contract-" + "x".repeat(100)], featureDocs: ["odd/tasks/" + "y".repeat(100) + ".md"] }] });
-	for (const line of projectMapCardDescriptor(ready(long), PROJECT_MAP_EXPANDED, long.capabilities[0]!.id).body) assert.ok(line.length <= 60, `inspector line exceeds 60 columns: ${line}`);
+	assert.notEqual(projectMapCardDigest(base, PROJECT_MAP_EXPANDED, "checkout"), projectMapCardDigest(base), "selection moves the descriptor");
+	assert.equal(projectMapCardDescriptor(base, PROJECT_MAP_EXPANDED, "checkout").body.some((line) => line.includes("Inspector")), false, "and the Inspector is gone");
 });
 
 test("collapsing one group preserves the other group and its header", () => {

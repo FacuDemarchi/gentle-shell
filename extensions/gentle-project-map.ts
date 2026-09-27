@@ -28,7 +28,7 @@ import { deriveProjectMapIntegrationReadiness, renderProjectMapIntegrationReport
 import { checkProjectMapIntegrationFreshness, checkProjectMapIntegrationOverlap, projectMapIntegrationGitExecutor, resolveProjectMapIntegrationTarget } from "../lib/project-map-integration-repository.ts";
 import { checkProjectMapIntegrationTasks, parseProjectMapTaskDocument, readProjectMapTestCommand } from "../lib/project-map-integration-documents.ts";
 import { issueProjectMapStoreReadinessReceipt } from "../lib/project-map-store-receipts.ts";
-import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan, type ProjectMapOpenPiReadiness } from "../lib/project-map-open-pi.ts";
+import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan, type ProjectMapOpenPiReadiness } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar, RAIL_WIDTH } from "../lib/shell-sidebar-layout.ts";
@@ -40,6 +40,7 @@ import {
 } from "../lib/shell-project-map-schema.ts";
 import {
 	PROJECT_MAP_EXPANDED,
+	projectMapStaticBlockers,
 	toggleProjectMapGroup,
 	type ProjectMapCollapseState,
 	type ProjectMapGroup,
@@ -380,8 +381,9 @@ function readSource(path: string): SourceRead {
  */
 export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string, railColumns = 0): Promise<void> {
 	const read = readProjectMapFile(join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH));
-	const capability = read.map?.capabilities.find((entry) => entry.id === capabilityId);
-	if (capability === undefined) {
+	const map = read.map;
+	const capability = map?.capabilities.find((entry) => entry.id === capabilityId);
+	if (map === null || capability === undefined) {
 		ctx.ui.notify(`No capability named "${capabilityId}" is declared in ${PROJECT_MAP_ARTIFACT_PATH}.`);
 		return;
 	}
@@ -392,7 +394,9 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	const document = capability.featureDocs[0];
 	const source = document === undefined ? null : readSource(join(ctx.cwd, document));
 	const description = source !== null && source.ok ? readCapabilityDescription(source.text, capabilityId) : null;
-	const content = buildProjectMapHelpContent(capability, description);
+	// The static blockers are the one fact the retired Inspector alone carried, so they travel
+	// with the explanation instead of disappearing with it.
+	const content = buildProjectMapHelpContent(capability, description, projectMapStaticBlockers(map, capabilityId));
 	try {
 		await ctx.ui.custom<ProjectMapHelpResult>(
 			(tui, theme, _keybindings, done) => new ProjectMapHelpModal(content, done, theme, () => Math.max(0, tui.terminal.rows)),
@@ -1218,10 +1222,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 					});
 				} catch { return undefined; }
 			})();
-			const part = projectMapCardPart(tui, path, theme, session, collapseKey, (capabilityId) => {
-				try { return projectMapOpenPiDecision(projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost })); }
-				catch { return { permitted: false, diagnostics: [{ code: "project-map-open-pi/unavailable" }] }; }
-			}, tabs === undefined ? undefined : {
+			const part = projectMapCardPart(tui, path, theme, session, collapseKey, tabs === undefined ? undefined : {
 				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
 				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
 			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId, sidebarState(tui).active ? RAIL_WIDTH : 0); }, {

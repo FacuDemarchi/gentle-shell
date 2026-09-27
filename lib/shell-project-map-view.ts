@@ -212,40 +212,31 @@ export function projectMapSummaryLine(map: ProjectMapV1): string {
 	return `${completed(map.foundations)}/${map.foundations.length} foundations · ${completed(map.capabilities)}/${map.capabilities.length} capabilities`;
 }
 
-interface ProjectMapOpenPiReadinessView {
-	permitted: boolean;
-	diagnostics: Array<{ code: string }>;
-}
-
-function inspectorLines(map: ProjectMapV1, selection: string, openPiReadiness?: ProjectMapOpenPiReadinessView): string[] {
-	const capability = map.capabilities.find((entry) => entry.id === selection);
+/**
+ * The reasons the map alone can state for a capability that cannot be worked on: its own
+ * `blocked` declaration, and the foundations or dependencies it references that are not `done`.
+ *
+ * Runtime evidence is deliberately absent — the coordination store's blockers are a different
+ * fact and are read where they live — and so are references the map does not declare, because a
+ * dangling id is a schema problem, not a blocker. The strings are display text and Spanish,
+ * because their only reader is the explanation the user opens with `?`.
+ */
+export function projectMapStaticBlockers(map: ProjectMapV1, capabilityId: string): string[] {
+	const capability = map.capabilities.find((entry) => entry.id === capabilityId);
 	if (capability === undefined) return [];
 	const foundations = new Map(map.foundations.map((entry) => [entry.id, entry]));
 	const capabilities = new Map(map.capabilities.map((entry) => [entry.id, entry]));
-	const listed = <T>(items: T[], render: (item: T) => string): string => items.length === 0 ? "none" : items.map(render).join(", ");
-	const staticBlockers: string[] = [];
-	if (capability.state === "blocked") staticBlockers.push("state is blocked");
+	const blockers: string[] = [];
+	if (capability.state === "blocked") blockers.push("estado bloqueado");
 	for (const id of capability.foundationRefs) {
-		const foundation = foundations.get(id)!;
-		if (foundation.state !== "done") staticBlockers.push(`foundation ${id} ${PROJECT_MAP_STATE_GLYPH[foundation.state]}`);
+		const foundation = foundations.get(id);
+		if (foundation !== undefined && foundation.state !== "done") blockers.push(`fundamento ${id} ${PROJECT_MAP_STATE_GLYPH[foundation.state]}`);
 	}
 	for (const id of capability.dependsOn) {
-		const dependency = capabilities.get(id)!;
-		if (dependency.state !== "done") staticBlockers.push(`dependency ${id} ${PROJECT_MAP_STATE_GLYPH[dependency.state]}`);
+		const dependency = capabilities.get(id);
+		if (dependency !== undefined && dependency.state !== "done") blockers.push(`dependencia ${id} ${PROJECT_MAP_STATE_GLYPH[dependency.state]}`);
 	}
-	return [
-		"Inspector",
-		`${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id}`,
-		`Outcome: ${capability.outcome}`,
-		`Surfaces: ${listed(capability.surfaces, (surface) => SURFACE_LABEL[surface])}`,
-		`Foundations: ${listed(capability.foundationRefs, (id) => `${id} ${PROJECT_MAP_STATE_GLYPH[foundations.get(id)!.state]}`)}`,
-		`Dependencies: ${listed(capability.dependsOn, (id) => `${id} ${PROJECT_MAP_STATE_GLYPH[capabilities.get(id)!.state]}`)}`,
-		`Contracts: ${listed(capability.contracts, (entry) => entry)}`,
-		`Feature documents: ${listed(capability.featureDocs, (entry) => entry)}`,
-		`Static blockers: ${listed(staticBlockers, (entry) => entry)}`,
-		"Runtime overlay: not wired yet.",
-		...(openPiReadiness?.permitted === true ? ["[Open Pi]"] : []),
-	];
+	return blockers;
 }
 
 /**
@@ -311,7 +302,7 @@ function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, in
 	return `${head}${middleTruncate(capability.id, innerWidth - plainHead.length - tail.length)}${tail}`;
 }
 
-export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
@@ -355,12 +346,11 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	}
 	add("Coverage");
 	for (const line of coverageLines(map, state.coverage, innerWidth)) add(line);
-	for (const line of inspectorLines(map, selection ?? "", openPiReadiness)) add(line);
 	return body;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
-	const body = projectMapCardBody(state, collapse, selection, openPiReadiness, innerWidth, launchable, paint).lines;
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection, innerWidth, launchable, paint).lines;
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
@@ -377,8 +367,8 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, launchable?: ReadonlySet<string>): string {
-	const descriptor = projectMapCardDescriptor(state, collapse, selection, openPiReadiness, CARD_BODY_BUDGET, launchable);
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, launchable?: ReadonlySet<string>): string {
+	const descriptor = projectMapCardDescriptor(state, collapse, selection, CARD_BODY_BUDGET, launchable);
 	// The launch marker is not part of the descriptor's text at this budget (the paint is
 	// identity here), so the set that decides it is folded in explicitly: without it the rail's
 	// section cache would keep painting the previous frame's markers.

@@ -71,7 +71,7 @@ function withArtifact(text: string | null, run: (path: string) => void): void {
 test("composes the ready descriptor through renderCard", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);
-		const descriptor = projectMapCardDescriptor(state, undefined, undefined, undefined, cardInnerWidth(48));
+		const descriptor = projectMapCardDescriptor(state, undefined, undefined, cardInnerWidth(48));
 		const actual = renderProjectMapCard(path, theme, 48, true);
 		assert.deepEqual(actual, renderCard(descriptor, theme, 48, { expanded: true }));
 		assert.ok(actual.join("\n").includes(descriptor.title));
@@ -131,20 +131,11 @@ test("rail digest follows rendered diagnostics but ignores unrendered map fields
 	});
 });
 
-test("memoizes the host probe and shares one readiness decision between body and digest", () => {
+test("memoizes the host probe", () => {
 	let probes = 0;
 	assert.deepEqual(projectMapOpenPiHostOnce(() => { probes += 1; return { available: true, version: "tmux test" }; }), { available: true, version: "tmux test" });
 	assert.equal(projectMapOpenPiHostOnce(() => { probes += 1; return { available: false, version: null }; }).available, true);
 	assert.equal(probes, 1);
-	withArtifact(JSON.stringify(map()), (path) => {
-		const current = session();
-		current.select("capability-with-an-unbreakable-identifier");
-		let decisions = 0;
-		const rail = projectMapCardRail(path, theme, current, undefined, undefined, () => ({ permitted: ++decisions === 1, diagnostics: [] }));
-		assert.match(rail.render(80).join("\n"), /\[Open Pi\]/);
-		assert.match(rail.digest!(), /\[Open Pi\]/);
-		assert.equal(decisions, 1, "body and digest reuse the same injected decision");
-	});
 });
 
 test("the rail is expanded while the bottom card is one collapsed body line", () => {
@@ -210,7 +201,7 @@ test("the marker explains a capability while the rest of the row still selects i
 	withArtifact(JSON.stringify(map()), (path) => {
 		const current = session();
 		const explained: string[] = [];
-		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, (id) => explained.push(id));
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, (id) => explained.push(id));
 		const lines = rail.render(56);
 		const header = lines.findIndex((line) => line.includes("Product capabilities"));
 		const coverage = lines.findIndex((line) => line.includes("Coverage"));
@@ -231,7 +222,7 @@ test("the launch marker opens the capability while the rest of the row still sel
 	withArtifact(JSON.stringify(map()), (path) => {
 		const current = session();
 		const launched: string[] = [];
-		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: (id) => launched.push(id) });
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: (id) => launched.push(id) });
 		const lines = rail.render(56);
 		const header = lines.findIndex((line) => line.includes("Product capabilities"));
 		const coverage = lines.findIndex((line) => line.includes("Coverage"));
@@ -250,7 +241,7 @@ test("the launch marker is painted with the theme's accent role", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const painted: Array<{ role: string; text: string }> = [];
 		const recording = { fg: (role: string, text: string) => { painted.push({ role, text }); return text; } };
-		const rail = projectMapCardRail(path, recording, session(), undefined, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: () => {} });
+		const rail = projectMapCardRail(path, recording, session(), undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: () => {} });
 		rail.render(56);
 		assert.ok(painted.some((entry) => entry.role === "accent" && entry.text === "✿"), "the marker is painted with the accent role");
 	});
@@ -360,7 +351,7 @@ function detail(lines: () => string[], digest = () => "detail"): { lines(width: 
 test("a card detail paints below the card's own lines and leaves them untouched", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const plain = projectMapCardRail(path, theme, session()).render(46);
-		const stacked = projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => ["▸ catalog"])).render(46);
+		const stacked = projectMapCardRail(path, theme, session(), undefined, undefined, detail(() => ["▸ catalog"])).render(46);
 		assert.deepEqual(stacked.slice(0, plain.length), plain, "the card's own lines are unchanged");
 		assert.deepEqual(stacked.slice(plain.length), ["▸ catalog"]);
 	});
@@ -369,14 +360,14 @@ test("a card detail paints below the card's own lines and leaves them untouched"
 test("a detail that paints nothing adds no row at all", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const plain = projectMapCardRail(path, theme, session()).render(46);
-		assert.deepEqual(projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => [])).render(46), plain);
+		assert.deepEqual(projectMapCardRail(path, theme, session(), undefined, undefined, detail(() => [])).render(46), plain);
 	});
 });
 
 test("the rail digest follows the detail's own digest so a changed detail repaints", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		let version = "one";
-		const rail = projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => ["▸ catalog"], () => version));
+		const rail = projectMapCardRail(path, theme, session(), undefined, undefined, detail(() => ["▸ catalog"], () => version));
 		const before = rail.digest!();
 		assert.equal(rail.digest!(), before, "an unchanged detail reuses the prepared rail");
 		version = "two";
@@ -387,7 +378,7 @@ test("the rail digest follows the detail's own digest so a changed detail repain
 test("a detail row is never the card's click, and the card's own rows keep their indices", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const current = session();
-		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, detail(() => ["▸ catalog", "  Merchants can publish a catalog."]));
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, detail(() => ["▸ catalog", "  Merchants can publish a catalog."]));
 		const lines = rail.render(46);
 		const click = (y: number) => rail.handleMouse?.({ type: "click", button: "left", x: 2, y, screenX: 2, screenY: y, width: 46, height: lines.length, shift: false, alt: false, ctrl: false });
 		const header = lines.findIndex((line) => line.includes("Foundations"));
