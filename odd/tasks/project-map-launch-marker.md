@@ -55,7 +55,7 @@ Make the card answer, at a glance, which capability can be opened in a parallel 
 | `4b2bdbec` | The `✿` marker: column, hit range, accent paint, and the digest fold |
 | `45ced984` | The wiring: the launchable set on a two-second cadence, and the click running `open` |
 | `b9e70fa6` | The documentation |
-| `0d0f0d0d`-ish | The two integration cases through the real extension |
+| `f1f0517b` | The two integration cases through the real extension |
 
 Gates at delivery: unit suite 4,058 (4,020 passed, 38 skipped, 0 failed), type
 baseline 195 with no regressions, package resource check 199 files, provider
