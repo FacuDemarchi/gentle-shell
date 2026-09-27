@@ -109,7 +109,7 @@ import {
 } from "../lib/double-esc-cancel-policy.ts";
 import { accountIdFromToken, CODEX_PROVIDER, CODEX_USAGE_URL, NAN_PROVIDER, NAN_QUOTA_URL, parseCodexUsage, parseNanQuota, parseProviderUsage, parseUsageHeaders, parseUsageSource, UsageSourceRegistry, UsageStore, USAGE_SOURCE_EVENT, type ProviderUsage, type UsageSource } from "../lib/shell-usage.ts";
 import { UsageView } from "../lib/shell-usage-view.ts";
-import { sidebarHeader, sidebarPart, sidebarState, VISUAL_SETTINGS_CHANGED } from "../lib/shell-sidebar.ts";
+import { sidebarHeader, sidebarHeaderContributors, sidebarPart, sidebarState, type SidebarHeaderContributor, VISUAL_SETTINGS_CHANGED } from "../lib/shell-sidebar.ts";
 import { installSidebar, invalidateSidebar, narrowStatusOwner, STATUS_OWNER } from "../lib/shell-sidebar-layout.ts";
 import { SessionChanges, SESSION_CHANGE_EVENT } from "../lib/session-changes.ts";
 import { REVIEW_SIDEBAR_EVENT, isReviewSidebarSnapshot, type ReviewSidebarSnapshot } from "../lib/review-sidebar-state.ts";
@@ -1652,14 +1652,36 @@ export default function gentleShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = p
 			// The header row carries everything that ticks every frame (model,
 			// effort, context, cost, usage) plus session identity; it never sees
 			// extension statuses or the working/thinking state.
+			//
+			// The region is single-owner, so an extension that owns data the header
+			// should show registers a contributor instead of a second part. Contributed
+			// rows paint above these, and a click is routed by the row group it landed
+			// in rather than by a fixed index, because a contribution is free to paint
+			// nothing at all.
 			const headerBar = (width: number) => renderShellHeaderBar(buildShellHeaderModel(footerModel()), theme, width, usageShortcutKey, visualSettings);
+			let headerGroups: Array<{ contributor: SidebarHeaderContributor | undefined; start: number; height: number }> = [];
+			const headerLines = (width: number) => {
+				headerGroups = [];
+				const lines: string[] = [];
+				for (const contributor of sidebarHeaderContributors(tui)) {
+					const contributed = contributor.render(width);
+					if (contributed.length === 0) continue;
+					headerGroups.push({ contributor, start: lines.length, height: contributed.length });
+					lines.push(...contributed);
+				}
+				headerGroups.push({ contributor: undefined, start: lines.length, height: 1 });
+				lines.push(headerBar(width).text, renderShellHeaderRule(theme, width));
+				return lines;
+			};
 			const disposeHeader = sidebarHeader(tui, {
-				digest: () => JSON.stringify([buildShellHeaderModel(footerModel()), visualSettings]),
-				render: (width) => [headerBar(width).text, renderShellHeaderRule(theme, width)],
+				digest: () => JSON.stringify([buildShellHeaderModel(footerModel()), visualSettings, ...sidebarHeaderContributors(tui).map((contributor) => contributor.digest?.() ?? "")]),
+				render: (width) => headerLines(width),
 				invalidate() {},
 				handleMouse(event) {
 					if (event.type !== "click" || event.button !== "left") return undefined;
-					if (event.y !== 0) return undefined; // the rule row under the status line is decorative, never clickable
+					const group = headerGroups.find((candidate) => event.y >= candidate.start && event.y < candidate.start + candidate.height);
+					if (group === undefined) return undefined; // the rule row under the status line is decorative, never clickable
+					if (group.contributor !== undefined) return group.contributor.handleMouse?.({ ...event, y: event.y - group.start });
 					const { usageSpan } = headerBar(event.width);
 					if (!usageSpan || event.x < usageSpan.start || event.x >= usageSpan.end) return undefined;
 					void openUsage(ctx);
