@@ -14,10 +14,11 @@ import { planProjectMapWorktree, provisionProjectMapWorktree, type ProjectMapWor
 import { SessionWorktreeRegistry } from "../lib/session-worktree-registry.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
-import { projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
+import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription } from "../lib/project-map-description.ts";
+import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpResult } from "../lib/project-map-help-modal.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
@@ -1088,6 +1089,14 @@ export const PROJECT_MAP_TABS_CONTRIBUTOR_KEY = "orchestrator-tabs";
  * two seconds keeps the row honest without putting directory scans on the paint path.
  */
 const PROJECT_MAP_TABS_REFRESH_MS = 2_000;
+/**
+ * How long the card's launchable set is trusted before it is read again.
+ *
+ * The set is read once for the whole card rather than once per capability, and the rail asks for
+ * it on every digest and every render, so it is memoized for the same window the session-tab row
+ * uses. A stale window can only show or hide a marker; the click always re-runs the real plan.
+ */
+const PROJECT_MAP_LAUNCHABLE_REFRESH_MS = PROJECT_MAP_TABS_REFRESH_MS;
 
 const projectMapTabsReaders = {
 	coordination: ({ root, mapPath, now }: { root: string; mapPath: string; now: string }) => readProjectMapCoordinationState({ root, mapPath, now }),
@@ -1186,6 +1195,10 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 					refresh(ctx);
 				},
 			};
+			// Read once for the whole card, never once per capability: the store is asked for the
+			// launchable set on every digest and every render, so the answer is memoized for the
+			// same window the session-tab row uses.
+			const launchableCache: { at: number; set: ReadonlySet<string> } = { at: 0, set: new Set() };
 			// The tabs reach the screen through two different doors, because neither surface
 			// accepts a second owner: the row contributes to the single-owner header, and the
 			// detail lends its rows to the card, since the rail's sections are a closed list.
@@ -1211,7 +1224,34 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 			}, tabs === undefined ? undefined : {
 				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
 				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
-			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId, sidebarState(tui).active ? RAIL_WIDTH : 0); });
+			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId, sidebarState(tui).active ? RAIL_WIDTH : 0); }, {
+				launchable: () => {
+					const now = Date.now();
+					if (now - launchableCache.at < PROJECT_MAP_LAUNCHABLE_REFRESH_MS) return launchableCache.set;
+					launchableCache.at = now;
+					launchableCache.set = (() => {
+						try {
+							const root = resolveProjectMapStoreRoot(ctx.cwd).root;
+							if (root === null) return new Set<string>();
+							const coordination = readProjectMapCoordinationState({ root, mapPath: path, now: new Date().toISOString() });
+							// The reader is the one place that knows the store's field names, so the binding list
+							// is mapped through it rather than read from the record's snake_case fields here.
+							const bindings = projectMapTabsReaders.worktreeBindings(root);
+							return projectMapLaunchableSet({
+								map: coordination.map === null ? null : { approval: coordination.map.approval, capabilities: coordination.map.capabilities.map((capability) => ({ id: capability.id, state: capability.state })) },
+								coordination: coordination.capabilities,
+								bound: new Set(bindings.bindings.map((binding) => binding.capabilityId)),
+								executable: projectMapExecutableEnabled(env),
+								hostAvailable: renderHost.available,
+							});
+						} catch { return new Set<string>(); }
+					})();
+					return launchableCache.set;
+				},
+				// The card reports the click; the command the product already has decides, shows the
+				// plan, asks once and launches. There is no second launch path to keep in sync.
+				open: (capabilityId: string) => { void runProjectMapCommand(`open ${capabilityId}`, ctx, { env }); },
+			});
 			const disposeTabs = tabs === undefined ? undefined : sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
 				read: () => tabs.read(),
 				selection: {
