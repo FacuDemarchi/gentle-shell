@@ -13,6 +13,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree } from "../lib/project-map-store-worktrees.ts";
 import { issueProjectMapStoreReadinessReceipt, readProjectMapStoreReadinessReceipts } from "../lib/project-map-store-receipts.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
+import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import gentleProjectMap, {
 	PROJECT_MAP_COLLAPSE_KEY_DEFAULT,
 	PROJECT_MAP_NEXT_KEY_DEFAULT,
@@ -23,6 +24,7 @@ import gentleProjectMap, {
 	parseProjectMapNextKey,
 	parseProjectMapPrevKey,
 	parseProjectMapSubAction,
+	projectMapOpenPiDecision,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
 } from "../extensions/gentle-project-map.ts";
@@ -539,6 +541,8 @@ test("refuses to write over an artifact it cannot read", async () => {
 
 type LifecycleHandler = (event: unknown, ctx: unknown) => unknown;
 
+// PM9-1: the fixture drives the command surface, so its environment carries the executable
+// opt-in unless a case overrides it. The gate's own cases live at the end of this file.
 function projectMapExtension(env: NodeJS.ProcessEnv = {}) {
 	const commands = new Map<string, { handler(args: string, ctx: unknown): Promise<unknown> }>();
 	const shortcuts = new Map<string, { handler(ctx: unknown): Promise<unknown> }>();
@@ -557,7 +561,7 @@ function projectMapExtension(env: NodeJS.ProcessEnv = {}) {
 	const fire = async (name: string, ctx: unknown) => {
 		for (const handler of handlers.get(name) ?? []) await handler({}, ctx);
 	};
-	gentleProjectMap(pi, env);
+	gentleProjectMap(pi, { [PROJECT_MAP_EXECUTABLE_ENV]: "1", ...env });
 	return { commands, shortcuts, fire };
 }
 
@@ -745,7 +749,7 @@ test("integrate refuses an argument and reports that readiness cannot be measure
 		const command = extension.commands.get(PROJECT_MAP_COMMAND_NAME)!;
 		await command.handler("integrate catalog", probe.ctx);
 		assert.ok(probe.notified.some((message) => /integrate takes no argument/.test(message)), probe.notified.join("\n"));
-		const report = await runProjectMapCommand("integrate", probe.ctx as unknown as ProjectMapCommandContext);
+		const report = await runProjectMapCommand("integrate", probe.ctx as unknown as ProjectMapCommandContext, { env: GATE_ON });
 		assert.equal(report.action, "integrate");
 		assert.ok(probe.notified.some((message) => /coordination is unavailable/i.test(message)), probe.notified.join("\n"));
 	});
@@ -965,4 +969,77 @@ test("session shutdown drops an explicit visibility choice", async () => {
 		await extension.fire("session_start", resumed.ctx);
 		assert.equal(resumed.widgets.has("gentle-project-map"), false, "the missing artifact is not shown after the choice is dropped");
 	});
+});
+
+// PM9-1: the executable half sits behind an explicit opt-in. These cases pin the refusal,
+// the routes it must never reach, and the offer it must withdraw.
+const GATE_OFF: NodeJS.ProcessEnv = {};
+const GATE_ON: NodeJS.ProcessEnv = { GENTLE_PI_PROJECT_MAP: "1" };
+
+const GATED_COMMANDS: Array<[string, string]> = [
+	["worktree provision catalog", "worktree"],
+	["open catalog", "open"],
+	["lead claim", "lead"],
+	["lead renew", "lead"],
+	["contract propose catalog checkout-1 Title body.md", "contract"],
+	["contract accept catalog checkout-1 because it is shared", "contract"],
+	["contract reject catalog checkout-1 because it is not", "contract"],
+	["integrate", "integrate"],
+];
+
+test("every route that acts outside the artifact is refused while the gate is off", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-"));
+	try {
+		for (const [command, action] of GATED_COMMANDS) {
+			const h = harness(directory);
+			const report = await runProjectMapCommand(command, h.ctx, { env: GATE_OFF });
+			assert.equal(report.action, action, command);
+			assert.equal(report.wrote, false, command);
+			assert.equal(report.diagnostics[0]?.code, "project-map/executable-disabled", command);
+			assert.match(report.diagnostics[0]!.message, /GENTLE_PI_PROJECT_MAP=1/, command);
+			assert.equal(h.confirmations, 0, `${command} must not ask for a confirmation it cannot honor`);
+		}
+		assert.deepEqual(readdirSync(directory), [], "a refused route creates nothing, the artifact included");
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("reads, releases and usage errors keep their own answer while the gate is off", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-read-"));
+	try {
+		const reachable = ["status", "show", "hide", "lead status", "lead release", "contract list", "worktree inspect catalog", "worktree list"];
+		for (const command of reachable) {
+			const h = harness(directory);
+			const report = await runProjectMapCommand(command, h.ctx, { env: GATE_OFF });
+			assert.equal(report.diagnostics.some((entry) => entry.code === "project-map/executable-disabled"), false, `${command} must not be gated`);
+		}
+		// A malformed gated command is a usage error first: the gate never masks a typo.
+		const malformed = await runProjectMapCommand("worktree provision", harness(directory).ctx, { env: GATE_OFF });
+		assert.equal(malformed.diagnostics[0]?.code, "project-map/invalid-field");
+		assert.match(malformed.diagnostics[0]!.message, /capability id/i);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("the gate is open when it is explicitly enabled", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-on-"));
+	try {
+		// Without a repository there is nothing to provision, so the gate being open is
+		// shown by the answer that follows it rather than by a successful provisioning.
+		const report = await runProjectMapCommand("worktree provision catalog", harness(directory).ctx, { env: GATE_ON });
+		assert.equal(report.diagnostics.some((entry) => entry.code === "project-map/executable-disabled"), false);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("the Open Pi offer is withdrawn while the gate is off, and the switch is named", () => {
+	const readiness = { permitted: true, capability: null, claim: null, worktree: null, host: null, diagnostics: [{ code: "project-map-open-pi/prior", path: "$.host", message: "prior", severity: "warning" }] } as never;
+	const withheld = projectMapOpenPiDecision(readiness, GATE_OFF);
+	assert.equal(withheld.permitted, false);
+	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/executable-disabled"));
+	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/prior"), "the original diagnostics survive");
+	assert.equal(projectMapOpenPiDecision(readiness, GATE_ON), readiness, "an enabled gate changes nothing");
 });
