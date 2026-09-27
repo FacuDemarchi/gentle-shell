@@ -72,7 +72,7 @@ test("classifies a missing artifact as empty", () => {
 		const descriptor = projectMapCardDescriptor(state);
 		assert.equal(descriptor.tone, "info");
 		assert.ok(descriptor.body.join("\n").includes(PROJECT_MAP_ARTIFACT_PATH));
-		assert.ok(descriptor.body.join("\n").includes("/gentle:project-map draft"));
+		assert.ok(descriptor.body.join("\n").includes("/gentle:project-map to generate one"));
 	});
 });
 
@@ -151,13 +151,25 @@ test("structured card body records group headers and the selected capability row
 	assert.match(body.lines[body.selected!], /^▸ ✕ checkout/, "selection replaces the indent while retaining the lifecycle glyph");
 });
 
-test("a pre-bounded capability row reports its whole body span", () => {
+// A capability row is exactly one body line, at any width. A row that spilled onto a second
+// line lost its glyph and its indent, so it read as two unrelated lines — the defect this
+// replaces. The identifier is truncated in the middle instead, because a capability id is
+// read from either end, and the Inspector carries it in full.
+test("a capability row is one body line, truncated in the middle when it does not fit", () => {
 	const longId = `capability-${"x".repeat(53)}`;
-	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED);
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED, undefined, undefined, 46);
 	const target = body.capabilities[0]!;
-	assert.ok(target.height > 1, "the row spans several body lines");
-	assert.ok(body.lines[target.line]!.includes("✓"), "the span starts on the glyph line");
-	assert.ok(body.lines[target.line + target.height - 1]!.includes("Web"), "the span ends on the surfaces line");
+	assert.equal(target.height, 1, "the row is one body line");
+	const row = body.lines[target.line]!;
+	assert.ok(row.includes("✓"), "the row starts on its glyph");
+	assert.ok(row.includes("· Web"), "the row keeps its surfaces");
+	assert.ok(row.includes("…"), "a row that does not fit truncates its identifier");
+	assert.ok(row.length <= 46, `${row.length} exceeds the body budget`);
+});
+
+test("a capability that declares no surface renders the same absence Coverage uses", () => {
+	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
+	assert.ok(body.includes("shopping-cart · —"));
 });
 
 test("inspector renders every field, empty lists, and static blockers without runtime data", () => {
@@ -223,7 +235,7 @@ test("reads a rendered group header back to its group and rejects content rows",
 
 test("says a capability declares no surface instead of rendering an empty list", () => {
 	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("shopping-cart · no surface declared"));
+	assert.ok(body.includes("shopping-cart · —"));
 });
 
 test("computes coverage from declared capabilities and counts only done ones", () => {
