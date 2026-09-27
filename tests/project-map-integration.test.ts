@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveProjectMapIntegrationReadiness, type ProjectMapIntegrationInput } from "../lib/project-map-integration.ts";
+import { deriveProjectMapIntegrationReadiness, PROJECT_MAP_INTEGRATION_GATING_CHECKS, PROJECT_MAP_INTEGRATION_REPORTED_CHECKS, type ProjectMapIntegrationInput } from "../lib/project-map-integration.ts";
 
 function input(overrides: Partial<ProjectMapIntegrationInput> = {}): ProjectMapIntegrationInput {
 	return {
@@ -151,7 +151,7 @@ test("an unready dependency is a mismatch and keeps the candidate out of ready",
 	assert.equal(candidate!.ready, false);
 });
 
-test("a capability with no readiness receipt is a coverage mismatch", () => {
+test("a capability with no readiness receipt is ready anyway, because the receipt is what this run produces", () => {
 	const [candidate] = deriveProjectMapIntegrationReadiness(input({
 		coordination: {
 			satellites: [],
@@ -159,8 +159,24 @@ test("a capability with no readiness receipt is a coverage mismatch", () => {
 			conflicts: [],
 		},
 	})).candidates;
+	// The check still reports the fact; it no longer gates on its own product.
 	assert.equal(candidate!.checks.coverage, "mismatched");
-	assert.equal(candidate!.ready, false);
+	assert.equal(candidate!.ready, true, "a missing receipt cannot block the run that issues it");
+});
+
+test("coverage and review are reported but never gate, and the gating set says so", () => {
+	assert.deepEqual([...PROJECT_MAP_INTEGRATION_GATING_CHECKS], ["dependencies", "contracts", "blockers", "verification", "freshness", "conflicts", "tasks"]);
+	assert.deepEqual([...PROJECT_MAP_INTEGRATION_REPORTED_CHECKS], ["coverage", "review"]);
+	const [candidate] = deriveProjectMapIntegrationReadiness(input({
+		coordination: {
+			satellites: [],
+			capabilities: [{ capabilityId: "catalog", dependencyReady: true, complete: false, openBlockers: 0, proposedContracts: 0, nextSafeAction: "work" }],
+			conflicts: [],
+		},
+		review: new Map(),
+	})).candidates;
+	for (const name of PROJECT_MAP_INTEGRATION_REPORTED_CHECKS) assert.notEqual(candidate!.checks[name], undefined, `${name} is still reported`);
+	assert.equal(candidate!.ready, true, "neither reported check can hold a candidate back");
 });
 
 test("the verification requirement is the project's own test command, and an undeclared one blocks ready", () => {

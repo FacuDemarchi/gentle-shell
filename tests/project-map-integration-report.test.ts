@@ -86,6 +86,25 @@ test("a mismatched check is named with the reason it mismatched", () => {
 	assert.match(report(), /mismatch: conflicts — .*lib\/b\.ts/);
 });
 
+test("coverage is reported as evidence and never as a mismatch, because it is this run's own output", () => {
+	const without = renderProjectMapIntegrationReport(deriveProjectMapIntegrationReadiness(input({
+		coordination: {
+			satellites: [],
+			capabilities: [
+				{ capabilityId: "catalog", dependencyReady: true, complete: false, openBlockers: 0, proposedContracts: 0, nextSafeAction: "work" },
+				{ capabilityId: "checkout", dependencyReady: true, complete: true, openBlockers: 0, proposedContracts: 0, nextSafeAction: "integrate" },
+			],
+			conflicts: [],
+		},
+	}))).join("\n");
+	assert.match(without, /coverage: no readiness receipt recorded yet/);
+	assert.equal(/mismatch: coverage/.test(without), false, "coverage never appears as a mismatch");
+	assert.match(without, /✓ catalog/, "and it cannot keep a candidate out of ready");
+	assert.match(without, /Next safe integration action: /);
+	const with_ = renderProjectMapIntegrationReport(deriveProjectMapIntegrationReadiness(input())).join("\n");
+	assert.match(with_, /coverage: a readiness receipt already covers it/);
+});
+
 test("unverified checks are named, so a reader can tell them from verified ones", () => {
 	const text = report();
 	assert.match(text, /unverified: .*review/);

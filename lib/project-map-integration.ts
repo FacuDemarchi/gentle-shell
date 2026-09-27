@@ -72,8 +72,16 @@ export interface ProjectMapIntegrationCapability {
 	featureDocs: readonly string[];
 }
 
-/** The checks a candidate must pass to be ready. Review is deliberately absent. */
-export const PROJECT_MAP_INTEGRATION_GATING_CHECKS = ["dependencies", "contracts", "blockers", "coverage", "verification", "freshness", "conflicts", "tasks"] as const;
+/**
+ * The checks a candidate must pass to be ready. Two checks are deliberately absent:
+ * `review`, because review evidence is evidence and not authorization, and `coverage`,
+ * because coverage is *this run's own output* — a readiness receipt — and gating on it made
+ * the first receipt unreachable from inside the product, since the only issuer is the run it
+ * would have had to satisfy. Both are still reported; neither can hold a candidate back.
+ */
+export const PROJECT_MAP_INTEGRATION_GATING_CHECKS = ["dependencies", "contracts", "blockers", "verification", "freshness", "conflicts", "tasks"] as const;
+/** Checks reported to the reader that never gate. `coverage` states whether a receipt exists. */
+export const PROJECT_MAP_INTEGRATION_REPORTED_CHECKS = ["coverage", "review"] as const;
 
 export interface ProjectMapIntegrationInput {
 	map: { capabilities: readonly ProjectMapIntegrationCapability[] } | null;
@@ -211,7 +219,7 @@ export function renderProjectMapIntegrationReport(readiness: ProjectMapIntegrati
 			if (candidate.checks[name] !== "mismatched") continue;
 			lines.push(`  mismatch: ${name} — ${mismatchReason(candidate, name, readiness.target)}`);
 		}
-		const unverified = [...PROJECT_MAP_INTEGRATION_GATING_CHECKS, "review" as const].filter((name) => candidate.checks[name] === "unverified");
+		const unverified = [...PROJECT_MAP_INTEGRATION_GATING_CHECKS, ...PROJECT_MAP_INTEGRATION_REPORTED_CHECKS].filter((name) => candidate.checks[name] === "unverified");
 		lines.push(`  unverified: ${unverified.length === 0 ? "none" : unverified.join(", ")}`);
 		// A reader who is told a check is unverified deserves to know why, especially when
 		// the reason is that nothing can verify it yet.
@@ -219,6 +227,7 @@ export function renderProjectMapIntegrationReport(readiness: ProjectMapIntegrati
 			const reason = candidate.reasons[name];
 			if (reason !== undefined) lines.push(`    ${name}: ${reason}`);
 		}
+		lines.push(`  coverage: ${candidate.checks.coverage === "verified" ? "a readiness receipt already covers it" : "no readiness receipt recorded yet"}`);
 		if (candidate.behindBy !== null) lines.push(`  behind ${readiness.target} by ${candidate.behindBy}`);
 		lines.push(`  verification: ${candidate.verification.command ?? "not declared"}`);
 		lines.push(`  tasks: ${candidate.tasks === null ? "none declared" : `${candidate.tasks.path} ${candidate.tasks.done}/${candidate.tasks.total}`}`);
@@ -240,7 +249,6 @@ function mismatchReason(candidate: ProjectMapIntegrationCandidate, name: keyof P
 	if (name === "conflicts") return candidate.overlaps.length === 0 ? "a likely conflict was detected" : `likely conflict on ${candidate.overlaps.join(", ")}`;
 	if (name === "blockers") return `${candidate.openBlockers} open blocker${candidate.openBlockers === 1 ? "" : "s"}`;
 	if (name === "contracts") return `${candidate.proposedContracts} proposed contract${candidate.proposedContracts === 1 ? "" : "s"} without a decision`;
-	if (name === "coverage") return "no readiness receipt covers this capability";
 	if (name === "dependencies") return "a dependency is not ready";
 	if (name === "freshness") return `the branch base is not contained in ${target ?? "the integration target"}`;
 	return "the map and the feature document disagree";
