@@ -175,3 +175,44 @@ One native review candidate per slice, from a worktree pinned at that slice's ti
 3. Initialization, map review, parallel capability work, failure recovery, disabling and cleanup are documented.
 4. Multi-session/worktree end-to-end scenarios are exercised on Linux, macOS, Windows, tmux, headless fallback, crash recovery and stale-state cleanup — with each cell's real coverage named.
 5. Observability, rollback, package contents, compatibility and complete-suite behavior are verified.
+
+## Handoff — the PM-9 native review pass (prepared 2026-09-27)
+
+**State at handoff.** Branch `feat/project-map-orchestration` at `ca5d05ff`, working tree clean, in sync with `origin`, a single worktree, no `review/*` branches left behind. `gentle-ai` is on `PATH` (`/home/facundo/.local/bin/gentle-ai`), tmux is 3.6, and RDD reads `off (decided by clone_local)` with `global: on`. Nothing is in flight: the unit is delivered and both findings are closed, so this pass is the only work left on the initiative.
+
+**Candidates, in order** — one per slice and one per fix:
+
+| # | Range | What it carries | Expected tier |
+| --- | --- | --- | --- |
+| 1 | `bd427346..4c91b111` | PM9-1, the opt-in gate | high — the touched test files shell out to Git |
+| 2 | `4c91b111..f1a40935` | PM9-2, initialization and the rollout boundary | high, same reason |
+| 3 | `f1a40935..fb129b5a` | PM9-3, the end-to-end scenarios, the platform matrix and the tmux propagation | high |
+| 4 | `fb129b5a..38aa6828` | PM9-4, the package pin and the source guard | medium — a pure change, no process boundary |
+| 5 | `38aa6828..23de5e85` | the F2 fix | high — the touched test files shell out |
+| 6 | `23de5e85..2a4f2841` | the F1 fix | medium — a pure projection change |
+
+Tier follows the **process boundary, not the size**: a projection or a renderer with no subprocess comes back medium with a single lens, and a test fixture that shells out takes a small diff to high. **Exempt by the entry rule** (documentation or records, no executable change): `48a9d6b4` (PM9-5 and the acceptance trace), `31c2ed58`, `ca5d05ff` and `90f7b8f1`.
+
+**Recipe, validated more than twenty times across this initiative.** One candidate at a time, and never while a writer runs:
+
+1. `gentle-ai review mode enable --scope clone`, then `gentle-ai review mode status` must read `on` for the clone.
+2. Pin a sibling worktree at the candidate's **tip**, never at its base: `git worktree add -b review/<name> ../pm9-review-<name> <tip-sha>`. A worktree created at the base sha returns `empty_base_diff_bootstrap_required` — terminal, and no lineage is created.
+3. `gentle_review` `{"operation":"inspect"}` with `input` `{"baseRef":"<previous-tip-sha>","committedOnly":true}` and `workspaceRoot` set to the pinned worktree.
+4. `gentle_review` `{"operation":"start"}` with a **fresh** `idempotencyKey` and the **same** `input`. Without the same `baseRef` the route falls into `collect: empty_candidate_base_ref_required`. With RDD on the returned wrapper may be named `answer-consent`: when the lineage already reads `action: created` with no `consentBinding`, that is a name and not a question — continue with STATUS and `result.lineage_id`.
+5. `gentle_review` `{"operation":"status","lineageId":"<lineage>","workspaceRoot":"<worktree>"}` and route only from the transition it returns.
+6. `gentle_review_capture_group` with the complete ordered `collectBindings` from that STATUS. The first call returns a **forecast** and runs nothing: relay it, then resubmit the same exact bindings with `reviewerRunAcknowledged: true`.
+7. On `approved`, `gentle_review` `{"operation":"acknowledge-approved","lineageId":"<lineage>","workspaceRoot":"<worktree>"}` — that call burns the authority. Do not issue STATUS after the burn.
+8. Clean up: `git worktree remove <path>` and `git branch -D review/<name>`.
+9. After the sixth candidate: `gentle-ai review mode disable --scope clone`, confirm `off (decided by clone_local)`, and confirm `git worktree list` shows only the main worktree.
+
+**Pitfalls that already cost something once.**
+
+- **An opaque binding is copied, never typed from memory.** Two submissions were refused by the provider for one mistyped character, in a `baseTree` and in a `repository-context`. The refusal is correct, costs a retry, and does **not** consume the slot.
+- A reviewer can declare `inspection.status: completed` while its evidence says it could not inspect. Admission refuses it (`submitted_reviewers: 0`), preserves the payload under `.git/gentle-ai/rejected-results/`, and the recovery is a fresh STATUS that reoffers the same binding. Never resend the refused bytes.
+- The pinned worktree must not carry a symlinked `.gentle-ai` (that is `package-local-binary-missing` by design) or a symlinked `node_modules` (which `.gitignore` does not cover, because `node_modules/` matches real directories only).
+- Never hand candidate bytes to a reviewer through `/tmp`, a scratch file or a repository file: reviewers inspect only the provider-bound immutable trees.
+- Gates run as `node scripts/...`, never `pnpm run ...`: `pnpm` is not on this machine's `PATH`, and the 127 reads as a false red.
+
+**Gates to re-read before starting and after closing**, on the reviewed tip: `node --experimental-strip-types --test tests/*.test.ts` (**4,012: 3,974 passed, 38 skipped, 0 failed**), `node scripts/check-types.mjs` (**195** recorded diagnostics, no regressions), `node scripts/check-provider-contract.mjs`, `node scripts/build-runtime-modules.mjs --check`, `node --experimental-strip-types tests/runtime-harness.mjs`, `node scripts/verify-package-files.mjs` (**196 files**, exit 0) and `git diff --check`.
+
+**Closing the pass.** One `docs(project-map): close the PM-9 native review pass` commit recording every lineage, tier, lens count and advisory, plus the roadmap history line and the `Next decision` update — the same shape as the PM-7 and PM-8 closures. Push it and leave the branch in sync with `origin`. An advisory never reopens a candidate: it is follow-up work, recorded.
