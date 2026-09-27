@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import type { CardTheme } from "./shell-card.ts";
 import { PROJECT_MAP_SURFACES, type ProjectMapState, type ProjectMapSurface } from "./shell-project-map-schema.ts";
+import { PROJECT_MAP_STATE_GLYPH } from "./shell-project-map-view.ts";
 
 /**
  * The read-only projection behind the orchestrator session tabs.
@@ -146,4 +150,102 @@ export function deriveOrchestratorSessionTabs(input: OrchestratorSessionTabsInpu
 	}
 
 	return { available: true, sections, diagnostics };
+}
+
+/**
+ * The row and the read-only detail for the orchestrator session tabs.
+ *
+ * The row is a single full-width line by placement, so option C is what keeps it
+ * honest: only surfaces with a live session are on it, and it is measured before it
+ * is painted (`truncateToWidth` understands ANSI), so a narrow terminal drops the
+ * tail with an ellipsis instead of wrapping and pushing the rail down.
+ */
+
+export const ORCHESTRATOR_SESSION_SURFACE_LABEL: Record<ProjectMapSurface, string> = {
+	productUx: "Product/UX",
+	web: "Web",
+	api: "API",
+	data: "Data",
+	security: "Security",
+	operations: "Ops",
+	tests: "Tests",
+};
+
+const SECTION_GAP = "   ";
+const ITEM_GAP = ", ";
+const SELECTED_MARKER = "▸ ";
+
+interface TabRowItem {
+	capabilityId: string;
+	count: number;
+}
+
+/** Sections are ordered by capability id, so equal ids are adjacent and can be counted in one pass. */
+function rowItems(tabs: readonly OrchestratorSessionTab[]): TabRowItem[] {
+	const items: TabRowItem[] = [];
+	for (const tab of tabs) {
+		const last = items[items.length - 1];
+		if (last !== undefined && last.capabilityId === tab.capabilityId) {
+			last.count += 1;
+			continue;
+		}
+		items.push({ capabilityId: tab.capabilityId, count: 1 });
+	}
+	return items;
+}
+
+function blockersPhrase(count: number): string {
+	return count === 1 ? "1 open blocker" : `${count} open blockers`;
+}
+
+export function renderOrchestratorSessionTabRow(options: { tabs: OrchestratorSessionTabs; selection?: string; width: number; theme: CardTheme }): string[] {
+	const { tabs: model, selection, width, theme } = options;
+	if (!model.available || model.sections.length === 0) return [];
+	const sections = model.sections.map((section) => {
+		const items = rowItems(section.tabs).map((item) => {
+			const label = item.count > 1 ? `${item.capabilityId} ×${item.count}` : item.capabilityId;
+			return item.capabilityId === selection ? theme.fg("accent", `${SELECTED_MARKER}${label}`) : label;
+		});
+		return `${theme.fg("muted", ORCHESTRATOR_SESSION_SURFACE_LABEL[section.surface])} · ${items.join(ITEM_GAP)}`;
+	});
+	return [truncateToWidth(sections.join(SECTION_GAP), Math.max(0, width), "…")];
+}
+
+export function renderOrchestratorSessionTabDetail(options: { tabs: OrchestratorSessionTabs; selection?: string; width: number; theme: CardTheme }): string[] {
+	const { tabs: model, selection, width, theme } = options;
+	if (selection === undefined) return [];
+	const fit = (role: string, text: string) => theme.fg(role, truncateToWidth(text, Math.max(0, width), "…"));
+	// A capability that declares several surfaces appears once per section, so the
+	// sessions are folded back together before they are listed.
+	const sessions = [...new Map(model.sections.flatMap((section) => section.tabs).filter((tab) => tab.capabilityId === selection).map((tab) => [tab.sessionId, tab])).values()];
+	if (sessions.length === 0) return [fit("muted", `No session is bound to ${selection}.`)];
+	const capability = sessions[0];
+	const lines = [
+		fit("accent", `${SELECTED_MARKER}${selection}`),
+		fit("text", capability.outcome),
+		fit("muted", `${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.state} · ${blockersPhrase(capability.openBlockers)} · next ${capability.nextSafeAction ?? "unknown"}`),
+	];
+	for (const session of sessions) {
+		lines.push(fit("text", `${session.sessionId} · ${session.liveness} · heartbeat ${session.heartbeat} · ${session.lastActivity ?? "no activity recorded"}`));
+		lines.push(fit("muted", session.worktreeRoot === null ? "  worktree unknown" : `  worktree ${session.worktreeRoot}`));
+		lines.push(fit("muted", session.branch === null ? "  branch unknown" : `  branch ${session.branch}`));
+	}
+	return lines;
+}
+
+/**
+ * The rail memo re-renders a part only when its digest changes, so the digest
+ * covers exactly what is painted — including the state and liveness the detail
+ * shows — and deliberately ignores diagnostics, which paint nothing.
+ */
+export function orchestratorSessionTabsDigest(tabs: OrchestratorSessionTabs, selection?: string): string {
+	const painted = {
+		available: tabs.available,
+		selection: selection ?? null,
+		sections: tabs.sections.map((section) => ({
+			surface: section.surface,
+			tabs: section.tabs.map((tab) => [tab.capabilityId, tab.sessionId, tab.outcome, tab.state, tab.liveness, tab.heartbeat, tab.worktreeRoot, tab.branch, tab.openBlockers, tab.nextSafeAction, tab.lastActivity]),
+		})),
+	};
+	return createHash("sha256").update(JSON.stringify(painted)).digest("hex");
 }
