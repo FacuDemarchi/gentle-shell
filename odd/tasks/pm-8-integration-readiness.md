@@ -93,6 +93,8 @@ Six decisions were put to the user with the options below and the recommendation
 - `extensions/gentle-project-map.ts` (the new sub-action and its `USAGE` entry only).
 - `tests/gentle-project-map.test.ts` (the new sub-action's cases).
 - `lib/shell-project-map-schema.ts` and `tests/shell-project-map-schema.test.ts` **only if decision A adds a field**.
+- `lib/shell-project-map-draft.ts` (the config parser export only, added when PM8-2b needed the project's own test command).
+- `tests/project-map-integration-documents.test.ts` (new).
 - `lib/project-map-store-schema.ts` and its tests **only if decision B adds a field**.
 - `docs/project-map.md`, `docs/gentle-shell.md`.
 - `odd/tasks/pm-8-integration-readiness.md`, `odd/tasks/project-map-orchestration.md`.
@@ -114,7 +116,10 @@ Anything outside this list is a scope question, not an edit.
   - **Freshness separates *old* from *diverged*.** A base the target does not contain is a `mismatched`; a base that is merely behind is `verified` with the distance reported, because being behind is information, not a defect.
   - **Overlap is labelled *likely*, and the label is in the code.** `mismatched` on the conflicts check means *a likely conflict was detected*, never *a conflict was proven*; the shared paths are named and sorted, and one candidate's Git failure leaves the others' answers intact.
   - Closure evidence: focused **14/14**, full suite **3,942 (3,904 passed, 38 skipped, 0 failed)**, type gate **195** with no regressions, provider contract, runtime harness and `git diff --check` all exiting 0.
-- [ ] **PM8-2b — The document readers.** The map/task consistency check (decision E): parse the feature document's task checkboxes, compare them against the capability's declared state, and report the drift without correcting it in either direction. Forecast ≈ 200 lines. **Not started.**
+- [x] **PM8-2b — The document readers.** **Delivered 2026-09-26**, ~170 changed lines (`lib/project-map-integration-documents.ts` and its suite).
+  - **The config parser was exported, not copied.** `readSimpleConfigEntries` already existed as a private function in `lib/shell-project-map-draft.ts`, and the verification requirement needs the project's own test command. It is now exported and reused, because a second reader of the same file is how two readers drift apart — the same reasoning that made the Git executor reuse `reviewGitEnvironment`. It is the one boundary extension this slice needed, and the file is added to the authorized surfaces below.
+  - **The drift rule is symmetric and never resolves itself.** A capability declared `done` whose document still has open tasks is a mismatch, and so is a document whose every task is done while the map does not declare it done. A capability in flight with some tasks done agrees, because that is what in flight looks like; a document with no checkboxes never contradicts anything; a declared document that could not be read is a mismatch rather than a silent pass; and a capability that declares no document at all stays `unverified` with the reason named.
+  - Closure evidence: focused **17/17**, full suite **3,959 (3,921 passed, 38 skipped, 0 failed)**, type gate **195** with no regressions, provider contract, runtime harness and `git diff --check` all exiting 0.
 - [ ] **PM8-3 — The report and the receipts.** The `integrate` sub-action, the ordered report, and a `readiness-receipt` per verified candidate, with `authority: "none"` printed where a user cannot miss it (decision F).
 - [ ] **PM8-4 — The launch nonce.** The `session-binding` schema field (decision B), the receiver that writes it, and the confirmation that compares it, with the tmux limit closed in the documentation. **This is a launch-flow change carried by this unit because PM-8 owns the decision, not a readiness change**, and it is ordered after the readiness core so the two never share a commit.
 - [ ] **PM8-5 — Documentation and unit verification.** `docs/project-map.md`, the acceptance trace, and the honest record of what was not verified.
