@@ -1,4 +1,4 @@
-import { readSimpleConfigEntries } from "./shell-project-map-draft.ts";
+import { readConfigTestCommand, readSimpleConfigEntries } from "./shell-project-map-draft.ts";
 import type { ProjectMapIntegrationCheck } from "./project-map-integration.ts";
 import type { ProjectMapState } from "./shell-project-map-schema.ts";
 
@@ -63,11 +63,11 @@ export function checkProjectMapIntegrationTasks(options: {
 
 /**
  * The project's own verification requirement, taken from `openspec/config.yaml` rather
- * than added to the map, so the two cannot disagree. An absent, unreadable or blank
+ * than added to the map, so the two cannot disagree. Both shapes a project may declare are
+ * accepted, most specific first — see `readConfigTestCommand`. An absent, unreadable or blank
  * command declares nothing, and nothing is never read as a requirement.
  */
 export function readProjectMapTestCommand(text: string | null): string | null {
 	if (text === null) return null;
-	const command = readSimpleConfigEntries(text).get("apply.test_command");
-	return command === undefined || command.trim().length === 0 ? null : command;
+	return readConfigTestCommand(readSimpleConfigEntries(text));
 }
