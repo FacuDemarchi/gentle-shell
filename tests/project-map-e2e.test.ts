@@ -159,12 +159,13 @@ test("a session that died is recovered by the next claim, and the store loses no
 		assert.equal(recovered.diagnostics[0]?.severity, "warning");
 		assert.deepEqual(storeFiles(store).sort(), before.sort(), "recovery deletes nothing");
 
-		// PINNED DEFECT (recorded as debt, fix needs its own candidate): the takeover succeeded —
-		// the record above proves it — but the command reports it as a refusal with `wrote: false`,
-		// because the lead branch treats any diagnostic, warnings included, as a failure.
-		assert.equal(recovered.wrote, false);
-		assert.equal(recovered.diagnostics.length > 0, true);
-		assert.ok(survivor.notified.some((message) => /was refused/.test(message)), survivor.notified.join("\n"));
+		// F2's regression guard: the takeover succeeded — the record above proves it — and the report
+		// now says so, surfacing the recovery warning instead of announcing a refusal.
+		assert.equal(recovered.wrote, true, "something durable changed, and the report says so");
+		assert.deepEqual(recovered.diagnostics.map((entry) => entry.severity), ["warning"]);
+		assert.ok(survivor.notified.some((message) => /Claimed the Project Map lead claim/.test(message)), survivor.notified.join("\n"));
+		assert.ok(survivor.notified.some((message) => /stale-claim-recovered/.test(message)), "the recovery warning is surfaced rather than swallowed");
+		assert.equal(survivor.notified.some((message) => /was refused/.test(message)), false, "a recovery is never announced as a refusal");
 	});
 });
 

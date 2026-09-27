@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -25,6 +25,8 @@ const NOW = new Date("2026-09-26T12:00:00.000Z");
 const ENABLED_ENV: NodeJS.ProcessEnv = { [PROJECT_MAP_EXECUTABLE_ENV]: "1" };
 const runProjectMapCommand: typeof runProjectMapCommandWithGate = (command, ctx, options = {}) => runProjectMapCommandWithGate(command, ctx, { env: ENABLED_ENV, ...options });
 const LATER = new Date("2026-09-26T12:00:10.000Z");
+/** Past the 60-second claim lease: the holder is gone, not merely quiet. */
+const EXPIRED = new Date("2026-09-26T12:02:00.000Z");
 const EPOCH = "123e4567-e89b-12d3-a456-426614174000";
 
 interface Harness {
@@ -98,13 +100,43 @@ test("parser accepts lead and contract while still rejecting an unknown sub-acti
 test("lead claim belongs to one session and preserves bytes on claim-held", async () => {
 	await withFixture(async ({ cwd, store }) => {
 		const first = await runProjectMapCommand("lead claim", harness(cwd, "session-a").ctx, { now: () => NOW });
-		assert.equal(first.wrote, false);
+		assert.equal(first.wrote, true, "the claim is a durable store record, so the report says something was written");
 		const before = readFileSync(claimPath(store), "utf8");
 		const secondProbe = harness(cwd, "session-b");
 		const second = await runProjectMapCommand("lead claim", secondProbe.ctx, { now: () => LATER });
-		assert.equal(second.wrote, false);
+		assert.equal(second.wrote, false, "a refused claim changes nothing");
 		assert.ok(hasCode(secondProbe.notified, "project-map-store/claim-held"));
 		assert.equal(readFileSync(claimPath(store), "utf8"), before);
+	});
+});
+
+test("a stale claim recovered by the next session is reported as a recovery, not a refusal", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		await runProjectMapCommand("lead claim", harness(cwd, "dead-session").ctx, { now: () => NOW });
+		const survivor = harness(cwd, "survivor");
+		const report = await runProjectMapCommand("lead claim", survivor.ctx, { now: () => EXPIRED });
+		assert.equal((JSON.parse(readFileSync(claimPath(store), "utf8")) as { session_id: string }).session_id, "survivor");
+		assert.equal(report.wrote, true, "the claim moved, so the report says something was written");
+		assert.deepEqual(report.diagnostics.map((entry) => entry.severity), ["warning"], "a recovery is a warning, never an error");
+		assert.ok(hasCode(survivor.notified, "project-map-store/stale-claim-recovered"), "the recovery warning is surfaced rather than swallowed");
+		assert.ok(survivor.notified.some((message) => message.includes("Claimed the Project Map lead claim")), survivor.notified.join("\n"));
+		assert.equal(survivor.notified.some((message) => message.includes("was refused")), false, "a recovery must not be announced as a refusal");
+	});
+});
+
+test("a renewal outside its cadence is refused, and every lead mutation reports honestly", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		await runProjectMapCommand("lead claim", harness(cwd, "session-a").ctx, { now: () => NOW });
+		const early = harness(cwd, "session-a");
+		const renewal = await runProjectMapCommand("lead renew", early.ctx, { now: () => NOW });
+		assert.equal(renewal.wrote, false, "a cadence refusal writes nothing");
+		assert.ok(hasCode(early.notified, "project-map-store/renewal-too-early"));
+		const later = harness(cwd, "session-a");
+		const renewed = await runProjectMapCommand("lead renew", later.ctx, { now: () => LATER });
+		assert.equal(renewed.wrote, true, "a renewal rewrites the lease");
+		const released = await runProjectMapCommand("lead release", harness(cwd, "session-a").ctx, { now: () => LATER });
+		assert.equal(released.wrote, true, "releasing removes the record, which is a change too");
+		assert.equal(existsSync(claimPath(store)), false, "the claim record is gone");
 	});
 });
 
@@ -138,7 +170,7 @@ test("contract propose hashes its body and refuses a missing body without writin
 		const body = join(cwd, "contract.md");
 		writeFileSync(body, "Contract body\n", "utf8");
 		const report = await runProjectMapCommand(`contract propose catalog pricing Pricing ${body}`, harness(cwd, "satellite").ctx, { now: () => NOW });
-		assert.equal(report.wrote, false);
+		assert.equal(report.wrote, true, "the proposal is a durable store record");
 		const proposed = readProjectMapContract({ root: store, capabilityId: "catalog", contractId: "pricing" });
 		assert.equal(proposed.contract?.digest, `sha256:${createHash("sha256").update(readFileSync(body)).digest("hex")}`);
 		const missing = harness(cwd, "satellite");
@@ -187,7 +219,7 @@ test("an accepted decision survives a failed artifact apply and can be retried",
 		mkdirSync(artifact);
 		const probe = harness(cwd, "lead", [true]);
 		const report = await runProjectMapCommand("contract accept catalog pricing accepted", probe.ctx, { now: () => LATER });
-		assert.equal(report.wrote, false);
+		assert.equal(report.wrote, true, "the decision landed durably even though the artifact could not be applied");
 		assert.equal(readProjectMapContract({ root: store, capabilityId: "catalog", contractId: "pricing" }).status, "accepted");
 		assert.ok(probe.notified.some((message) => message.includes("can be retried")));
 	});
@@ -201,7 +233,7 @@ test("contract reject records the decision without touching the artifact", async
 		await runProjectMapCommand("lead claim", harness(cwd, "lead").ctx, { now: () => NOW });
 		const before = readFileSync(artifact, "utf8");
 		const report = await runProjectMapCommand("contract reject catalog pricing rejected", harness(cwd, "lead").ctx, { now: () => LATER });
-		assert.equal(report.wrote, false);
+		assert.equal(report.wrote, true, "the rejection is a durable decision record");
 		assert.equal(readProjectMapContract({ root: store, capabilityId: "catalog", contractId: "pricing" }).status, "rejected");
 		assert.equal(readFileSync(artifact, "utf8"), before);
 	});
@@ -258,7 +290,7 @@ test("an acceptance with no durable proposal never reaches the artifact", async 
 	});
 });
 
-test("an acceptance of a contract already in the map writes nothing and says so", async () => {
+test("an acceptance of a contract already in the map changes no artifact byte and says so", async () => {
 	await withFixture(async ({ cwd, store, artifact }) => {
 		const declared = JSON.parse(readFileSync(artifact, "utf8")) as ProjectMapV1;
 		declared.capabilities[0].contracts = ["pricing"];
@@ -269,7 +301,7 @@ test("an acceptance of a contract already in the map writes nothing and says so"
 		await runProjectMapCommand("lead claim", harness(cwd, "lead").ctx, { now: () => NOW });
 		const before = readFileSync(artifact, "utf8");
 		const report = await runProjectMapCommand("contract accept catalog pricing already", harness(cwd, "lead", [true]).ctx, { now: () => LATER });
-		assert.equal(report.wrote, false);
+		assert.equal(report.wrote, true, "the decision was recorded, even though the artifact already declared the contract");
 		assert.equal(readProjectMapContract({ root: store, capabilityId: "catalog", contractId: "pricing" }).status, "accepted");
 		assert.equal(readFileSync(artifact, "utf8"), before);
 	});
