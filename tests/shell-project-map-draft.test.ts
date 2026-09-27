@@ -310,6 +310,15 @@ test("does not read a block scalar body as configuration", () => {
 	assert.equal(afterScalar.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
 });
 
+test("reads the quality gate from the nested OpenSpec rule block the repository writes", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: ["schema: spec-driven", "rules:", "  apply:", '    test_command: "pnpm test"', ""].join("\n"),
+	});
+	assert.equal(result.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
+	assert.ok(!joined(result.omissions).includes("declares no apply.test_command"));
+});
+
 test("requires a usable script command, not merely a key", () => {
 	for (const scripts of [{ test: 42 }, { test: null }, { test: "   " }, { test: {} }]) {
 		const result = generateProjectMapDraft({ packageJson: manifest({ scripts }) });

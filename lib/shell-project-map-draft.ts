@@ -21,9 +21,8 @@ export interface ProjectMapDraftResult {
 
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER_MAX_LENGTH = 64;
-const CONFIG_SECTION = /^([a-z][a-z0-9_]*):\s*$/;
-const CONFIG_NESTED_ENTRY = /^\s+([a-z][a-z0-9_]*):\s*(\S.*)$/;
-const CONFIG_TOP_ENTRY = /^([a-z][a-z0-9_]*):\s*(\S.*)$/;
+const CONFIG_BARE_KEY = /^([a-z][a-z0-9_]*):\s*$/;
+const CONFIG_VALUED_ENTRY = /^([a-z][a-z0-9_]*):\s*(\S.*)$/;
 const WORK_UNIT = /^-\s\[([ xX])\]\s\*\*(.+?)\*\*\s*$/;
 const WORK_UNIT_SEPARATOR = "—";
 
@@ -66,9 +65,19 @@ function isBlockScalarMarker(value: string): boolean {
  * integration-readiness report needs the project's own test command, and a second copy
  * of this parser is how two readers of the same file drift apart.
  */
+/**
+ * The simple key/value entries a configuration declares, keyed by their full dotted path.
+ *
+ * The path is tracked by indentation rather than by a fixed depth, because the shape this
+ * repository writes nests three levels deep: `rules.apply.test_command` is a bare key
+ * (`rules:`), a bare key (`apply:`) and a valued key. A reader that stopped at two levels
+ * dropped the middle key and produced `rules.test_command`, so a caller looking for the
+ * documented `apply.test_command` found nothing on a config the project had just written.
+ */
 export function readSimpleConfigEntries(text: string): Map<string, string> {
 	const entries = new Map<string, string>();
-	let section = "";
+	/** The bare keys open at this point, with the indentation each one was declared at. */
+	const openKeys: { indentation: number; key: string }[] = [];
 	let blockScalarIndent: number | null = null;
 	for (const rawLine of text.split("\n")) {
 		const line = rawLine.replace(/\r$/, "");
@@ -78,34 +87,42 @@ export function readSimpleConfigEntries(text: string): Map<string, string> {
 			if (indentation > blockScalarIndent) continue;
 			blockScalarIndent = null;
 		}
-		if (line.trimStart().startsWith("#")) continue;
-		const sectionMatch = CONFIG_SECTION.exec(line);
-		if (sectionMatch) {
-			section = sectionMatch[1];
+		const content = line.trim();
+		if (content.startsWith("#")) continue;
+		const bare = CONFIG_BARE_KEY.exec(content);
+		if (bare !== null) {
+			while (openKeys.length > 0 && openKeys[openKeys.length - 1]!.indentation >= indentation) openKeys.pop();
+			openKeys.push({ indentation, key: bare[1] });
 			continue;
 		}
-		const nestedMatch = CONFIG_NESTED_ENTRY.exec(line);
-		if (nestedMatch && section.length > 0) {
-			if (isBlockScalarMarker(nestedMatch[2])) {
-				blockScalarIndent = indentation;
-				continue;
-			}
-			const value = unquote(nestedMatch[2]);
-			if (value.length > 0) entries.set(`${section}.${nestedMatch[1]}`, value);
+		const valued = CONFIG_VALUED_ENTRY.exec(content);
+		if (valued === null) continue;
+		if (isBlockScalarMarker(valued[2])) {
+			blockScalarIndent = indentation;
 			continue;
 		}
-		const topMatch = CONFIG_TOP_ENTRY.exec(line);
-		if (topMatch) {
-			section = "";
-			if (isBlockScalarMarker(topMatch[2])) {
-				blockScalarIndent = indentation;
-				continue;
-			}
-			const value = unquote(topMatch[2]);
-			if (value.length > 0) entries.set(topMatch[1], value);
-		}
+		const value = unquote(valued[2]);
+		if (value.length === 0) continue;
+		const path = [...openKeys.filter((open) => open.indentation < indentation).map((open) => open.key), valued[1]];
+		entries.set(path.join("."), value);
 	}
 	return entries;
+}
+
+/**
+ * The verification command a project declares, or `null` when it declares none.
+ *
+ * Two shapes are accepted, most specific first: the OpenSpec rule block this repository's own
+ * `sdd-init` writes (`rules.apply.test_command`), and a flat top-level `apply.test_command`,
+ * which the reference documents and a project may declare directly. An absent or blank command
+ * declares nothing, and nothing is never read as a requirement.
+ */
+export function readConfigTestCommand(entries: Map<string, string>): string | null {
+	for (const key of ["rules.apply.test_command", "apply.test_command"]) {
+		const value = entries.get(key);
+		if (value !== undefined && value.trim().length > 0) return value;
+	}
+	return null;
 }
 
 function comparePaths(left: string, right: string): number {
@@ -185,8 +202,8 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 
 	if (openspecConfig !== null) {
 		const entries = readSimpleConfigEntries(openspecConfig);
-		const testCommand = entries.get("apply.test_command");
-		const declaresGate = testCommand !== undefined && testCommand.length > 0;
+		const testCommand = readConfigTestCommand(entries);
+		const declaresGate = testCommand !== null;
 		foundations.push({
 			id: "quality-gates",
 			outcome: "The project declares the automated gates that guard a change.",

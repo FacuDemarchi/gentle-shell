@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import {
 	checkProjectMapIntegrationTasks,
@@ -72,6 +74,41 @@ test("a capability that declares no feature document leaves the check unverified
 
 test("the verification requirement is read from the project's own config", () => {
 	assert.equal(readProjectMapTestCommand('schema: spec-driven\napply:\n  test_command: "pnpm test"\n'), "pnpm test");
+});
+
+// The shape this repository's own `sdd-init` writes. Every fixture used to declare a flat
+// top-level `apply:`, so the suite agreed with the reader instead of with the writer and this
+// nesting went unread on a config the product had just produced.
+test("the verification requirement is read from the nested OpenSpec rule block", () => {
+	const written = [
+		"schema: spec-driven",
+		"rules:",
+		"  proposal:",
+		"    require_problem_statement: true",
+		"  apply:",
+		'    test_command: "pnpm test"',
+		"  verify:",
+		'    test_command: "pnpm test"',
+		"testing:",
+		'  detected: "2026-07-10"',
+		"",
+	].join("\n");
+	assert.equal(readProjectMapTestCommand(written), "pnpm test");
+});
+
+// The pin that matters: the file `sdd-init` actually wrote, read back by the map. A fixture
+// cannot catch this class of defect, because the fixture is written by the same hand that
+// writes the reader.
+test("the repository's own config declares the command the map reads", () => {
+	const config = readFileSync(join(process.cwd(), "openspec", "config.yaml"), "utf8");
+	assert.equal(readProjectMapTestCommand(config), "pnpm test");
+});
+
+test("the nested declaration wins over a flat one, and neither comes from a block scalar", () => {
+	const both = ["rules:", "  apply:", '    test_command: "nested"', "apply:", '  test_command: "flat"', ""].join("\n");
+	assert.equal(readProjectMapTestCommand(both), "nested");
+	const scalar = ["context: |", "  apply:", '    test_command: "nested"', ""].join("\n");
+	assert.equal(readProjectMapTestCommand(scalar), null);
 });
 
 test("a config without a test command declares none", () => {
