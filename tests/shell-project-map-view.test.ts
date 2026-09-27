@@ -248,16 +248,25 @@ test("computes coverage from declared capabilities and counts only done ones", (
 	assert.deepEqual(security, { surface: "security", declared: 0, done: 0 });
 });
 
+// The line is clipped rather than packed, so a narrow budget hides its tail behind an
+// ellipsis. The full list is one command away: `status` names every surface.
 test("renders an undeclared surface as unknown and never as zero percent", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
+	const body = projectMapCardDescriptor(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, 400).body.join("\n");
 	const coverageLine = body.split("\n").find((line) => line.includes("Security"));
 	assert.ok(coverageLine, "expected a coverage line naming Security");
 	assert.ok(coverageLine.includes("Security —"), `expected an unknown marker, got ${coverageLine}`);
 	assert.equal(coverageLine.includes("Security 0%"), false);
+	// The same summary at a narrow budget keeps its first surfaces and clips the rest, and it
+	// stays one line: no continuation follows the header.
+	const lines = projectMapCardDescriptor(ready(map())).body;
+	const clipped = lines.join("\n");
+	assert.ok(clipped.includes("Product/UX —"), "the first surface stays visible");
+	assert.ok(clipped.includes("…"), "a clipped summary ends in an ellipsis instead of wrapping");
+	assert.equal(lines.length - lines.findIndex((line) => line === "Coverage") - 1, 1, "the summary is one line, never several");
 });
 
 test("renders a declared surface with its share, counts, and declaring capabilities", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
+	const body = projectMapCardDescriptor(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, 400).body.join("\n");
 	assert.ok(body.includes("Web 50% (1/2):"), `expected the Web explanation, got ${body}`);
 	assert.ok(body.includes("merchant-catalog ✓"), `expected the done declaring capability, got ${body}`);
 	assert.ok(body.includes("checkout ✕"), `expected the blocked declaring capability, got ${body}`);
@@ -321,6 +330,8 @@ test("summarizes completed foundations and capabilities", () => {
 	assert.equal(projectMapSummaryLine(map()), "1/1 foundations · 1/3 capabilities");
 });
 
+// A body line is clipped, never wrapped: a continuation would lose its indent and read as a
+// row of its own. The bound is the budget the descriptor was built for.
 test("bounds long diagnostic messages like the ready body", () => {
 	const state: ProjectMapCardState = {
 		kind: "invalid",
@@ -329,8 +340,9 @@ test("bounds long diagnostic messages like the ready body", () => {
 		overlay: PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	};
 	const descriptor = projectMapCardDescriptor(state);
-	assert.ok(descriptor.body.length > 3, "a long message wraps into continuation lines");
 	for (const line of descriptor.body) assert.ok(line.length <= 60, `expected a body line under 60 columns, got ${line.length}: ${line}`);
+	assert.ok(descriptor.body.some((line) => line.endsWith("…")), "a clipped line ends in an ellipsis");
+	assert.equal(descriptor.body.filter((line) => line.startsWith("  $.")).length, 1, "the message is one line, not a continuation run");
 });
 
 test("classifies an unreadable artifact as empty rather than throwing", () => {

@@ -135,46 +135,21 @@ export function projectMapCardState(path: string, overlay: ProjectMapOverlay = P
 }
 
 /**
- * Wraps the coverage parts into lines that already fit a narrow card. The card renderer
- * would wrap them anyway, but a pre-wrapped line keeps the descriptor honest about its own
- * width and makes the bound testable without the runtime.
+ * One body line, clipped with an ellipsis rather than wrapped.
+ *
+ * The card is a summary, and a wrapped line costs more than it buys: it loses its indent, so
+ * a continuation reads as a row of its own, and a block broken over several rows is harder to
+ * scan than a clipped one. Clipping loses nothing, because the full text stays reachable:
+ * `status` prints the whole report, and the Inspector prints a truncated identifier in full.
  */
-function boundedLines(text: string, budget = CARD_BODY_BUDGET): string[] {
-	if (text.length <= budget) return [text];
-	// A continuation keeps the indent of the line it continues. Without it a wrapped body
-	// line lands at column 0 and reads as a new row of its own, which is what made a wrapped
-	// coverage line look like three unrelated lines.
-	const indent = /^\s*/.exec(text)?.[0] ?? "";
-	const room = Math.max(8, budget - indent.length);
-	const lines: string[] = [];
-	let current = "";
-	const flush = (): void => {
-		if (current.length === 0) return;
-		lines.push(`${indent}${current}`);
-		current = "";
-	};
-	for (const word of text.trimStart().split(/\s+/)) {
-		// A token with no spaces in it — an identifier, a path — is cut hard rather than left to
-		// overrun the budget, because every line this returns is drawn as one card line.
-		let rest = word;
-		while (rest.length > room) {
-			flush();
-			lines.push(`${indent}${rest.slice(0, room)}`);
-			rest = rest.slice(room);
-		}
-		const candidate = current.length === 0 ? rest : `${current} ${rest}`;
-		if (candidate.length > room) {
-			flush();
-			current = rest;
-			continue;
-		}
-		current = candidate;
-	}
-	flush();
-	return lines;
+function clip(text: string, width: number): string {
+	if (width <= 0) return "";
+	if (text.length <= width) return text;
+	if (width === 1) return "…";
+	return `${text.slice(0, width - 1)}…`;
 }
 
-function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], innerWidth: number): string[] {
+function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[]): string[] {
 	const parts = coverage.map((entry) => {
 		const label = SURFACE_LABEL[entry.surface];
 		if (entry.declared === 0) return `${label} —`;
@@ -185,22 +160,10 @@ function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], i
 			.join(", ");
 		return `${label} ${share}% (${entry.done}/${entry.declared}): ${capabilities}`;
 	});
-	// Packed to the width the card actually has, never to a fixed guess: a line built past the
-	// inner width is clipped mid-content, which loses the tail instead of moving it down.
-	const budget = Math.max(16, innerWidth - 2);
-	const lines: string[] = [];
-	let current = "";
-	for (const part of parts) {
-		const candidate = current.length === 0 ? part : `${current} · ${part}`;
-		if (candidate.length > budget && current.length > 0) {
-			lines.push(...boundedLines(`  ${current}`, innerWidth));
-			current = part;
-			continue;
-		}
-		current = candidate;
-	}
-	if (current.length > 0) lines.push(...boundedLines(`  ${current}`, innerWidth));
-	return lines;
+	// One line, clipped by the caller when it does not fit. Packing it into several rows made
+	// the block read as separate facts rather than as one summary, and the surfaces it pushed
+	// down were still there — `status` names every one of them.
+	return [`  ${parts.join(" · ")}`];
 }
 
 function completed(items: { state: ProjectMapState }[]): number {
@@ -286,7 +249,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
-		body.lines.push(...boundedLines(line, innerWidth));
+		body.lines.push(clip(line, innerWidth));
 		return index;
 	};
 	/** A row that must stay one line: wrapping it would cost it its glyph and its indent. */
@@ -324,7 +287,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 		}
 	}
 	add("Coverage");
-	for (const line of coverageLines(map, state.coverage, innerWidth)) add(line);
+	for (const line of coverageLines(map, state.coverage)) add(line);
 	for (const line of inspectorLines(map, selection ?? "", openPiReadiness)) add(line);
 	return body;
 }
