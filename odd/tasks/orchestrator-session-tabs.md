@@ -128,12 +128,28 @@ The unit added **61 tests**: 53 across the three tabs suites, 4 for the card's d
 7. **The rail digest changes when the painted tab state changes.** Pinned by `the digest changes when the painted tab state changes`, `the digest is stable while the painted state is stable`, `a diagnostic does not change the digest, because it paints nothing`, `the rail digest follows both the model and the selection`, and on the card side by `the rail digest follows the detail's own digest so a changed detail repaints`.
 8. **Only live surfaces get a section (option C).** Pinned by `a surface whose only sessions are stale gets no section` and `a surface with no session on screen is absent from the row entirely`, with the counterpart rule pinned by criterion 4's first case.
 
-## Review disposition
+## Native review pass (closed 2026-09-26)
 
-**Superseded by the delivered state:** the disposition below was written when the unit was four slices; it is now six candidates, one per committed slice — TAB-1, TAB-2, TAB-3a, TAB-3b, TAB-3c and TAB-3d — each reviewed from a worktree pinned at its own tip with `baseRef` set to the previous slice's tip.
+**All six candidates approved with their authority burned, and no correction round was opened.** RDD was enabled for the clone for the pass and returned to `off` afterwards, as PM-4 through PM-7 did. Each candidate was reviewed from a worktree pinned at its own tip with `baseRef` set to the previous slice's tip.
 
+| Slice | Candidate range | Lineage | Tier | Lenses | Outcome | Advisory |
+|---|---|---|---|---|---|---|
+| TAB-1 | `da9f8e17..53730f40` | `review-63a9d8544ef0da3d` | medium | reliability | approved, burned | none |
+| TAB-2 | `53730f40..23b97f15` | `review-6689b7665c6d221a` | medium | reliability | approved, burned | none |
+| TAB-3a | `23b97f15..8cb31f18` | `review-59a59807cd749fd6` | high | risk, resilience, readability, reliability | approved, burned | 1 |
+| TAB-3b | `8cb31f18..b79fa7d3` | `review-5572ad1f176916fa` | medium | reliability | approved, burned | 1 |
+| TAB-3c | `b79fa7d3..31a41394` | `review-02933c3717c5deb1` | high | risk, resilience, readability, reliability | approved, burned | 1 |
+| TAB-3d | `31a41394..e596c6f4` | `review-105ad6308368e027` | high | risk, resilience, readability, reliability | approved, burned | none |
 
-RDD is **off** for this clone, as it was for PM-4 through PM-7. The unit therefore carries parent verification plus independent audits, and its deferred native review pass runs when the unit closes, one candidate per slice, from a worktree pinned at that slice's tip with `baseRef` set to the previous slice's tip, with RDD enabled for the pass and returned to `off` afterwards. No review is started mid-unit and never against a tree with a writer still running.
+**Three advisories, all informational and all non-blocking**: `R3-001` at `extensions/gentle-shell.ts:968` (TAB-3a), `R3-truncation-hit` at `lib/shell-project-map-tabs.ts:244` (TAB-3b) and `R3-001` at `tests/gentle-project-map.test.ts:674` (TAB-3c). None opened a correction, none reopens its review, and none is a reason to re-run a closed candidate; they are later work against those files.
+
+**Two things worth knowing about the tiers.** TAB-1 and TAB-2 came back **medium with a single lens** despite being 387 and 282 changed lines, because a pure projection and a pure renderer start no process — the tier follows `shell_process`, not size, exactly as PM-7's pass showed. TAB-3c is **high for a reason worth recording**: its 163 lines are mostly a test file, and what raised the tier was `execFileSync` in the integration fixture that builds a real Git repository. A test that shells out is still a process boundary to the provider.
+
+**The pass cost six forecasts and eighteen reviewer runs** — four each for the three high-tier candidates, one each for the three medium ones — not the twenty-four a uniform four-lens pass would have cost.
+
+**Two binding submissions were rejected, and the rejection was correct both times.** Both were transcription errors on my side inside an opaque provider binding: one character in TAB-1's `baseTree`, one in TAB-3c's `repository-context` handle. The provider refused them as unknown, the slot was **not** consumed, and resubmitting the exact binding worked. The lesson is that an opaque binding is copied, never typed from memory, and that a rejection here costs nothing but a retry.
+
+**Not reviewed**: TAB-4 (`e596c6f4..a6dc0b05`) is documentation and the acceptance trace with no executable change, which the entry rule exempts as a passive documentation-only edit. Its content is verified indirectly, because the trace it adds cites the tests the other six candidates were reviewed against.
 
 ## Progress
 
