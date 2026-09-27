@@ -297,3 +297,51 @@ test("the unavailable overlay contributes no rendered rows", () => {
 		for (const term of ["claim", "lease", "heartbeat", "worktree", "session"]) assert.equal(lines.includes(term), false);
 	});
 });
+
+/** The read-only block another surface may stack below the card. */
+function detail(lines: () => string[], digest = () => "detail"): { lines(width: number): string[]; digest(): string } {
+	return { lines: () => lines(), digest };
+}
+
+test("a card detail paints below the card's own lines and leaves them untouched", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const plain = projectMapCardRail(path, theme, session()).render(46);
+		const stacked = projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => ["▸ catalog"])).render(46);
+		assert.deepEqual(stacked.slice(0, plain.length), plain, "the card's own lines are unchanged");
+		assert.deepEqual(stacked.slice(plain.length), ["▸ catalog"]);
+	});
+});
+
+test("a detail that paints nothing adds no row at all", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const plain = projectMapCardRail(path, theme, session()).render(46);
+		assert.deepEqual(projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => [])).render(46), plain);
+	});
+});
+
+test("the rail digest follows the detail's own digest so a changed detail repaints", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		let version = "one";
+		const rail = projectMapCardRail(path, theme, session(), undefined, undefined, undefined, detail(() => ["▸ catalog"], () => version));
+		const before = rail.digest!();
+		assert.equal(rail.digest!(), before, "an unchanged detail reuses the prepared rail");
+		version = "two";
+		assert.notEqual(rail.digest!(), before, "a changed detail must repaint the rail");
+	});
+});
+
+test("a detail row is never the card's click, and the card's own rows keep their indices", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, detail(() => ["▸ catalog", "  Merchants can publish a catalog."]));
+		const lines = rail.render(46);
+		const click = (y: number) => rail.handleMouse?.({ type: "click", button: "left", x: 2, y, screenX: 2, screenY: y, width: 46, height: lines.length, shift: false, alt: false, ctrl: false });
+		const header = lines.findIndex((line) => line.includes("Foundations"));
+		assert.ok(header >= 0);
+		assert.deepEqual(click(header), { handled: true, render: true }, "the card's own row still answers at its own index");
+		assert.deepEqual(current.toggled, ["foundations"]);
+		for (let y = lines.length - 2; y < lines.length; y++) {
+			assert.equal(click(y), undefined, `the detail row ${y} is read-only`);
+		}
+	});
+});

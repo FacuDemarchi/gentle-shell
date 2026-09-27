@@ -17,7 +17,7 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
-import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsRail } from "../lib/shell-project-map-tabs.ts";
+import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
 import { listPresence } from "../lib/orchestrator-presence.ts";
 import { sidebarHeaderContributor } from "../lib/shell-sidebar.ts";
 import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
@@ -941,35 +941,43 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 					refresh(ctx);
 				},
 			};
+			// The tabs reach the screen through two different doors, because neither surface
+			// accepts a second owner: the row contributes to the single-owner header, and the
+			// detail lends its rows to the card, since the rail's sections are a closed list.
+			// A store root that cannot be resolved leaves both absent, never failing the card.
+			const storeRoot = (() => {
+				try { return resolveProjectMapStoreRoot(ctx.cwd).root; } catch { return null; }
+			})();
+			const tabs = storeRoot === null ? undefined : (() => {
+				try {
+					return createOrchestratorSessionTabsSnapshot({
+						root: storeRoot,
+						mapPath: path,
+						profile: resolveGentlePiAgentHome(env),
+						readers: projectMapTabsReaders,
+						now: () => Date.now(),
+						refreshMs: PROJECT_MAP_TABS_REFRESH_MS,
+					});
+				} catch { return undefined; }
+			})();
 			const part = projectMapCardPart(tui, path, theme, session, collapseKey, (capabilityId) => {
 				try { return projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost }); }
 				catch { return { permitted: false, diagnostics: [{ code: "project-map-open-pi/unavailable" }] }; }
+			}, tabs === undefined ? undefined : {
+				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
+				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
 			});
-			// The tabs row contributes to the header, which is single-owner, so it is
-			// registered here rather than mounted as a second part. A store root that
-			// cannot be resolved leaves the row absent instead of failing the card.
-			let disposeTabs: (() => void) | undefined;
-			try {
-				const tabs = createOrchestratorSessionTabsSnapshot({
-					root: resolveProjectMapStoreRoot(ctx.cwd).root,
-					mapPath: path,
-					profile: resolveGentlePiAgentHome(env),
-					readers: projectMapTabsReaders,
-					now: () => Date.now(),
-					refreshMs: PROJECT_MAP_TABS_REFRESH_MS,
-				});
-				disposeTabs = sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
-					read: () => tabs.read(),
-					selection: {
-						selected: () => record(ctx).tabsSelection,
-						select: (capabilityId) => {
-							record(ctx).tabsSelection = capabilityId;
-							refresh(ctx);
-						},
+			const disposeTabs = tabs === undefined ? undefined : sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
+				read: () => tabs.read(),
+				selection: {
+					selected: () => record(ctx).tabsSelection,
+					select: (capabilityId) => {
+						record(ctx).tabsSelection = capabilityId;
+						refresh(ctx);
 					},
-					theme,
-				}));
-			} catch { disposeTabs = undefined; }
+				},
+				theme,
+			}));
 			mounted.set(key, { part, tui, disposeTabs });
 			return part;
 		}, { placement: "belowEditor" });

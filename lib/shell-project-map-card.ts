@@ -48,7 +48,20 @@ export function renderProjectMapCard(
 	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse), theme, width, { expanded, hint });
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor): SidebarRail {
+/**
+ * A read-only block another surface stacks below the card.
+ *
+ * The rail's sections are a closed list, so a second card cannot register itself
+ * in the rail area. A surface that needs to show detail next to the map lends the
+ * card its rows instead: they paint below the card, they take part in the digest,
+ * and they never receive a click, so the card's own hit indices keep their meaning.
+ */
+export interface ProjectMapCardDetail {
+	lines(width: number): string[];
+	digest(): string;
+}
+
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
 	const capabilityLines = new Map<number, string>();
 	const capabilityStarts = new Map<string, number>();
@@ -63,7 +76,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		}
 		return decision;
 	};
-	const render = (width: number) => {
+	const renderCardLines = (width: number) => {
 		headerLines.clear();
 		capabilityLines.clear();
 		capabilityStarts.clear();
@@ -102,9 +115,13 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		}
 		return lines;
 	};
+	const render = (width: number) => {
+		const lines = renderCardLines(width);
+		return detail === undefined ? lines : [...lines, ...detail.lines(width)];
+	};
 	return {
 		render,
-		digest: () => projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision()),
+		digest: () => `${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), currentDecision())}|${detail?.digest() ?? ""}`,
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -133,7 +150,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, decisionFor?: ProjectMapOpenPiDecisionFor, detail?: ProjectMapCardDetail): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
 		artifactPath,
 		theme,
@@ -141,6 +158,7 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		hint,
 		(localLine) => sidebarState(tui).reveal?.(PROJECT_MAP_RAIL_KEY, localLine),
 		decisionFor,
+		detail,
 	));
 }
 

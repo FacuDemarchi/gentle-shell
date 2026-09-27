@@ -689,6 +689,34 @@ test("the contribution paints nothing when no session holds a capability the map
 	});
 });
 
+test("selecting a tab paints its read-only detail in the card's rail", async () => {
+	await withGitRepository(async (directory, store, agentHome) => {
+		writeGroupedReadyArtifact(directory);
+		const now = new Date().toISOString();
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "session-detail", now }).claim);
+		assert.ok(bindProjectMapStoreSession({ root: store, sessionId: "session-detail", workspaceRoot: directory, pid: 1, incarnation: "123e4567-e89b-12d3-a456-426614174001", now }).binding);
+		assert.ok(beatProjectMapStoreHeartbeat({ root: store, sessionId: "session-detail", pid: 1, incarnation: "123e4567-e89b-12d3-a456-426614174001", now }).heartbeat);
+		assert.ok(bindProjectMapStoreWorktree({ root: store, capabilityId: "catalog", branch: "feat/catalog", worktreeRoot: "/projects/shop-worktrees/catalog", sessionId: "session-detail", baseCommit: "0".repeat(40), now }).binding);
+		const { tui } = await mountTabsCard(directory, agentHome, "tabs-detail");
+		const rail = () => sidebarState(tui).parts.get("project-map")!;
+		const before = rail().render(46).join("\n");
+		assert.doesNotMatch(before, /branch feat\/catalog/, "no detail is painted before anything is selected");
+
+		const contributor = sidebarHeaderContributors(tui)[0]!;
+		const row = contributor.render(140)[0]!;
+		const at = row.indexOf("catalog");
+		assert.ok(at >= 0, "the row names the capability before it can be selected");
+		assert.equal(contributor.handleMouse?.({ type: "click", button: "left", x: at + 1, y: 0, screenX: at + 1, screenY: 0, width: 140, height: 1, shift: false, alt: false, ctrl: false })?.handled, true);
+
+		const after = rail().render(46).join("\n");
+		assert.match(after, /▸ catalog/, "the selected capability is named");
+		assert.match(after, /session-detail/);
+		assert.match(after, /branch feat\/catalog/);
+		assert.match(after, /worktree \/projects\/shop-worktrees\/catalog/);
+		assert.ok(after.length > before.length, "the detail is stacked below the card, not instead of it");
+	});
+});
+
 test("unmounting the card releases the header contribution", async () => {
 	await withGitRepository(async (directory, _store, agentHome) => {
 		writeGroupedReadyArtifact(directory);
