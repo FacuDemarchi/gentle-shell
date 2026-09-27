@@ -47,7 +47,7 @@ Delete the capability Inspector from the card, keep the one fact it alone carrie
 | --- | --- |
 | `d41866fa` | The explanation in Spanish, plus the static blockers it inherited |
 | `cc3c06bb` | The Inspector retired, and with it the card's readiness port and its per-selection cost |
-| `pending` | The documentation |
+| `6336fc3c` | The documentation |
 
 Gates at delivery: unit suite 4,059 (4,021 passed, 38 skipped, 0 failed), type
 baseline 195 with no regressions, package resource check 199 files, provider
