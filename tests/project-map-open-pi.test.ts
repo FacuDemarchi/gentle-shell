@@ -130,20 +130,22 @@ test("readiness permits an approved, claimed, plannable capability and writes no
 	});
 });
 
-test("readiness permits only capabilities declared ready", () => {
-	const cases: Array<{ state: ProjectMapCapabilityV1["state"]; permitted: boolean }> = [
-		{ state: "done", permitted: false },
-		{ state: "active", permitted: false },
-		{ state: "review", permitted: false },
+test("readiness derives launchability from evidence instead of a declared state", () => {
+	// The map's `state` no longer decides on its own: only the two declarations that mean
+	// "do not start" still refuse, and the rest is the evidence the store already holds.
+	const cases: Array<{ state: ProjectMapCapabilityV1["state"]; permitted: boolean; code?: string }> = [
+		{ state: "done", permitted: false, code: "project-map-open-pi/capability-done" },
+		{ state: "active", permitted: true },
+		{ state: "review", permitted: true },
 		{ state: "ready", permitted: true },
-		{ state: "blocked", permitted: false },
-		{ state: "planned", permitted: false },
+		{ state: "blocked", permitted: false, code: "project-map-open-pi/capability-blocked" },
+		{ state: "planned", permitted: true },
 	];
 	for (const entry of cases) withFixture(({ cwd, store }) => {
 		claim(store);
 		const result = readiness(cwd);
 		assert.equal(result.permitted, entry.permitted, entry.state);
-		assert.equal(hasCode(result, "project-map-open-pi/capability-not-ready"), !entry.permitted, entry.state);
+		if (entry.code !== undefined) assert.equal(hasCode(result, entry.code), true, entry.state);
 	}, projectMap([capability("catalog", { state: entry.state })]));
 });
 

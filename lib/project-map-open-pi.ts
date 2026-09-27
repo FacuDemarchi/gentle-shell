@@ -385,7 +385,10 @@ export function projectMapOpenPiReadiness({ cwd, capabilityId, sessionId, now, h
 	if (capability === null) diagnostics.push(diagnostic("project-map-open-pi/capability-not-found", `Capability "${capabilityId}" is not declared in the approved Project Map.`));
 	else {
 		if (state?.map?.approval.state !== "approved") diagnostics.push(diagnostic("project-map-open-pi/capability-not-approved", `Capability "${capabilityId}" requires an approved Project Map.`));
-		if (capability.state !== "ready") diagnostics.push(diagnostic("project-map-open-pi/capability-not-ready", `Capability "${capabilityId}" is declared "${capability.state}", not ready.`));
+		// Launchability is derived from the evidence below, so the declared state only refuses
+		// when it says "do not start". A `planned` capability is as openable as a `ready` one.
+		if (capability.state === "done") diagnostics.push(diagnostic("project-map-open-pi/capability-done", `Capability "${capabilityId}" is declared done; there is nothing left to open.`));
+		if (capability.state === "blocked") diagnostics.push(diagnostic("project-map-open-pi/capability-blocked", `Capability "${capabilityId}" is declared blocked; resolve the blocker before opening Pi.`));
 		if (capabilityState?.dependencyReady !== true) diagnostics.push(diagnostic("project-map-open-pi/dependencies-not-ready", `Dependencies for capability "${capabilityId}" are not ready.`));
 		if ((capabilityState?.openBlockers ?? 0) > 0) diagnostics.push(diagnostic("project-map-open-pi/open-blocker", `Capability "${capabilityId}" has an open blocker.`));
 		if ((capabilityState?.proposedContracts ?? 0) > 0) diagnostics.push(diagnostic("project-map-open-pi/proposed-contract", `Capability "${capabilityId}" has a proposed contract awaiting a decision.`));
