@@ -88,7 +88,7 @@ export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"] as const;
 
 export function projectMapOpenPiDecision(readiness: ProjectMapOpenPiReadiness, env: NodeJS.ProcessEnv = process.env): ProjectMapOpenPiReadiness {
 	const message = projectMapExecutableRefusal(env);
@@ -122,6 +122,7 @@ export interface ProjectMapCommandContext {
 	ui: {
 		notify: (message: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
+		input?: (title: string, placeholder?: string) => Promise<string | undefined>;
 		select?: (title: string, options: string[]) => Promise<string | undefined>;
 		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
 	};
@@ -174,7 +175,9 @@ export interface ProjectMapSubActionParse {
 
 export function parseProjectMapSubAction(args: string): ProjectMapSubActionParse {
 	const [head = "", ...rest] = args.trim().split(/\s+/);
-	if (head.length === 0) return { ok: false, action: null, argument: "", message: `A sub-action is required. ${USAGE.command}` };
+	// The bare command is the gesture the feature is named after, so it is the default rather
+	// than an error: it ensures a map exists and shows it. `ensure` is also typeable by name.
+	if (head.length === 0) return { ok: true, action: "ensure", argument: "", message: "" };
 	if (!PROJECT_MAP_SUB_ACTIONS.includes(head as ProjectMapSubAction)) {
 		return { ok: false, action: null, argument: "", message: `Unknown sub-action "${head}". ${USAGE.command}` };
 	}
@@ -860,40 +863,74 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		return { action: "status", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
 	}
 
-	if (parsed.action === "draft") {
+	/**
+	 * Generates the plan, shows it, and writes it only after a typed confirmation. `draft` and
+	 * `ensure` share this flow so the two entries can never drift apart: the only difference
+	 * between them is what `ensure` does first when a usable map already exists.
+	 */
+	const generatePlan = async (action: "draft" | "ensure"): Promise<ProjectMapCommandReport> => {
 		const observed = readSource(artifactPath);
 		const unreadable = unreadableArtifactRefusal(artifactPath);
 		if (unreadable !== null) {
 			ctx.ui.notify(unreadable.message);
-			return emptyReport("draft", [unreadable]);
+			return emptyReport(action, [unreadable]);
 		}
+		const current = readProjectMapFile(artifactPath);
 		const repository = readRepositorySources(ctx.cwd);
 		const generated = generateProjectMapDraft(repository.sources);
 		const omissions = [...repository.omissions, ...generated.omissions];
 		if (generated.map === null) {
 			ctx.ui.notify(`A draft could not be generated.\n${omissions.join("\n")}`);
-			return { action: "draft", wrote: false, map: null, assumptions: generated.assumptions, omissions, diagnostics: [refusal("The draft could not be generated.")] };
+			return { action, wrote: false, map: null, assumptions: generated.assumptions, omissions, diagnostics: [refusal("The draft could not be generated.")] };
 		}
-		const summary = [describe(generated.map), "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...omissions.map((entry) => `- ${entry}`)].join("\n");
+		// An artifact that exists and does not parse is replaced, and saying so first is the
+		// difference between a regeneration the human asked for and a silent overwrite. A
+		// missing artifact is the first-run case and needs no warning.
+		const replaced = existsSync(artifactPath) && current.map === null && current.diagnostics.length > 0
+			? ["", `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} is not a usable map and will be replaced:`, ...current.diagnostics.map((diagnostic) => `- ${diagnostic.path}: ${diagnostic.message}`)]
+			: [];
+		const summary = [describe(generated.map), ...replaced, "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...omissions.map((entry) => `- ${entry}`)].join("\n");
 		ctx.ui.notify(summary);
-		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.`) : false;
+		// The confirmation is typed rather than chosen from a dialog: the human answers the
+		// question in their own input. A dismissal is `undefined` and is not a decline — it
+		// simply is not a yes, and nothing is written.
+		const answer = ctx.hasUI && ctx.ui.input !== undefined
+			? await ctx.ui.input(`Write the Project Map draft to ${PROJECT_MAP_ARTIFACT_PATH}?`, 'Type "yes" to write it')
+			: undefined;
+		const confirmed = typeof answer === "string" && answer.trim().toLowerCase() === "yes";
 		if (!confirmed) {
-			ctx.ui.notify("Draft discarded; nothing was written.");
-			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
+			ctx.ui.notify(typeof answer === "string"
+				? "Nothing was written: the answer must be \"yes\" to write the draft."
+				: "Draft discarded; nothing was written.");
+			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 		}
 		if (artifactMovedSince(artifactPath, observed)) {
 			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
 			ctx.ui.notify(message);
-			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [refusal(message, "$")] };
+			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [refusal(message, "$")] };
 		}
 		const written = writeProjectMapFile(artifactPath, generated.map);
 		if (!written.ok) {
 			ctx.ui.notify(`The draft could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { action: "draft", wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: written.diagnostics };
+			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: written.diagnostics };
 		}
 		ctx.ui.notify(`Wrote a draft map to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "draft", wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
+		return { action, wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
+	};
+
+	if (parsed.action === "ensure") {
+		const read = readProjectMapFile(artifactPath);
+		if (read.map !== null) {
+			options.onShow?.();
+			ctx.ui.notify(`Project Map card shown for this session.\n\n${describe(read.map)}`);
+			return { action: "ensure", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
+		}
+		const generated = await generatePlan("ensure");
+		if (generated.wrote) options.onShow?.();
+		return generated;
 	}
+
+	if (parsed.action === "draft") return generatePlan("draft");
 
 	if (parsed.action === "declare") {
 		const [capabilityId = "", ...surfaces] = parsed.argument.split(/\s+/);
