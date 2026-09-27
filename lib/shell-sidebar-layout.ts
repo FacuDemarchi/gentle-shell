@@ -5,7 +5,8 @@ import { renderSidebarBanner } from "./shell-sidebar-banner.ts";
 import type { Density, HeaderPlacement, StatusPlacement } from "./visual-customization-policy.ts";
 
 export const SIDEBAR_BREAKPOINT = 140;
-const RAIL_WIDTH = 50;
+/** The rail's own columns. Exported so a surface that must stay clear of it reserves the same width. */
+export const RAIL_WIDTH = 50;
 const RAIL_PADDING = 1;
 // The rail's ScrollView keeps one column for its scrollbar; with the rail
 // padding that puts the card's right border two columns in from the edge.
@@ -254,7 +255,7 @@ export function installSidebar(tui: TUI, theme: ShellBarTheme, placement: () => 
 			const preparedHeaderLines = [...(headerPart?.render(Math.max(0, width - HEADER_RIGHT_INSET)) ?? [])];
 			const headerActive = headerPart !== undefined && preparedHeaderLines.some((line) => line.trim() !== "");
 			const contentWidth = scroll.getContentWidth(RAIL_WIDTH);
-			const sections = ["footer", "project-map", "agents", "todo"].filter((key) => key !== "todo" || state.visibility?.todo !== false).map((key) => {
+			const sections = ["footer", "agents", "todo", "project-map"].filter((key) => key !== "todo" || state.visibility?.todo !== false).map((key) => {
 				const component = state.parts.get(key);
 				if (!component) {
 					sectionCache.delete(key);
