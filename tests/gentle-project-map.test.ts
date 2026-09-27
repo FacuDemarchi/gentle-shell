@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TUI } from "@earendil-works/pi-tui";
-import { sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
+import { sidebarHeaderContributors, sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
+import { initializeProjectMapStore } from "../lib/project-map-store.ts";
+import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
+import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib/project-map-store-heartbeats.ts";
+import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
+import { bindProjectMapStoreWorktree } from "../lib/project-map-store-worktrees.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
 import gentleProjectMap, {
 	PROJECT_MAP_COLLAPSE_KEY_DEFAULT,
@@ -617,6 +623,80 @@ test("resolves Project Map selection shortcuts with defaults, overrides, and off
 	const extension = projectMapExtension();
 	assert.ok(extension.shortcuts.has("alt+j"));
 	assert.ok(extension.shortcuts.has("alt+k"));
+});
+
+/**
+ * The tabs contribution reads the real coordination store, so its tests need a
+ * repository Git can identify — `repository()` alone is not one — plus an
+ * initialized store, exactly as the Open Pi fixture builds.
+ */
+function withGitRepository(run: (directory: string, store: string, agentHome: string) => Promise<void> | void): Promise<void> {
+	const directory = mkdtempSync(join(tmpdir(), "project-map-tabs-"));
+	const empty = mkdtempSync(join(tmpdir(), "project-map-tabs-git-"));
+	const agentHome = mkdtempSync(join(tmpdir(), "project-map-tabs-home-"));
+	const env = { ...process.env, GIT_CONFIG_GLOBAL: join(empty, "config"), GIT_CONFIG_NOSYSTEM: "1", GIT_ATTR_NOSYSTEM: "1" };
+	writeFileSync(join(empty, "config"), "", "utf8");
+	execFileSync("git", ["init", "--initial-branch=main", directory], { env, stdio: "ignore" });
+	execFileSync("git", ["-C", directory, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture"], { env, stdio: "ignore" });
+	const resolved = resolveProjectMapStoreRoot(directory);
+	assert.ok(resolved.root && resolved.repositoryId, resolved.diagnostics.map((entry) => entry.message).join("\n"));
+	mkdirSync(resolved.root, { recursive: true, mode: 0o700 });
+	// A live instant: the snapshot compares the claim's lease against its own clock,
+	// so a fixed past instant would make every session look stale by construction.
+	assert.ok(initializeProjectMapStore({ root: resolved.root, repositoryId: resolved.repositoryId, epoch: "123e4567-e89b-12d3-a456-426614174000", now: new Date().toISOString() }).descriptor);
+	return Promise.resolve(run(directory, resolved.root, agentHome)).finally(() => {
+		rmSync(directory, { recursive: true, force: true });
+		rmSync(empty, { recursive: true, force: true });
+		rmSync(agentHome, { recursive: true, force: true });
+	});
+}
+
+async function mountTabsCard(directory: string, agentHome: string, sessionId: string) {
+	const extension = projectMapExtension({ GENTLE_PI_AGENT_HOME: agentHome });
+	const probe = widgetContext(directory, sessionId);
+	await extension.fire("session_start", probe.ctx);
+	const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+	probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
+	return { extension, probe, tui };
+}
+
+test("mounting the card contributes one header row group that reads the real coordination store", async () => {
+	await withGitRepository(async (directory, store, agentHome) => {
+		writeGroupedReadyArtifact(directory);
+		const now = new Date().toISOString();
+		assert.ok(acquireProjectMapClaim({ root: store, capabilityId: "catalog", sessionId: "session-tabs", now }).claim);
+		assert.ok(bindProjectMapStoreSession({ root: store, sessionId: "session-tabs", workspaceRoot: directory, pid: 1, incarnation: "123e4567-e89b-12d3-a456-426614174001", now }).binding);
+		assert.ok(beatProjectMapStoreHeartbeat({ root: store, sessionId: "session-tabs", pid: 1, incarnation: "123e4567-e89b-12d3-a456-426614174001", now }).heartbeat);
+		assert.ok(bindProjectMapStoreWorktree({ root: store, capabilityId: "catalog", branch: "feat/catalog", worktreeRoot: "/projects/shop-worktrees/catalog", sessionId: "session-tabs", baseCommit: "0".repeat(40), now }).binding);
+		// The temp agent home has no presence data, so presence reports itself
+		// unavailable and liveness falls back to the store's own lease status.
+		const { tui } = await mountTabsCard(directory, agentHome, "tabs");
+		const contributors = sidebarHeaderContributors(tui);
+		assert.equal(contributors.length, 1, "the card contributes exactly one header row group");
+		const row = contributors[0]!.render(140).join("\n");
+		assert.match(row, /Web · catalog/, "the row groups the live session under the surface the map declares");
+		assert.equal(typeof contributors[0]!.digest, "function", "the header memo needs a digest from the contribution");
+	});
+});
+
+test("the contribution paints nothing when no session holds a capability the map declares", async () => {
+	await withGitRepository(async (directory, _store, agentHome) => {
+		writeGroupedReadyArtifact(directory);
+		const { tui } = await mountTabsCard(directory, agentHome, "tabs-empty");
+		const contributors = sidebarHeaderContributors(tui);
+		assert.equal(contributors.length, 1, "the contribution is registered even when it paints nothing");
+		assert.deepEqual(contributors[0]!.render(140), [], "an empty store adds no header row");
+	});
+});
+
+test("unmounting the card releases the header contribution", async () => {
+	await withGitRepository(async (directory, _store, agentHome) => {
+		writeGroupedReadyArtifact(directory);
+		const { extension, probe, tui } = await mountTabsCard(directory, agentHome, "tabs-unmount");
+		assert.equal(sidebarHeaderContributors(tui).length, 1);
+		await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("hide", probe.ctx);
+		assert.deepEqual(sidebarHeaderContributors(tui), [], "hiding the card takes its header row with it");
+	});
 });
 
 test("the collapse shortcut toggles all groups only while the card is mounted", async () => {

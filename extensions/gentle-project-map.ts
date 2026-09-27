@@ -9,7 +9,7 @@ import { acquireProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } 
 import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree, listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
-import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib/project-map-store-heartbeats.ts";
+import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession, readProjectMapStoreHeartbeat } from "../lib/project-map-store-heartbeats.ts";
 import { planProjectMapWorktree, provisionProjectMapWorktree, type ProjectMapWorktreePlan, type ProjectMapWorktreeProvisionResult } from "../lib/project-map-worktrees.ts";
 import { SessionWorktreeRegistry } from "../lib/session-worktree-registry.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
@@ -17,6 +17,9 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
+import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsRail } from "../lib/shell-project-map-tabs.ts";
+import { listPresence } from "../lib/orchestrator-presence.ts";
+import { sidebarHeaderContributor } from "../lib/shell-sidebar.ts";
 import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
@@ -829,7 +832,39 @@ interface ProjectMapSessionRecord {
 	visibility: boolean | undefined;
 	collapse: ProjectMapCollapseState;
 	selection: string | undefined;
+	tabsSelection: string | undefined;
 }
+
+export const PROJECT_MAP_TABS_CONTRIBUTOR_KEY = "orchestrator-tabs";
+
+/**
+ * The coordination store and presence are far heavier than the map artifact the
+ * card re-reads every render, so the tabs snapshot is bounded to one store read
+ * per window instead of one per frame. Heartbeats move on a ten-second cadence, so
+ * two seconds keeps the row honest without putting directory scans on the paint path.
+ */
+const PROJECT_MAP_TABS_REFRESH_MS = 2_000;
+
+const projectMapTabsReaders = {
+	coordination: ({ root, mapPath, now }: { root: string; mapPath: string; now: string }) => readProjectMapCoordinationState({ root, mapPath, now }),
+	worktreeBindings: (root: string) => {
+		const listed = listProjectMapStoreWorktreeBindings({ root });
+		return {
+			bindings: listed.bindings.map((binding) => ({ capabilityId: binding.capability_id, sessionId: binding.session_id, branch: binding.branch, worktreeRoot: binding.worktree_root })),
+			diagnostics: listed.diagnostics,
+		};
+	},
+	// Presence keys a session by a hash of its id, so the hashing belongs here,
+	// next to the reader that knows the format, and never in the projection.
+	presenceAlive: (profile: string | undefined, sessionIds: readonly string[]) => {
+		if (profile === undefined) return null;
+		const page = listPresence(profile, Date.now());
+		if (page.unavailable !== undefined) return null;
+		const present = new Set(page.entries.map((entry) => entry.sessionHash));
+		return new Set(sessionIds.filter((sessionId) => present.has(createHash("sha256").update(sessionId).digest("hex"))));
+	},
+	lastActivity: (root: string, sessionId: string) => readProjectMapStoreHeartbeat({ root, sessionId, now: new Date().toISOString() }).heartbeat?.beat_at,
+};
 
 export function handleProjectMapOpenPiSessionStart(
 	ctx: ProjectMapCommandContext,
@@ -858,7 +893,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	const launchIdentity = env[PROJECT_MAP_OPEN_PI_ENV];
 	if (launchIdentity !== undefined) pi.on("session_start", (_event, raw) => handleProjectMapOpenPiSessionStart(raw as ProjectMapCommandContext, launchIdentity));
 	const sessions = new Map<string, ProjectMapSessionRecord>();
-	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI }>();
+	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI; disposeTabs?: () => void }>();
 	const collapseKey = parseProjectMapCollapseKey(env);
 	const renderHost = projectMapOpenPiHostOnce();
 	const nextKey = parseProjectMapNextKey(env);
@@ -867,7 +902,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 		const key = sessionKey(ctx);
 		const existing = sessions.get(key);
 		if (existing) return existing;
-		const created = { visibility: undefined, collapse: { ...PROJECT_MAP_EXPANDED }, selection: undefined };
+		const created = { visibility: undefined, collapse: { ...PROJECT_MAP_EXPANDED }, selection: undefined, tabsSelection: undefined };
 		sessions.set(key, created);
 		return created;
 	};
@@ -882,6 +917,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	const unmount = (ctx: ProjectMapCommandContext) => {
 		const key = sessionKey(ctx);
 		const current = mounted.get(key);
+		current?.disposeTabs?.();
 		current?.part.dispose?.();
 		ctx.ui.setWidget?.(PROJECT_MAP_WIDGET_KEY, undefined);
 		if (current) refresh(ctx);
@@ -909,7 +945,32 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				try { return projectMapOpenPiReadiness({ cwd: ctx.cwd, capabilityId, sessionId: sessionKey(ctx), now: new Date().toISOString(), host: renderHost }); }
 				catch { return { permitted: false, diagnostics: [{ code: "project-map-open-pi/unavailable" }] }; }
 			});
-			mounted.set(key, { part, tui });
+			// The tabs row contributes to the header, which is single-owner, so it is
+			// registered here rather than mounted as a second part. A store root that
+			// cannot be resolved leaves the row absent instead of failing the card.
+			let disposeTabs: (() => void) | undefined;
+			try {
+				const tabs = createOrchestratorSessionTabsSnapshot({
+					root: resolveProjectMapStoreRoot(ctx.cwd).root,
+					mapPath: path,
+					profile: resolveGentlePiAgentHome(env),
+					readers: projectMapTabsReaders,
+					now: () => Date.now(),
+					refreshMs: PROJECT_MAP_TABS_REFRESH_MS,
+				});
+				disposeTabs = sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
+					read: () => tabs.read(),
+					selection: {
+						selected: () => record(ctx).tabsSelection,
+						select: (capabilityId) => {
+							record(ctx).tabsSelection = capabilityId;
+							refresh(ctx);
+						},
+					},
+					theme,
+				}));
+			} catch { disposeTabs = undefined; }
+			mounted.set(key, { part, tui, disposeTabs });
 			return part;
 		}, { placement: "belowEditor" });
 	};
