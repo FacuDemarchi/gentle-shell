@@ -2,6 +2,7 @@ import {
 	PROJECT_MAP_ARTIFACT_PATH,
 	PROJECT_MAP_SURFACES,
 	readProjectMapFile,
+	type ProjectMapCapabilityV1,
 	type ProjectMapDiagnostic,
 	type ProjectMapState,
 	type ProjectMapSurface,
@@ -68,7 +69,6 @@ const SURFACE_LABEL: Record<ProjectMapSurface, string> = {
 };
 
 const MAX_DIAGNOSTICS = 3;
-const COVERAGE_BUDGET = 58;
 
 /**
  * Runtime coordination state: active claims, leases, heartbeats, session bindings, and
@@ -139,20 +139,42 @@ export function projectMapCardState(path: string, overlay: ProjectMapOverlay = P
  * would wrap them anyway, but a pre-wrapped line keeps the descriptor honest about its own
  * width and makes the bound testable without the runtime.
  */
-function boundedLines(text: string, budget = 60): string[] {
+function boundedLines(text: string, budget = CARD_BODY_BUDGET): string[] {
 	if (text.length <= budget) return [text];
+	// A continuation keeps the indent of the line it continues. Without it a wrapped body
+	// line lands at column 0 and reads as a new row of its own, which is what made a wrapped
+	// coverage line look like three unrelated lines.
+	const indent = /^\s*/.exec(text)?.[0] ?? "";
+	const room = Math.max(8, budget - indent.length);
 	const lines: string[] = [];
-	let remaining = text;
-	while (remaining.length > budget) {
-		const boundary = remaining.lastIndexOf(" ", budget);
-		const cut = boundary > 0 ? boundary : budget;
-		lines.push(remaining.slice(0, cut).trimEnd());
-		remaining = remaining.slice(cut).trimStart();
+	let current = "";
+	const flush = (): void => {
+		if (current.length === 0) return;
+		lines.push(`${indent}${current}`);
+		current = "";
+	};
+	for (const word of text.trimStart().split(/\s+/)) {
+		// A token with no spaces in it — an identifier, a path — is cut hard rather than left to
+		// overrun the budget, because every line this returns is drawn as one card line.
+		let rest = word;
+		while (rest.length > room) {
+			flush();
+			lines.push(`${indent}${rest.slice(0, room)}`);
+			rest = rest.slice(room);
+		}
+		const candidate = current.length === 0 ? rest : `${current} ${rest}`;
+		if (candidate.length > room) {
+			flush();
+			current = rest;
+			continue;
+		}
+		current = candidate;
 	}
-	return [...lines, remaining];
+	flush();
+	return lines;
 }
 
-function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[]): string[] {
+function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], innerWidth: number): string[] {
 	const parts = coverage.map((entry) => {
 		const label = SURFACE_LABEL[entry.surface];
 		if (entry.declared === 0) return `${label} —`;
@@ -163,18 +185,21 @@ function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[]): 
 			.join(", ");
 		return `${label} ${share}% (${entry.done}/${entry.declared}): ${capabilities}`;
 	});
+	// Packed to the width the card actually has, never to a fixed guess: a line built past the
+	// inner width is clipped mid-content, which loses the tail instead of moving it down.
+	const budget = Math.max(16, innerWidth - 2);
 	const lines: string[] = [];
 	let current = "";
 	for (const part of parts) {
 		const candidate = current.length === 0 ? part : `${current} · ${part}`;
-		if (candidate.length > COVERAGE_BUDGET && current.length > 0) {
-			lines.push(...boundedLines(`  ${current}`, COVERAGE_BUDGET + 2));
+		if (candidate.length > budget && current.length > 0) {
+			lines.push(...boundedLines(`  ${current}`, innerWidth));
 			current = part;
 			continue;
 		}
 		current = candidate;
 	}
-	if (current.length > 0) lines.push(...boundedLines(`  ${current}`, COVERAGE_BUDGET + 2));
+	if (current.length > 0) lines.push(...boundedLines(`  ${current}`, innerWidth));
 	return lines;
 }
 
@@ -222,16 +247,57 @@ function inspectorLines(map: ProjectMapV1, selection: string, openPiReadiness?: 
 	];
 }
 
-export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): ProjectMapCardBody {
+/**
+ * The width a body line is built to fit, when the caller does not know it yet.
+ *
+ * A capability row is truncated to this budget rather than wrapped: a card that lists
+ * capabilities is a list, and a row that spills onto a second line loses its glyph and its
+ * indent, so it reads as two unrelated lines. `renderCard` wraps anything longer than the real
+ * inner width, which is why the real width is threaded down from the render path.
+ */
+const CARD_BODY_BUDGET = 60;
+
+/**
+ * Keeps both ends of an identifier visible: a capability id is read from either end, and an
+ * end-truncated one keeps only the half nobody recognises. The Inspector carries it in full.
+ */
+function middleTruncate(text: string, room: number): string {
+	if (room <= 0) return "";
+	if (text.length <= room) return text;
+	const head = Math.ceil((room - 1) / 2);
+	const tail = room - 1 - head;
+	return `${text.slice(0, head)}…${tail > 0 ? text.slice(text.length - tail) : ""}`;
+}
+
+/**
+ * One capability row, built to fit the inner width exactly.
+ *
+ * An undeclared surface renders `—`, the same vocabulary Coverage uses: undeclared is an
+ * absence of evidence, never a zero.
+ */
+function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number): string {
+	const surfaces = capability.surfaces.length === 0 ? "—" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
+	const head = `${selected ? "▸ " : "  "}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
+	const tail = ` · ${surfaces}`;
+	return `${head}${middleTruncate(capability.id, innerWidth - head.length - tail.length)}${tail}`;
+}
+
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET): ProjectMapCardBody {
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
-		body.lines.push(...boundedLines(line));
+		body.lines.push(...boundedLines(line, innerWidth));
+		return index;
+	};
+	/** A row that must stay one line: wrapping it would cost it its glyph and its indent. */
+	const addRow = (line: string): number => {
+		const index = body.lines.length;
+		body.lines.push(line);
 		return index;
 	};
 	if (state.kind === "empty") {
 		add(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		add("Run /gentle:project-map draft to generate one.");
+		add("Run /gentle:project-map to generate one.");
 		return body;
 	}
 	if (state.kind === "invalid") {
@@ -250,23 +316,21 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	body.headers.push({ line: capabilityHeader, group: "capabilities" });
 	if (!collapse.capabilities) {
 		for (const capability of map.capabilities) {
-			const surfaces = capability.surfaces.length === 0 ? "no surface declared" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
 			const selected = capability.id === selection;
-			const line = add(`${selected ? "▸ " : "  "}${PROJECT_MAP_STATE_GLYPH[capability.state]} ${capability.id} · ${surfaces}`);
-			// A long identifier is pre-bounded into several body lines, and every one of them
-			// belongs to the row, so the target spans the whole run.
-			body.capabilities.push({ line, id: capability.id, height: body.lines.length - line });
+			const line = addRow(capabilityRow(capability, selected, innerWidth));
+			// Every capability row is exactly one body line, so the click target is that line.
+			body.capabilities.push({ line, id: capability.id, height: 1 });
 			if (selected) body.selected = line;
 		}
 	}
 	add("Coverage");
-	for (const line of coverageLines(map, state.coverage)) add(line);
+	for (const line of coverageLines(map, state.coverage, innerWidth)) add(line);
 	for (const line of inspectorLines(map, selection ?? "", openPiReadiness)) add(line);
 	return body;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView): ProjectMapCardDescriptor {
-	const body = projectMapCardBody(state, collapse, selection, openPiReadiness).lines;
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, openPiReadiness?: ProjectMapOpenPiReadinessView, innerWidth = CARD_BODY_BUDGET): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection, openPiReadiness, innerWidth).lines;
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {

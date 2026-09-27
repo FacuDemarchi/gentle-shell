@@ -45,7 +45,7 @@ export function renderProjectMapCard(
 	collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED,
 	hint?: string,
 ): string[] {
-	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse), theme, width, { expanded, hint });
+	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, undefined, cardInnerWidth(width)), theme, width, { expanded, hint });
 }
 
 /**
@@ -82,8 +82,8 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		capabilityStarts.clear();
 		const current = state(artifactPath);
 		const openPiDecision = currentDecision();
-		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision);
-		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision);
+		const body = projectMapCardBody(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width));
+		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), openPiDecision, cardInnerWidth(width));
 		const lines = renderCard(descriptor, theme, width, { expanded: true, hint });
 		// `renderCard` starts with the frame top, then wraps each body line in order. Map
 		// body indices through that wrapping rather than reading control text back from paint.
@@ -142,7 +142,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	return {
 		render: (width) => {
 			const current = state(artifactPath);
-			const descriptor = projectMapCardDescriptor(current);
+			const descriptor = projectMapCardDescriptor(current, undefined, undefined, undefined, cardInnerWidth(width));
 			const body = current.kind === "ready" ? [projectMapSummaryLine(current.map)] : descriptor.body;
 			return renderCard({ ...descriptor, body }, theme, width, { expanded: false });
 		},
