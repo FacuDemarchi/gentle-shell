@@ -228,13 +228,9 @@ test("a capability row is one rendered line, and that line selects it", () => {
 		const probe = session();
 		const rail = projectMapCardRail(path, theme, probe);
 		const lines = rail.render(46);
-		// A capability row is the only glyph row inside the capabilities section. The coverage
-		// summary names capabilities too, but it is not shaped like a row.
-		const header = lines.findIndex((line) => line.includes("Product capabilities"));
-		const coverage = lines.findIndex((line) => line.includes("Coverage"));
-		const glyphRows = lines.map((line, index) => ({ line, index })).filter((entry) => entry.index > header && entry.index < coverage && /^│\s+[✓○◉]\s/.test(entry.line));
-		assert.equal(glyphRows.length, 1, "the row is one line, not spread over several");
-		const row = glyphRows[0]!.index;
+		const row = lines.findIndex((line) => line.includes("· Web"));
+		assert.ok(row > 0, "the capability row renders its surfaces on its own line");
+		assert.equal(lines.filter((line) => line.includes("· Web")).length, 1, "the row is not spread over several lines");
 		const result = rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 46, height: lines.length, shift: false, alt: false, ctrl: false });
 		assert.deepEqual(result, { handled: true, render: true });
 		assert.deepEqual(probe.selected, [longId]);
