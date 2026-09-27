@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { CardTheme } from "./shell-card.ts";
+import type { SidebarHeaderContributor } from "./shell-sidebar.ts";
 import { PROJECT_MAP_SURFACES, type ProjectMapState, type ProjectMapSurface } from "./shell-project-map-schema.ts";
 import { PROJECT_MAP_STATE_GLYPH } from "./shell-project-map-view.ts";
 
@@ -23,6 +24,9 @@ export interface OrchestratorSessionTabsDiagnostic {
 	message: string;
 	severity: "error" | "warning";
 }
+
+/** The same shape, named for the reader ports that hand diagnostics back. */
+export type OrchestratorSessionTabsDiagnostics = OrchestratorSessionTabsDiagnostic;
 
 export interface OrchestratorSessionTab {
 	capabilityId: string;
@@ -198,17 +202,51 @@ function blockersPhrase(count: number): string {
 	return count === 1 ? "1 open blocker" : `${count} open blockers`;
 }
 
-export function renderOrchestratorSessionTabRow(options: { tabs: OrchestratorSessionTabs; selection?: string; width: number; theme: CardTheme }): string[] {
-	const { tabs: model, selection, width, theme } = options;
-	if (!model.available || model.sections.length === 0) return [];
-	const sections = model.sections.map((section) => {
-		const items = rowItems(section.tabs).map((item) => {
+interface RowHit {
+	capabilityId: string;
+	start: number;
+	end: number;
+}
+
+/**
+ * Composes the row and, in the same pass, the visible column range each
+ * capability occupies, so a click can be resolved against what was actually
+ * painted. Truncation happens last, and every range is clamped to the painted
+ * width: the dropped tail of a narrow row is not clickable, while the head of a
+ * partially visible item still is.
+ */
+function composeRow(model: OrchestratorSessionTabs, selection: string | undefined, theme: CardTheme, width: number): { line: string; hits: RowHit[] } | undefined {
+	if (!model.available || model.sections.length === 0) return undefined;
+	const hits: RowHit[] = [];
+	let line = "";
+	let column = 0;
+	const append = (painted: string, plain: string) => {
+		line += painted;
+		column += visibleWidth(plain);
+	};
+	for (const [index, section] of model.sections.entries()) {
+		if (index > 0) append(SECTION_GAP, SECTION_GAP);
+		const surface = ORCHESTRATOR_SESSION_SURFACE_LABEL[section.surface];
+		append(`${theme.fg("muted", surface)} · `, `${surface} · `);
+		for (const [itemIndex, item] of rowItems(section.tabs).entries()) {
+			if (itemIndex > 0) append(ITEM_GAP, ITEM_GAP);
 			const label = item.count > 1 ? `${item.capabilityId} ×${item.count}` : item.capabilityId;
-			return item.capabilityId === selection ? theme.fg("accent", `${SELECTED_MARKER}${label}`) : label;
-		});
-		return `${theme.fg("muted", ORCHESTRATOR_SESSION_SURFACE_LABEL[section.surface])} · ${items.join(ITEM_GAP)}`;
-	});
-	return [truncateToWidth(sections.join(SECTION_GAP), Math.max(0, width), "…")];
+			const plain = item.capabilityId === selection ? `${SELECTED_MARKER}${label}` : label;
+			const start = column;
+			append(item.capabilityId === selection ? theme.fg("accent", plain) : plain, plain);
+			hits.push({ capabilityId: item.capabilityId, start, end: column });
+		}
+	}
+	const painted = visibleWidth(truncateToWidth(line, Math.max(0, width), "…"));
+	return {
+		line: truncateToWidth(line, Math.max(0, width), "…"),
+		hits: hits.filter((hit) => hit.start < painted).map((hit) => ({ ...hit, end: Math.min(hit.end, painted) })),
+	};
+}
+
+export function renderOrchestratorSessionTabRow(options: { tabs: OrchestratorSessionTabs; selection?: string; width: number; theme: CardTheme }): string[] {
+	const composed = composeRow(options.tabs, options.selection, options.theme, options.width);
+	return composed === undefined ? [] : [composed.line];
 }
 
 export function renderOrchestratorSessionTabDetail(options: { tabs: OrchestratorSessionTabs; selection?: string; width: number; theme: CardTheme }): string[] {
@@ -231,6 +269,114 @@ export function renderOrchestratorSessionTabDetail(options: { tabs: Orchestrator
 		lines.push(fit("muted", session.branch === null ? "  branch unknown" : `  branch ${session.branch}`));
 	}
 	return lines;
+}
+
+export interface OrchestratorSessionTabsReaders {
+	coordination(options: { root: string; mapPath: string; now: string }): {
+		map: { capabilities: readonly OrchestratorSessionTabsCapability[] } | null;
+		satellites: OrchestratorSessionTabsInput["satellites"];
+		capabilities: OrchestratorSessionTabsInput["capabilities"];
+		diagnostics: readonly OrchestratorSessionTabsDiagnostics[];
+	};
+	worktreeBindings(root: string): { bindings: OrchestratorSessionTabsInput["worktreeBindings"]; diagnostics: readonly OrchestratorSessionTabsDiagnostics[] };
+	/**
+	 * The subset of these session ids that is present on this machine, or null when
+	 * presence is unavailable. Presence keys sessions by a hash of the session id,
+	 * so the hashing belongs to the adapter that knows that format, not here.
+	 */
+	presenceAlive(profile: string | undefined, sessionIds: readonly string[]): ReadonlySet<string> | null;
+	lastActivity(root: string, sessionId: string): string | undefined;
+}
+
+export interface OrchestratorSessionTabsSnapshotOptions {
+	root: string;
+	mapPath: string;
+	profile?: string;
+	readers: OrchestratorSessionTabsReaders;
+	now: () => number;
+	/** How long a snapshot may be reused before the store is read again. */
+	refreshMs: number;
+}
+
+/**
+ * A bounded snapshot of the coordination store.
+ *
+ * The store and presence are far heavier than the single map artifact the card
+ * re-reads on every render: reading them per frame would put directory scans and
+ * presence pages on the paint path. The snapshot therefore reads at most once per
+ * window, and a read that fails becomes an unavailable row with a diagnostic
+ * rather than an exception escaping into the render.
+ */
+export function createOrchestratorSessionTabsSnapshot(options: OrchestratorSessionTabsSnapshotOptions): { read(): OrchestratorSessionTabs } {
+	let cached: OrchestratorSessionTabs | undefined;
+	let readAt = Number.NEGATIVE_INFINITY;
+	const build = (): OrchestratorSessionTabs => {
+		try {
+			const coordination = options.readers.coordination({ root: options.root, mapPath: options.mapPath, now: new Date(options.now()).toISOString() });
+			const bindings = options.readers.worktreeBindings(options.root);
+			const lastActivity = new Map<string, string>();
+			for (const satellite of coordination.satellites) {
+				const beat = options.readers.lastActivity(options.root, satellite.sessionId);
+				if (beat !== undefined) lastActivity.set(satellite.sessionId, beat);
+			}
+			return deriveOrchestratorSessionTabs({
+				map: coordination.map,
+				satellites: coordination.satellites,
+				capabilities: coordination.capabilities,
+				worktreeBindings: bindings.bindings,
+				presenceAlive: options.readers.presenceAlive(options.profile, coordination.satellites.map((satellite) => satellite.sessionId)),
+				lastActivity,
+				diagnostics: [...coordination.diagnostics, ...bindings.diagnostics],
+			});
+		} catch (error) {
+			return {
+				available: false,
+				sections: [],
+				diagnostics: [{ code: "orchestrator-session-tabs/unreadable", path: "$", message: error instanceof Error ? error.message : "The coordination store could not be read.", severity: "error" }],
+			};
+		}
+	};
+	return {
+		read() {
+			const now = options.now();
+			if (cached === undefined || now - readAt >= options.refreshMs) {
+				cached = build();
+				readAt = now;
+			}
+			return cached;
+		},
+	};
+}
+
+export interface OrchestratorSessionTabsSelection {
+	selected(): string | undefined;
+	select(capabilityId: string | undefined): void;
+}
+
+/**
+ * The row as a header contribution: one line, above the shell's own header rows.
+ * Selection is the caller's state, so the contribution owns no lifetime beyond
+ * the rows it paints.
+ */
+export function orchestratorSessionTabsRail(options: { read: () => OrchestratorSessionTabs; selection: OrchestratorSessionTabsSelection; theme: CardTheme }): SidebarHeaderContributor {
+	let hits: RowHit[] = [];
+	return {
+		render(width) {
+			const composed = composeRow(options.read(), options.selection.selected(), options.theme, width);
+			hits = composed?.hits ?? [];
+			return composed === undefined ? [] : [composed.line];
+		},
+		digest: () => orchestratorSessionTabsDigest(options.read(), options.selection.selected()),
+		invalidate() {},
+		handleMouse(event) {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			if (event.y !== 0) return undefined;
+			const hit = hits.find((candidate) => event.x >= candidate.start && event.x < candidate.end);
+			if (hit === undefined) return undefined;
+			options.selection.select(hit.capabilityId === options.selection.selected() ? undefined : hit.capabilityId);
+			return { handled: true, render: true };
+		},
+	};
 }
 
 /**
