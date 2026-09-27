@@ -1,6 +1,6 @@
 # PM-9 — Rollout, migration and end-to-end verification
 
-Status: **planned at recon depth 2026-09-27. Six decisions await the user; no code written.**
+Status: **planned and frozen 2026-09-27.** Five slices, six decisions settled by the user, implementation starting at PM9-1.
 This is the last unit of the initiative. PM-1 through PM-8 and the session-tab layer are closed as units with their native review passes.
 
 ## Objective
@@ -24,49 +24,49 @@ The unit is **mostly verification and one small switch**, because the hard parts
 - **The package resource check does not pin the feature.** `scripts/verify-package-files.mjs` asserts an explicit `requiredPaths` list and **not one of them is a project-map surface**: `grep project-map scripts/verify-package-files.mjs` is empty. The directories ship through `package.json`'s `files` (`lib/`, `extensions/` are whole directories), so the build is fine today — but a dropped surface would not fail the pack. The same script reconciles generated runtime sources; the project-map modules are loaded as TypeScript and correctly have **no** `runtime/*.mjs` twin, so they belong in `requiredPaths` only, and adding them cannot affect that reconciliation.
 - **Observability needs no new surface.** `status` reports approval state and counts, the card reports the first three diagnostics and points at `status` for the rest, the readiness report names each check's `verified | mismatched | unverified` state and its reason, `readiness-receipt` carries `authority: "none"`, and the store carries a `{ generation, epoch }` tuple. The repo's only telemetry lane is the agents runtime-metrics modules and is unrelated to this feature.
 
-## Decisions (proposed 2026-09-27, awaiting the user)
+## Decisions (approved by the user, 2026-09-27)
 
-Each decision records the options considered; the recommendation is mine, unratified. Nothing below is implemented until the user answers.
+Six decisions were put to the user with the options below and the recommendations recorded with them. The user approved all six recommendations, so the options each decision rejected are kept here as the record of what was considered.
 
 **A. What does the gate cover?**
 1. Everything: with the gate off, the command, the card and the tabs row are all absent.
 2. **Only the executable half**: the artifact-facing half (`status`, `draft`, `declare`, `approve` and the card) stays reachable so a project can be initialized and reviewed; the runtime half (`worktree provision`, `open`, `lead claim|renew`, `contract accept`, `integrate`) is what the gate locks.
 3. Only the mutating half: `worktree provision`, `open`, `lead claim|renew`, `contract accept`; `integrate` is read-only plus a receipt.
-**Recommended: option 2.** Gating everything makes the feature unreachable — a user could not even initialize the artifact or read why the executable half is off — and it would also make the gate untestable end to end, because there would be no way to reach the surfaces it is supposed to protect. Option 3 leaves `integrate` writing a store receipt while claiming to be locked, which is the kind of half-truth this initiative has spent eight units avoiding.
+**Chosen: option 2.** Gating everything makes the feature unreachable — a user could not even initialize the artifact or read why the executable half is off — and it would also make the gate untestable end to end, because there would be no way to reach the surfaces it is supposed to protect. Option 3 leaves `integrate` writing a store receipt while claiming to be locked, which is the kind of half-truth this initiative has spent eight units avoiding. **The rule, not just a list:** the gate locks every route that acts *outside the map artifact*, which is the worktree and branch (`worktree provision`), the launched process (`open`), and the shared coordination store (`lead claim`, `lead renew`, `contract propose`, `contract accept`, `contract reject`, `integrate`). It never locks a read (`status`, `show`, `hide`, `worktree inspect`, `worktree list`, `lead status`, `contract list`) and it never locks a state-reducing release (`lead release`), because refusing to release while the gate is off would strand a claim the repository still needs to free, and a switch that traps state is not a safe switch.
 
 **B. Gate default, idiom and propagation to children.**
 1. **Explicit opt-in**: `GENTLE_PI_PROJECT_MAP=1` enables, unset/`0` disables, matching the roadmap's wording; a behavior change for anyone already using the map.
 2. Opt-out: `GENTLE_PI_PROJECT_MAP=0|false|off` disables, matching `GENTLE_PI_AGENTS` and `GENTLE_PI_TODO`.
 3. `=1` forces on, `=0` forces off, unset means "on once the artifact exists", so the artifact is the implicit opt-in.
-**Recommended: option 1**, because the roadmap says *explicit opt-in until schemas and recovery behavior stabilize* and this unit is the last one — after it, the stabilization claim is verified rather than assumed, and a later unit may revisit the default. **Propagation**: a `open` launch starts a session in a worktree through tmux, and tmux does not forward a new client's variables to a session it creates; the launch already passes `-e ${PROJECT_MAP_OPEN_PI_ENV}=<launchIdentity>` for exactly that reason, so a gated child is either given the gate the same explicit way or is refused with the reason stated. This is part of decision A/B's implementation, not a new field.
+**Chosen: option 1**, because the roadmap says *explicit opt-in until schemas and recovery behavior stabilize* and this unit is the last one — after it, the stabilization claim is verified rather than assumed, and a later unit may revisit the default. **Propagation**: a `open` launch starts a session in a worktree through tmux, and tmux does not forward a new client's variables to a session it creates; the launch already passes `-e ${PROJECT_MAP_OPEN_PI_ENV}=<launchIdentity>` for exactly that reason, so a gated child is either given the gate the same explicit way or is refused with the reason stated. This is part of decision A/B's implementation, not a new field.
 
 **C. What does "migrate or initialize without destroying existing artifacts" require?**
 1. **Verify and document only**: tests prove the initialization path creates `openspec/` when missing, writes exactly one file, and leaves `openspec/config.yaml`, ODD documents and the coordination store byte-identical; the doc states the sequence.
 2. Also add a defensive refusal for the shapes the write already cannot handle (`openspec` present as a file, artifact present as a directory), reported by their own codes.
 3. Add an explicit `init` sub-action.
-**Recommended: option 1, plus option 2 only where the recon shows the current refusal is unattributable.** There is no schema to migrate: the map is `v1` only and the store is a new root, so nothing pre-existing needs conversion. Option 3 duplicates `draft` with a confirmation already in place.
+**Chosen: option 1.** There is no schema to migrate: the map is `v1` only and the store is a new root, so nothing pre-existing needs conversion. Option 3 duplicates `draft` with a confirmation already in place. If a slice shows the current refusal is unattributable, option 2 lands only there.
 
 **D. How does the unit represent platforms it cannot exercise?**
 1. **Adapter-level tests for every platform branch, a real tmux run on Linux only when tmux is present (skipped otherwise), and an explicit matrix in the unit document naming each cell as exercised / unit-covered / unverified.**
 2. Infer platform parity from the code branches and say the matrix is covered.
 3. Drop the platform matrix as out of reach.
-**Recommended: option 1.** The roadmap asks for the exercise; this environment can only honestly provide a part of it, and a matrix that distinguishes "verified here", "covered by a unit test with an injected adapter" and "not verified" is the only version of that answer that is not an overclaim.
+**Chosen: option 1.** The roadmap asks for the exercise; this environment can only honestly provide a part of it, and a matrix that distinguishes "verified here", "covered by a unit test with an injected adapter" and "not verified" is the only version of that answer that is not an overclaim.
 
 **E. What do "observability" and "rollback" mean for this feature?**
 1. **Document what already exists** — the diagnostics, the receipt with `authority: "none"`, the store generation, and the exact rollback sequence (disable the gate; nothing already written is undone; branches and worktrees stay; cleanup happens only through an explicit human-authorized command) — and prove by test that turning the gate off writes nothing and deletes nothing.
 2. Add new instrumentation or a telemetry lane.
 3. Add a `project-map recovery` command that mutates state.
-**Recommended: option 1.** Option 2 duplicates reporting the unit already has and adds an external surface nobody asked for. Option 3 hands a recovery command authority the roadmap deliberately keeps with a human: "disabling the feature leaves branches and worktrees intact, and cleanup checks dirty state and requires human authorization whenever data may be lost."
+**Chosen: option 1.** Option 2 duplicates reporting the unit already has and adds an external surface nobody asked for. Option 3 hands a recovery command authority the roadmap deliberately keeps with a human: "disabling the feature leaves branches and worktrees intact, and cleanup checks dirty state and requires human authorization whenever data may be lost."
 
 **F. Package contents and compatibility evidence.**
 1. **Pin every project-map surface in `requiredPaths`, and run the existing compatibility gates with their results recorded** (provider contract, generated runtime modules, type baseline, full suite, pack resource check).
 2. Also add a new artifact-schema compatibility check.
 3. Leave the pack list alone and record the gates.
-**Recommended: option 1.** Option 2 is a mechanism without a consumer: the artifact carries `version` and the validator already fails closed on an unknown one. `requiredPaths` is the one place where a dropped surface is currently invisible.
+**Chosen: option 1.** Option 2 is a mechanism without a consumer: the artifact carries `version` and the validator already fails closed on an unknown one. `requiredPaths` is the one place where a dropped surface is currently invisible.
 
-## Candidate slices (pending the decisions)
+## Slices
 
-- **PM9-1 — the gate.** One predicate beside the registrations, in the shape the chosen decision defines, with the refusal naming the switch and its accepted values, and the executable half reporting *why* it is unavailable instead of vanishing without explanation.
+- **PM9-1 — the gate.** One predicate beside the registrations, in the shape decision A and B define, with the refusal naming the switch and its accepted values, and the executable half reporting *why* it is unavailable instead of vanishing without explanation.
 - **PM9-2 — initialization and rollout verification.** Tests over a real temporary project: no `openspec/` directory, an existing `openspec/config.yaml`, existing ODD documents, and an existing store; prove exactly one file is created or replaced, and nothing else changes.
 - **PM9-3 — end-to-end scenarios.** Multi-session and multi-worktree coordination, a stale claim recovered with its warning, a corrupted record refused rather than repaired, an unconfirmed launch reported as unconfirmed, and the headless fallback. Linux real; every other platform cell stated as unit-covered or unverified per decision D.
 - **PM9-4 — package and compatibility evidence.** The `requiredPaths` pinning plus the gates of decision F, recorded with their exit states.
@@ -95,7 +95,7 @@ Each decision records the options considered; the recommendation is mine, unrati
 - `lib/shell-project-map-approval.ts` and `lib/agent-profiles.ts` own the write path; PM-9 verifies them and changes neither.
 - `lib/project-map-store-*.ts` owns recovery semantics; PM-9 exercises them and changes none of them.
 
-## Authorized edit surfaces (candidate, pending the decisions)
+## Authorized edit surfaces
 
 - `extensions/gentle-project-map.ts` (the gate predicate and its registration points).
 - `lib/shell-project-map-card.ts` (only if the gate must reach the card registration).
