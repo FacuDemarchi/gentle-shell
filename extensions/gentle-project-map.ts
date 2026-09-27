@@ -22,7 +22,7 @@ import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpRes
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
 import { listPresence } from "../lib/orchestrator-presence.ts";
-import { sidebarHeaderContributor } from "../lib/shell-sidebar.ts";
+import { sidebarHeaderContributor, sidebarState } from "../lib/shell-sidebar.ts";
 import { deriveProjectMapIntegrationReadiness, renderProjectMapIntegrationReport, PROJECT_MAP_INTEGRATION_GATING_CHECKS, type ProjectMapIntegrationChecks } from "../lib/project-map-integration.ts";
 import { checkProjectMapIntegrationFreshness, checkProjectMapIntegrationOverlap, projectMapIntegrationGitExecutor, resolveProjectMapIntegrationTarget } from "../lib/project-map-integration-repository.ts";
 import { checkProjectMapIntegrationTasks, parseProjectMapTaskDocument, readProjectMapTestCommand } from "../lib/project-map-integration-documents.ts";
@@ -30,7 +30,7 @@ import { issueProjectMapStoreReadinessReceipt } from "../lib/project-map-store-r
 import { awaitProjectMapOpenPiConfirmation, openProjectMapPi, planProjectMapOpenPi, planProjectMapOpenPiFallback, probeProjectMapOpenPiHost, projectMapOpenPiSessionExists, PROJECT_MAP_OPEN_PI_ENV, projectMapOpenPiReadiness, runProjectMapOpenPiFallback, type ProjectMapOpenPiHost, type ProjectMapOpenPiPlan, type ProjectMapOpenPiReadiness } from "../lib/project-map-open-pi.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
-import { invalidateSidebar } from "../lib/shell-sidebar-layout.ts";
+import { invalidateSidebar, RAIL_WIDTH } from "../lib/shell-sidebar-layout.ts";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
 	readProjectMapFile,
@@ -136,7 +136,7 @@ export interface ProjectMapCommandContext {
 		 * opens the modal. Declared structurally because this context is the subset the command
 		 * needs, not the whole Pi context.
 		 */
-		custom?: <T>(factory: (tui: TUI, theme: CardTheme, keybindings: unknown, done: (result: T) => void) => Component & { dispose?(): void }, options?: { overlay?: boolean; overlayOptions?: { anchor?: string; width?: number | string; minWidth?: number; maxHeight?: number | string } }) => Promise<T>;
+		custom?: <T>(factory: (tui: TUI, theme: CardTheme, keybindings: unknown, done: (result: T) => void) => Component & { dispose?(): void }, options?: { overlay?: boolean; overlayOptions?: { anchor?: string; width?: number | string; minWidth?: number; maxHeight?: number | string; margin?: number | { top?: number; right?: number; bottom?: number; left?: number } } }) => Promise<T>;
 		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
 	};
 	sessionManager?: {
@@ -372,10 +372,12 @@ function readSource(path: string): SourceRead {
  *
  * The card cannot open an overlay — its pointer handler is synchronous and an overlay is an
  * awaited `ctx.ui.custom` — so a click on the marker reports the capability and this opens the
- * modal. A document the map names but cannot be read is not an error: the modal then says the
- * description is missing rather than inventing one.
+ * modal. `railColumns` is the rail the overlay must stay clear of: the card lives there, and a
+ * centered overlay would cover the thing being explained. Zero means no rail, and the overlay
+ * then opens centered like the shell's other overlays. A document the map names but cannot be
+ * read is not an error: the modal then says the description is missing rather than inventing one.
  */
-export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string): Promise<void> {
+export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string, railColumns = 0): Promise<void> {
 	const read = readProjectMapFile(join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH));
 	const capability = read.map?.capabilities.find((entry) => entry.id === capabilityId);
 	if (capability === undefined) {
@@ -393,11 +395,23 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	try {
 		await ctx.ui.custom<ProjectMapHelpResult>(
 			(tui, theme, _keybindings, done) => new ProjectMapHelpModal(content, done, theme, () => Math.max(0, tui.terminal.rows)),
-			{ overlay: true, overlayOptions: { anchor: "center", width: "80%", minWidth: 60, maxHeight: "85%" } },
+			{ overlay: true, overlayOptions: helpOverlayOptions(railColumns) },
 		);
 	} catch (error) {
 		ctx.ui.notify(`The capability could not be explained: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+/**
+ * Where the help overlay opens. With no rail it is the shell's own centered 70% overlay; with a
+ * rail it anchors left and reserves the rail's columns, because the overlay explains a row that
+ * is painted in that rail and covering it would hide the answer's own subject.
+ */
+function helpOverlayOptions(railColumns: number): { anchor: string; width: string; minWidth: number; maxHeight: string; margin?: { left: number; right: number } } {
+	if (railColumns <= 0) return { anchor: "center", width: "70%", minWidth: 60, maxHeight: "85%" };
+	// The two spare columns are the overlay's own right border column and the layout gap the rail
+	// leaves behind it, so the reservation covers the rail's frame, not just its content.
+	return { anchor: "left-center", width: "70%", minWidth: 60, maxHeight: "85%", margin: { left: 2, right: railColumns + 2 } };
 }
 
 function readArtifactText(path: string): string | null {
@@ -1197,7 +1211,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 			}, tabs === undefined ? undefined : {
 				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
 				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
-			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId); });
+			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId, sidebarState(tui).active ? RAIL_WIDTH : 0); });
 			const disposeTabs = tabs === undefined ? undefined : sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
 				read: () => tabs.read(),
 				selection: {
@@ -1277,7 +1291,8 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				commandCtx.ui.notify("Select a Project Map capability first, then explain it.");
 				return;
 			}
-			await explainProjectMapCapability(commandCtx, selection);
+			const current = mounted.get(sessionKey(commandCtx));
+			await explainProjectMapCapability(commandCtx, selection, current !== undefined && sidebarState(current.tui).active ? RAIL_WIDTH : 0);
 		},
 	});
 

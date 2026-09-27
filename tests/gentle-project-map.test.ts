@@ -134,6 +134,30 @@ test("explaining a capability opens the overlay with what its document says", as
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
+test("the help overlay reserves the rail when the fullscreen sidebar owns it", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		type Options = { overlay?: boolean; overlayOptions?: { anchor?: string; width?: number | string; minWidth?: number; maxHeight?: number | string; margin?: number | { top?: number; right?: number; bottom?: number; left?: number } } };
+		const opened: Options[] = [];
+		probe.ctx.ui.custom = async (factory, options) => {
+			opened.push(options ?? {});
+			factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.ok(id, "the fixture drafted a capability");
+
+		await explainProjectMapCapability(probe.ctx, id);
+		assert.equal(opened[0]?.overlayOptions?.anchor, "center", "no rail: the shell's centered overlay");
+		assert.equal(opened[0]?.overlayOptions?.width, "70%", "and the shell's own overlay width");
+
+		await explainProjectMapCapability(probe.ctx, id, 50);
+		assert.equal(opened[1]?.overlayOptions?.anchor, "left-center", "rail active: the overlay anchors left, never over the rail");
+		assert.deepEqual(opened[1]?.overlayOptions?.margin, { left: 2, right: 52 }, "and reserves the rail's columns plus the frame gap");
+	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n" });
+});
+
 test("explaining an unknown capability says so instead of opening an empty overlay", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory, [true]);
