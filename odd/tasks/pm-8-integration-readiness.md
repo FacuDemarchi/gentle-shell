@@ -1,6 +1,6 @@
 # PM-8 — Integration-readiness sequencing
 
-Status: **planned at recon depth. Six product decisions are open and block the first source write.**
+Status: **planned and frozen 2026-09-26.** Five slices, six decisions settled by the user, implementation starting at PM8-1.
 
 ## Objective
 
@@ -25,45 +25,45 @@ The unit is **cheaper than it looked**, because most of its inputs already exist
 - **The native review's own library is in this repository.** `lib/review-repository.ts` exposes `resolveRepositoryAuthorityV1(cwd)`, `reviewStoreRootForRepositoryV1(cwd)` and `assertManagedStorePathV1(commonDirectory, path)`. Review evidence can therefore be read through product-owned APIs rather than by parsing `.git/gentle-ai` by hand — but whether the map should read it at all is a product decision (see D below).
 - **The command surface is a closed list.** `PROJECT_MAP_SUB_ACTIONS` is `["draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open"]`, and `USAGE` is per sub-action so it never advertises an argument shape an action does not take. A new sub-action is a small, well-established addition.
 
-## Open decisions (block the first source write)
+## Decisions (approved by the user, 2026-09-26)
 
-Recommendations are mine; none of these is settled.
+Six decisions were put to the user with the options below and the recommendations recorded with them. The user approved all six recommendations, so the options each decision rejected are kept here as the record of what was considered.
 
 **A. Per-capability verification requirements (deferred by PM-7).** The Open Pi handoff currently says `Verification requirements: not declared by the map.`
 1. Add a `verification` field to the capability (expected commands and the evidence they must produce).
 2. Derive it from the project's `openspec/config.yaml` `apply.test_command` instead of the map.
 3. Leave it undeclared and keep saying so.
-**Recommendation: 2, then 1 later if it proves too coarse.** The repository already declares a test command per project, and putting it in the map duplicates a source that exists and can drift.
+**Chosen: option 2.** The requirement is derived from the project's `openspec/config.yaml` `apply.test_command`, not from the map. The reason is drift: the repository already declares a test command per project, and a second copy in the map could disagree with it. Option 1 stays available if the derived requirement proves too coarse to be useful, and that would be its own decision.
 
 **B. Exact tmux launch identity (deferred by PM-7).** `confirmed` on the tmux path proves a live session bound itself to this worktree at or after the launch, not that it is this launch's child.
 1. Add a `launch_nonce` to the `session-binding` schema and compare it.
 2. Accept the worktree-level evidence and keep documenting the limit.
 3. Drop the tmux confirmation to the weaker claim and say so.
-**Recommendation: 1.** It is a small, additive field, the consumer already exists, and it closes a limit that has been carried through two units. It also makes the background path's pid check redundant rather than special.
+**Chosen: option 1.** A `launch_nonce` field is added to the `session-binding` schema and compared by the confirmation. It is a small additive field, the consumer already exists, and it closes a limit carried through two units. Its slice is noted below as a **launch-flow change carried by this unit because PM-8 owns the decision**, not as part of the readiness sequencing.
 
 **C. Does the map surface native review evidence?** The roadmap lists "review evidence" among the things readiness verifies.
 1. Read it through `lib/review-*` and show it read-only in the readiness report.
 2. Keep review out of the map entirely.
 3. Show only a boolean "reviewed" with no detail.
-**Recommendation: 1 with a hard boundary.** Read-only, labelled as evidence, and never as authorization — the same rule the readiness receipt already encodes with `authority: "none"`. This is the one place where the roadmap explicitly asks for it, and the alternative is the user reconciling two systems by hand.
+**Chosen: option 1, with a hard boundary.** Review evidence is read through `lib/review-*` and shown read-only in the readiness report, labelled as evidence and never as authorization — the same rule the readiness receipt already encodes with `authority: "none"`. It is the one place the roadmap explicitly asks for it, and the alternative is the user reconciling two systems by hand. **Nothing in `lib/review-*` is modified, and review state never gates a candidate.**
 
 **D. How far does conflict detection go?** The roadmap says "detect likely merge conflicts early without pretending to resolve them automatically".
 1. **Changed-path overlap only**: which files two ready candidates both touch, plus their distance from the integration target. Cheap, deterministic, no false confidence.
 2. **Real conflict probing** in a scratch worktree (`git merge-tree` or a throwaway `merge --no-commit`). Truer answers, but it writes, it needs a sandbox, and it can be slow.
 3. Freshness only, no overlap.
-**Recommendation: 1, with the answer labelled "likely", and 2 explicitly out of scope.** The roadmap's own wording asks for *likely* conflicts and forbids pretending to resolve them; a path overlap plus freshness is honest about being a signal.
+**Chosen: option 1, with the answer labelled "likely".** Detection is changed-path overlap between ready candidates plus their distance from the integration target. Option 2 — real conflict probing in a scratch worktree — is **explicitly out of scope**: it writes, it needs a sandbox, and the roadmap's wording asks for *likely* conflicts while forbidding any pretence of resolving them. Nothing is ever merged, staged or resolved.
 
 **E. What does "map/task consistency" mean concretely?**
 1. Check that each declared `featureDocs` reference exists and is readable.
 2. Parse the feature document's task checkboxes and compare them against the capability's declared state.
 3. Don't check.
-**Recommendation: 2, reported as a mismatch, never corrected automatically.** The map declares a state; the feature document declares what is done; the drift between them is exactly the risk the roadmap names, and this is the only place that can see both.
+**Chosen: option 2.** The check parses the feature document's task checkboxes and compares them against the capability's declared state. The map declares a state and the document declares what is done; the drift between them is exactly the risk the roadmap names, and this is the only place that can see both. A mismatch is **reported and never corrected automatically**, in either direction.
 
 **F. Where the report lives.**
 1. A new `/gentle:project-map integrate` sub-action that prints the ordered report and issues a readiness receipt per verified capability.
 2. A read-only `status` extension, no new sub-action.
 3. A rail section.
-**Recommendation: 1.** A receipt is what makes the verification durable and auditable, and `readiness-receipt` already exists for exactly that with `authority: "none"`.
+**Chosen: option 1.** A new `/gentle:project-map integrate` sub-action prints the ordered report and issues a `readiness-receipt` per verified candidate. A receipt is what makes the verification durable and auditable, and `readiness-receipt` already exists for exactly that with `authority: "none"`.
 
 ## Non-goals
 
@@ -99,14 +99,15 @@ Recommendations are mine; none of these is settled.
 
 Anything outside this list is a scope question, not an edit.
 
-## Task list (provisional)
+## Task list
 
-- [ ] **PM8-1 — The readiness projection.** A pure function over already-read values: order the candidates by dependency and contract state, and compute per-candidate the freshness, the coverage and the blocker facts. Readers injected; no I/O of its own.
-- [ ] **PM8-2 — Verification against the repository.** The injected Git executor, freshness against the integration target, changed-path overlap between candidates, and the map/task consistency check. Every result is `verified`, `mismatched` or `unverified`, and the last one is never silently treated as the first.
-- [ ] **PM8-3 — The report and the receipts.** The `integrate` sub-action, the ordered report, and a `readiness-receipt` per verified candidate, with `authority: "none"` printed where a user cannot miss it.
-- [ ] **PM8-4 — Documentation and unit verification.** `docs/project-map.md`, the acceptance trace, and the honest record of what was not verified.
+- [ ] **PM8-1 — The readiness projection.** A pure function over already-read values: order the candidates by dependency and accepted-contract state, and compute per candidate the freshness inputs, the coverage, the blocker facts, the verification requirement (decision A) and the review evidence (decision C). Readers injected; no I/O of its own.
+- [ ] **PM8-2 — Verification against the repository.** The injected Git executor, freshness against the integration target, changed-path overlap between ready candidates (decision D), the map/task consistency check (decision E), and the verification requirement from `openspec/config.yaml` (decision A). Every result is `verified`, `mismatched` or `unverified`, and the last is never silently treated as the first.
+- [ ] **PM8-3 — The report and the receipts.** The `integrate` sub-action, the ordered report, and a `readiness-receipt` per verified candidate, with `authority: "none"` printed where a user cannot miss it (decision F).
+- [ ] **PM8-4 — The launch nonce.** The `session-binding` schema field (decision B), the receiver that writes it, and the confirmation that compares it, with the tmux limit closed in the documentation. **This is a launch-flow change carried by this unit because PM-8 owns the decision, not a readiness change**, and it is ordered after the readiness core so the two never share a commit.
+- [ ] **PM8-5 — Documentation and unit verification.** `docs/project-map.md`, the acceptance trace, and the honest record of what was not verified.
 
-Each slice stays under the 400-line review budget and is its own commit. A schema field from decision A or B lands in the slice that consumes it, with its own tests, not as a drive-by edit.
+Each slice stays under the 400-line review budget and is its own commit. The schema field of decision B lands in PM8-4 with its own tests, never as a drive-by edit.
 
 ## Acceptance criteria (provisional)
 
@@ -124,4 +125,5 @@ RDD is **off** for this clone, as it was for PM-4 through PM-7 and the session-t
 
 ## Progress
 
-- 2026-09-26: **unit planned at recon depth.** Read-only surface map only; no code written. Its central finding is that the unit is mostly **assembly rather than invention**: the receipt shape, the ordering inputs, the branch base and an injectable Git executor all already exist, so the work is sequencing, verification and honest reporting rather than new state. Six product decisions are recorded above with recommendations, and the first source write waits on them.
+- 2026-09-26: **unit planned at recon depth.** Read-only surface map only; no code written. Its central finding is that the unit is mostly **assembly rather than invention**: the receipt shape, the ordering inputs, the branch base and an injectable Git executor all already exist, so the work is sequencing, verification and honest reporting rather than new state.
+- 2026-09-26: **plan frozen.** The user approved all six recommendations: the verification requirement is derived from `openspec/config.yaml` rather than added to the map; a `launch_nonce` is added to the session binding to close the tmux identity limit; review evidence is read read-only through `lib/review-*` and never gates anything; conflict detection stays at changed-path overlap labelled *likely*, with real probing out of scope; map/task consistency is checked by parsing the feature document's checkboxes and reporting drift without correcting it; and the report lands as a new `integrate` sub-action issuing receipts with `authority: "none"`. The unit is five slices, PM8-1 through PM8-5, with the launch nonce isolated in PM8-4 because it belongs to the launch flow rather than to readiness.
