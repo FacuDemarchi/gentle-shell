@@ -76,7 +76,7 @@ test("composes the ready descriptor through renderCard", () => {
 		assert.deepEqual(actual, renderCard(descriptor, theme, 48, { expanded: true }));
 		assert.ok(actual.join("\n").includes(descriptor.title));
 		assert.ok(actual.join("\n").includes(descriptor.subtitle));
-		assert.equal(descriptor.tone, "warning");
+		assert.equal(descriptor.tone, "info");
 		// The descriptor at its default budget carries the identifier in full; the render at a
 		// narrow width is what truncates it, and nothing is lost: the Inspector prints it whole.
 		assert.ok(projectMapCardDescriptor(state).body.join("\n").includes("capability-with-an-unbreakable-identifier"));

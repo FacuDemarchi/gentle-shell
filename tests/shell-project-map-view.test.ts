@@ -126,13 +126,15 @@ test("renders the approval state in the subtitle so a draft never reads as appro
 	const draft = projectMapCardDescriptor(ready(map()));
 	assert.ok(draft.subtitle.includes("Example Shop"));
 	assert.ok(draft.subtitle.includes("draft"));
-	assert.equal(draft.tone, "warning");
+	// The frame paints the theme's card role like Status and Todos; the approval state lives in
+	// the subtitle, so the tone does not need to encode it.
+	assert.equal(draft.tone, "info");
 
 	const approved = projectMapCardDescriptor(
 		ready(map({ approval: { state: "approved", approvedAt: "2026-09-23T12:00:00Z", approvedBy: "facundo" } })),
 	);
 	assert.ok(approved.subtitle.includes("approved"));
-	assert.equal(approved.tone, "success");
+	assert.equal(approved.tone, "info");
 });
 
 test("renders grouped rows with done indicators and lifecycle glyphs", () => {

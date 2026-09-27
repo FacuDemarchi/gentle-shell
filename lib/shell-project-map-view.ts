@@ -106,7 +106,8 @@ export interface ProjectMapCardDescriptor {
 	title: string;
 	subtitle: string;
 	body: string[];
-	tone: "info" | "success" | "warning" | "error";
+	/** `info` is the theme's own card frame; `error` is the one state that is a failure. */
+	tone: "info" | "error";
 }
 
 /**
@@ -347,7 +348,9 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
 	return {
 		title: "Project Map",
 		subtitle: `${state.map.project.name} · ${state.map.approval.state}`,
-		tone: state.map.approval.state === "approved" ? "success" : "warning",
+		// The frame is the theme's card frame, the same rose look Status and Todos paint; the
+		// approval state is already in the subtitle, so the tone must not encode it again.
+		tone: "info",
 		body,
 	};
 }
