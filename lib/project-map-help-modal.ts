@@ -1,6 +1,6 @@
 import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { normalizeIdentifier } from "./shell-project-map-draft.ts";
-import type { ProjectMapCapabilityV1 } from "./shell-project-map-schema.ts";
+import type { ProjectMapCapabilityV1, ProjectMapState } from "./shell-project-map-schema.ts";
 import type { ProjectMapDescription } from "./project-map-description.ts";
 
 // What a capability IS, as an overlay.
@@ -9,6 +9,11 @@ import type { ProjectMapDescription } from "./project-map-description.ts";
 // capability's id and its outcome are two renderings of one string. The answer comes from the
 // document the capability points at, read by `project-map-description.ts`, and this component
 // presents it next to the facts the map does declare.
+//
+// The surface speaks Spanish because the documents it quotes are written in Spanish: the user
+// asked for it in so many words, and an English frame around a Spanish paragraph was the
+// mismatch they were reading. The map's own values stay English everywhere else — the state is
+// translated for display only, never rewritten in the artifact.
 //
 // Pure on purpose, like the command palette: data in, lines out, no Pi API, so it is exercised
 // without a session.
@@ -20,6 +25,16 @@ const DEFAULT_ROWS = 40;
 /** The frame's two rules, the blank above the footer, and the footer itself. */
 const CHROME_ROWS = 4;
 const TITLE_GLYPH = "?";
+
+/** The state as the reader sees it. Display only: the artifact keeps the frozen English value. */
+const STATE_LABEL: Record<ProjectMapState, string> = {
+	planned: "planificada",
+	active: "activa",
+	review: "en revisión",
+	ready: "lista",
+	blocked: "bloqueada",
+	done: "hecha",
+};
 
 export interface ProjectMapHelpTheme {
 	fg(color: string, text: string): string;
@@ -47,16 +62,18 @@ export type ProjectMapHelpResult = { type: "close" };
  * An outcome that normalizes to the capability's own id is left out: the generator copies the
  * work unit's title into it, so printing it would repeat the id in different words.
  */
-export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null): ProjectMapHelpContent {
-	const list = (values: readonly string[]): string => (values.length === 0 ? "none" : values.join(", "));
+export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = []): ProjectMapHelpContent {
+	const list = (values: readonly string[]): string => (values.length === 0 ? "ninguno" : values.join(", "));
 	const facts: string[] = [];
-	if (normalizeIdentifier(capability.outcome) !== capability.id) facts.push(`Outcome: ${capability.outcome}`);
-	facts.push(`Surfaces: ${list(capability.surfaces)} · Foundations: ${list(capability.foundationRefs)}`);
-	facts.push(`Dependencies: ${list(capability.dependsOn)} · Contracts: ${list(capability.contracts)}`);
-	facts.push(`Documents: ${list(capability.featureDocs)}`);
+	if (normalizeIdentifier(capability.outcome) !== capability.id) facts.push(`Resultado: ${capability.outcome}`);
+	facts.push(`Superficies: ${list(capability.surfaces)} · Fundamentos: ${list(capability.foundationRefs)}`);
+	facts.push(`Dependencias: ${list(capability.dependsOn)} · Contratos: ${list(capability.contracts)}`);
+	facts.push(`Documentos: ${list(capability.featureDocs)}`);
+	// The one fact the retired Inspector alone carried: why this capability cannot be worked on.
+	facts.push(`Bloqueos: ${list(blockers)}`);
 	return {
 		capabilityId: capability.id,
-		subtitle: capability.state,
+		subtitle: STATE_LABEL[capability.state] ?? capability.state,
 		facts,
 		description: description?.lines ?? [],
 		hasDocument: capability.featureDocs.length > 0,
@@ -107,22 +124,22 @@ export class ProjectMapHelpModal {
 	private bodyLines(): string[] {
 		const lines = [...this.content.facts, ""];
 		if (!this.content.hasDocument) {
-			lines.push("The map declares no document for this capability, so there is nothing to read.");
+			lines.push("El mapa no declara ningún documento para esta capability, así que no hay nada para leer.");
 			return lines;
 		}
 		if (this.content.description.length === 0) {
-			lines.push("The document declares no work unit that matches this capability, or its work unit carries no body.");
+			lines.push("El documento no declara ninguna unidad de trabajo que coincida con esta capability, o su unidad no tiene cuerpo.");
 			return lines;
 		}
-		lines.push("What the document says:");
+		lines.push("Lo que dice el documento:");
 		lines.push(...this.content.description.map((line) => `· ${line}`));
 		return lines;
 	}
 
 	private footer(total: number, shown: number): string {
-		if (total <= shown) return "esc close";
+		if (total <= shown) return "esc cerrar";
 		const below = total - this.offset - shown;
-		return this.offset === 0 ? `↓ ${below} more · esc close` : `↑ ${this.offset} above · ↓ ${Math.max(0, below)} more · esc close`;
+		return this.offset === 0 ? `↓ ${below} más · esc cerrar` : `↑ ${this.offset} arriba · ↓ ${Math.max(0, below)} más · esc cerrar`;
 	}
 
 	/** Wraps rather than truncates: a description's tail is the part that explains the work. */

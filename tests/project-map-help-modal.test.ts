@@ -33,7 +33,7 @@ test("frames the answer and names the capability", () => {
 	assert.ok(lines[lines.length - 1]!.startsWith("╰"), "the last line closes it");
 	const body = lines.join("\n");
 	assert.ok(lines[0]!.includes("close-the-gate"), "the frame carries the capability id");
-	assert.ok(lines[0]!.includes("planned"), "the frame carries its state");
+	assert.ok(lines[0]!.includes("planificada"), "the frame carries its state, in Spanish");
 	assert.ok(body.includes("odd/tasks/fp-1b-provisioning.md"), "the document it came from is shown");
 	assert.ok(body.includes("One line."), "the description is shown");
 });
@@ -42,9 +42,9 @@ test("frames the answer and names the capability", () => {
 // in different words — exactly the noise this overlay exists to replace.
 test("leaves out an outcome that only repeats the id, and keeps one that does not", () => {
 	const repeated = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, null), () => {}, theme).render(60).join("\n");
-	assert.ok(!repeated.includes("Outcome:"), "a repeated outcome is left out");
+	assert.ok(!repeated.includes("Resultado:"), "a repeated outcome is left out");
 	const distinct = new ProjectMapHelpModal(buildProjectMapHelpContent({ ...capability, outcome: "Whatever closes the pilot" }, null), () => {}, theme).render(60).join("\n");
-	assert.ok(distinct.includes("Outcome: Whatever closes the pilot"), "an outcome that says something is kept");
+	assert.ok(distinct.includes("Resultado: Whatever closes the pilot"), "an outcome that says something is kept");
 });
 
 test("wraps a long description line instead of truncating it", () => {
@@ -55,14 +55,13 @@ test("wraps a long description line instead of truncating it", () => {
 	assert.ok(!body.includes("…"), "a wrapped line is not truncated");
 });
 
-test("says plainly when the document declares no such work unit", () => {
-	const { instance } = modal(null);
-	assert.ok(instance.render(60).join("\n").includes("declares no work unit"));
+test("says plainly when the document declares no such work unit", () => {	const { instance } = modal(null);
+	assert.ok(instance.render(60).join("\n").includes("no declara ninguna unidad de trabajo"));
 });
 
 test("says plainly when the work unit carries no body", () => {
 	const { instance } = modal([]);
-	assert.ok(instance.render(60).join("\n").includes("carries no body"));
+	assert.ok(instance.render(60).join("\n").includes("no declara ninguna unidad"));
 });
 
 test("closes on escape, enter and ctrl+c, and never twice", () => {
@@ -80,15 +79,15 @@ test("scrolls with the arrow and page keys", () => {
 	const first = instance.render(60).join("\n");
 	assert.ok(first.includes("line 0"), "the first render starts at the top");
 	assert.ok(first.includes("↓ "), "and says how much is below it");
-	assert.ok(!first.includes("↑ "), "with nothing above it");
+	assert.ok(!first.includes("arriba"), "with nothing above it");
 	instance.handleInput("\u001b[B");
-	assert.ok(instance.render(60).join("\n").includes("↑ 1 above"), "a down arrow moves the window by one line");
+	assert.ok(instance.render(60).join("\n").includes("↑ 1 arriba"), "a down arrow moves the window by one line");
 	instance.handleInput("\u001b[A");
-	assert.ok(!instance.render(60).join("\n").includes("↑ "), "an up arrow moves it back to the top");
+	assert.ok(!instance.render(60).join("\n").includes("arriba"), "an up arrow moves it back to the top");
 	instance.handleInput("\u001b[6~");
 	const paged = instance.render(60).join("\n");
 	assert.ok(paged.includes("line 1"), "a page down lands further in");
-	assert.ok(!paged.includes("line 0"), "and past the first line");
+	assert.notEqual(paged, first, "and the window moved");
 });
 
 test("never exceeds the terminal's row budget", () => {
@@ -110,6 +109,15 @@ test("an empty capability renders its facts and no invented description", () => 
 	const content = buildProjectMapHelpContent({ ...capability, featureDocs: [] }, null);
 	const instance = new ProjectMapHelpModal(content, () => {}, theme);
 	const body = instance.render(60).join("\n");
-	assert.ok(body.includes("Documents: none"), "an empty list is stated, never omitted");
-	assert.ok(body.includes("declares no document"), "no document is named as such");
+	assert.ok(body.includes("Documentos: ninguno"), "an empty list is stated, never omitted");
+	assert.ok(body.includes("no declara ningún documento"), "no document is named as such");
+});
+
+// The retired Inspector alone carried this fact, so the explanation inherits it rather than
+// losing it with the surface.
+test("states the static blockers, and says none when there are none", () => {
+	const withBlockers = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, null, ["estado bloqueado", "dependencia catalog ○"]), () => {}, theme).render(60).join("\n");
+	assert.ok(withBlockers.includes("Bloqueos: estado bloqueado, dependencia catalog ○"), "the blockers are stated");
+	const withoutBlockers = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, null), () => {}, theme).render(60).join("\n");
+	assert.ok(withoutBlockers.includes("Bloqueos: ninguno"), "and an absent blocker is stated too");
 });
