@@ -213,7 +213,7 @@ Selection appends an Inspector after Coverage with the capability's state, outco
 
 The Inspector ends with an `[Open Pi]` line for a capability the runtime launch gate permits, and that line is absent rather than disabled when anything disqualifies it: an unapproved or non-`ready` capability, unready dependencies, an open blocker, a proposed contract without a decision, no live claim, a claim held by another live session while this session is not the live lead, an occupied target, an unavailable `tmux`, or a worktree that has not been provisioned. The line is informational — the launch itself is `/gentle:project-map open <capability-id>`, which prints the plan, asks once, and starts one session in the capability worktree. When `tmux` is unusable the confirmation offers a background subagent instead, and declining leaves everything untouched. The command reports the launch as requested, never as work begun, and then reports separately whether the child proved it started by writing its own binding and heartbeat; a launch that never does is reported as `stayed unconfirmed`, and the observation says whether it could match the launched child's pid or only the worktree it bound.
 
-The [Project Map reference](project-map.md) documents the launch gate, the handoff, the two launch paths and those two honest states.
+The [Project Map reference](project-map.md) documents the launch gate, the handoff, the two launch paths and those two honest states, and its *Rollout, recovery and cleanup* section is the operational half of this card: how a project opts in, what disabling undoes (nothing), what to do when a session died, and which two defects are recorded as debt instead of being smoothed over.
 
 ### Orchestrator session tabs
 
