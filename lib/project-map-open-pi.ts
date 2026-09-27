@@ -198,16 +198,19 @@ export function resolveProjectMapOpenPiLauncher({
 	nodeExecPath = process.execPath,
 	env = process.env,
 	exists = existsSync,
+	platform = process.platform,
 }: {
 	packageRoot?: string;
 	nodeExecPath?: string;
 	env?: NodeJS.ProcessEnv;
 	exists?: (path: string) => boolean;
+	/** Injected for the same reason the rest of the inputs are: a platform branch deserves a test. */
+	platform?: NodeJS.Platform | string;
 } = {}): ProjectMapOpenPiLauncher | null {
 	const local = join(packageRoot, "bin", "gentle-shell.mjs");
 	if (exists(local)) return { command: nodeExecPath, path: local, source: "package-local" };
 	for (const directory of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
-		const path = join(directory, process.platform === "win32" ? "gentle-shell.cmd" : "gentle-shell");
+		const path = join(directory, platform === "win32" ? "gentle-shell.cmd" : "gentle-shell");
 		if (exists(path)) return { command: path, path, source: "path" };
 	}
 	return null;
