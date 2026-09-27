@@ -46,6 +46,12 @@ export interface ProjectMapIntegrationCandidate {
 	verification: { command: string | null; source: "openspec-config" | "not-declared" };
 	review: { lineages: number };
 	tasks: { path: string; done: number; total: number } | null;
+	/** The paths this candidate shares with another, as reported by the overlap reader. */
+	overlaps: string[];
+	/** How far behind the target the branch is, when it could be measured. */
+	behindBy: number | null;
+	/** Whatever reason the reader that produced a check wanted to carry, keyed by check. */
+	reasons: Partial<Record<keyof ProjectMapIntegrationChecks, string>>;
 	checks: ProjectMapIntegrationChecks;
 	ready: boolean;
 }
@@ -86,6 +92,10 @@ export interface ProjectMapIntegrationInput {
 	tasks: ReadonlyMap<string, { path: string; done: number; total: number }>;
 	/** Verification results supplied by the repository-facing slice; anything absent stays unverified. */
 	checks: ReadonlyMap<string, Partial<ProjectMapIntegrationChecks>>;
+	/** Evidence the readers measured, kept beside the check states rather than inside them. */
+	evidence?: ReadonlyMap<string, { behindBy?: number | null; overlaps?: readonly string[] }>;
+	/** The reason a reader gave for a check, so the report can repeat it instead of inventing one. */
+	reasons?: ReadonlyMap<string, Partial<Record<keyof ProjectMapIntegrationChecks, string>>>;
 	diagnostics?: readonly ProjectMapIntegrationDiagnostic[];
 }
 
@@ -145,6 +155,7 @@ export function deriveProjectMapIntegrationReadiness(input: ProjectMapIntegratio
 		// The store keeps one worktree binding per capability, so the first match is the one.
 		const binding = input.worktreeBindings.find((candidate) => candidate.capabilityId === capability.id);
 		const supplied = input.checks.get(capability.id) ?? {};
+		const evidence = input.evidence?.get(capability.id);
 		const checks: ProjectMapIntegrationChecks = {
 			dependencies: check(coverage?.dependencyReady === true),
 			contracts: check((coverage?.proposedContracts ?? 0) === 0),
@@ -171,10 +182,66 @@ export function deriveProjectMapIntegrationReadiness(input: ProjectMapIntegratio
 			verification,
 			review: { lineages: input.review.get(capability.id)?.lineages ?? 0 },
 			tasks: input.tasks.get(capability.id) ?? null,
+			overlaps: [...(evidence?.overlaps ?? [])],
+			behindBy: evidence?.behindBy ?? null,
+			reasons: input.reasons?.get(capability.id) ?? {},
 			checks,
 			ready: capability.state !== "blocked" && PROJECT_MAP_INTEGRATION_GATING_CHECKS.every((name) => checks[name] === "verified"),
 		};
 	});
 
 	return { available: true, target: input.target, candidates, diagnostics };
+}
+
+/**
+ * The report a user reads. It is deliberately blunt about what it does not know:
+ * every candidate lists what verified, what mismatched and what stayed unverified,
+ * and the last line says that none of it grants anything.
+ */
+export function renderProjectMapIntegrationReport(readiness: ProjectMapIntegrationReadiness, options: { limit?: number } = {}): string[] {
+	if (!readiness.available) return ["The approved Project Map could not be read, so integration readiness is unknown."];
+	const limit = options.limit ?? Number.POSITIVE_INFINITY;
+	const shown = readiness.candidates.slice(0, limit);
+	const lines = [`Integration readiness → ${readiness.target ?? "target unknown"}`];
+	for (const candidate of shown) {
+		lines.push(`${candidate.ready ? "✓" : "✕"} ${candidate.capabilityId} · ${candidate.branch ?? "no branch"} · ${candidate.state}`);
+		const verified = PROJECT_MAP_INTEGRATION_GATING_CHECKS.filter((name) => candidate.checks[name] === "verified");
+		lines.push(`  verified: ${verified.length === 0 ? "none" : verified.join(", ")}`);
+		for (const name of PROJECT_MAP_INTEGRATION_GATING_CHECKS) {
+			if (candidate.checks[name] !== "mismatched") continue;
+			lines.push(`  mismatch: ${name} — ${mismatchReason(candidate, name, readiness.target)}`);
+		}
+		const unverified = [...PROJECT_MAP_INTEGRATION_GATING_CHECKS, "review" as const].filter((name) => candidate.checks[name] === "unverified");
+		lines.push(`  unverified: ${unverified.length === 0 ? "none" : unverified.join(", ")}`);
+		// A reader who is told a check is unverified deserves to know why, especially when
+		// the reason is that nothing can verify it yet.
+		for (const name of unverified) {
+			const reason = candidate.reasons[name];
+			if (reason !== undefined) lines.push(`    ${name}: ${reason}`);
+		}
+		if (candidate.behindBy !== null) lines.push(`  behind ${readiness.target} by ${candidate.behindBy}`);
+		lines.push(`  verification: ${candidate.verification.command ?? "not declared"}`);
+		lines.push(`  tasks: ${candidate.tasks === null ? "none declared" : `${candidate.tasks.path} ${candidate.tasks.done}/${candidate.tasks.total}`}`);
+		lines.push(`  review: ${candidate.review.lineages === 0 ? "none recorded" : `${candidate.review.lineages} lineage${candidate.review.lineages === 1 ? "" : "s"}`}`);
+	}
+	if (readiness.candidates.length > shown.length) {
+		const left = readiness.candidates.length - shown.length;
+		lines.push(`${left} more candidate${left === 1 ? "" : "s"} not shown`);
+	}
+	lines.push(`Next safe integration action: ${readiness.candidates.find((candidate) => candidate.ready)?.capabilityId ?? "none"}`);
+	lines.push("Readiness grants nothing: commit, push, PR and merge stay ordinary repository policy.");
+	return lines;
+}
+
+/** Prefers the reason the reader gave; otherwise states the fact the candidate already carries. */
+function mismatchReason(candidate: ProjectMapIntegrationCandidate, name: keyof ProjectMapIntegrationChecks, target: string | null): string {
+	const supplied = candidate.reasons[name];
+	if (supplied !== undefined) return supplied;
+	if (name === "conflicts") return candidate.overlaps.length === 0 ? "a likely conflict was detected" : `likely conflict on ${candidate.overlaps.join(", ")}`;
+	if (name === "blockers") return `${candidate.openBlockers} open blocker${candidate.openBlockers === 1 ? "" : "s"}`;
+	if (name === "contracts") return `${candidate.proposedContracts} proposed contract${candidate.proposedContracts === 1 ? "" : "s"} without a decision`;
+	if (name === "coverage") return "no readiness receipt covers this capability";
+	if (name === "dependencies") return "a dependency is not ready";
+	if (name === "freshness") return `the branch base is not contained in ${target ?? "the integration target"}`;
+	return "the map and the feature document disagree";
 }
