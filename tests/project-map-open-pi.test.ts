@@ -164,9 +164,12 @@ test("plans a named detached tmux session, attach command, and structured handof
 		assert.equal(plan.decision, "open");
 		assert.equal(plan.sessionName, "project-map-open-pi-catalog");
 		assert.deepEqual(plan.attachCommand, ["tmux", "attach-session", "-t", plan.sessionName]);
-		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" })}`, "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
+		assert.deepEqual(plan.argv, ["tmux", "new-session", "-d", "-e", `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a", launchNonce: plan.launchNonce })}`, "-s", plan.sessionName, "-c", plan.cwd, process.execPath, plan.launcher.path, plan.handoff]);
 		assert.equal(plan.cwd, plan.readiness.worktree.inspection.identity.path);
-		assert.deepEqual(JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? ""), { capabilityId: "catalog", parentSessionId: "session-a" });
+		const identity = JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV] ?? "") as { capabilityId?: string; parentSessionId?: string; launchNonce?: string };
+		assert.equal(identity.capabilityId, "catalog");
+		assert.equal(identity.parentSessionId, "session-a");
+		assert.equal(identity.launchNonce, plan.launchNonce, "the identity payload carries the launch nonce");
 		assert.equal(plan.handoff, [
 			"Project Map Open Pi handoff",
 			"Capability: catalog",
@@ -210,7 +213,10 @@ test("the tmux session receives the launch identity in its own environment", (t)
 			assert.equal(opened.launched, true);
 			// The session environment is set when the session is created, so this needs no waiting.
 			const value = String(execFileSync("tmux", ["show-environment", "-t", name, PROJECT_MAP_OPEN_PI_ENV], { encoding: "utf8" })).trim();
-			assert.equal(value, `${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" })}`);
+			const observed = JSON.parse(value.slice(`${PROJECT_MAP_OPEN_PI_ENV}=`.length)) as { capabilityId?: string; parentSessionId?: string; launchNonce?: string };
+			assert.equal(observed.capabilityId, "catalog");
+			assert.equal(observed.parentSessionId, "session-a");
+			assert.equal(observed.launchNonce, plan.launchNonce, "the real tmux session received the nonce this launch generated");
 		} finally {
 			try { execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" }); } catch {}
 		}
@@ -264,7 +270,7 @@ test("fallback plans only around the host gate and executes its planned argv wit
 		claim(store);
 		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: { available: false, version: null } });
 		const fallback = planProjectMapOpenPiFallback(plan, { sessionDir: "/sessions", extensionPaths: ["/extension.ts"], pi: { command: "/pi", args: ["/cli.js"] }, exists: () => true });
-		assert.equal(fallback.decision, "offer"); assert.equal(fallback.cwd, plan.cwd); assert.equal(fallback.handoff, plan.handoff); assert.deepEqual(JSON.parse(fallback.env[PROJECT_MAP_OPEN_PI_ENV] ?? ""), { capabilityId: "catalog", parentSessionId: "session-a" }); assert.deepEqual(fallback.diagnostics, []);
+		assert.equal(fallback.decision, "offer"); assert.equal(fallback.cwd, plan.cwd); assert.equal(fallback.handoff, plan.handoff); const fallbackIdentity = JSON.parse(fallback.env[PROJECT_MAP_OPEN_PI_ENV] ?? "") as { capabilityId?: string; parentSessionId?: string; launchNonce?: string }; assert.equal(fallbackIdentity.capabilityId, "catalog"); assert.equal(fallbackIdentity.parentSessionId, "session-a"); assert.equal(fallbackIdentity.launchNonce, plan.launchNonce); assert.deepEqual(fallback.diagnostics, []);
 		assert.deepEqual(fallback.argv, ["/pi", "/cli.js", "--print", "--session-dir", "/sessions", "--extension", "/extension.ts", "--append-system-prompt", plan.handoff, plan.handoff]);
 		const ready = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
 		assert.equal(planProjectMapOpenPiFallback(ready, { sessionDir: "/sessions" }).decision, "offer");
@@ -287,7 +293,7 @@ test("fallback plans only around the host gate and executes its planned argv wit
 });
 
 test("fallback reports an asynchronous spawn failure instead of a launch request", async () => {
-	const fallback = { decision: "offer" as const, argv: ["/pi", "--print", "brief"], cwd: "/worktree", env: {}, handoff: "brief", sessionDir: "/sessions", diagnostics: [] };
+	const fallback = { decision: "offer" as const, argv: ["/pi", "--print", "brief"], cwd: "/worktree", env: {}, handoff: "brief", sessionDir: "/sessions", launchNonce: "123e4567-e89b-12d3-a456-426614174000", diagnostics: [] };
 	let unrefs = 0;
 	const failed = await runProjectMapOpenPiFallback(fallback, {
 		mkdir: (() => {}) as never,
@@ -301,7 +307,7 @@ test("fallback reports an asynchronous spawn failure instead of a launch request
 
 test("fallback strips the parent's interactive-host signal and keeps its own launch identity", () => {
 	const plan = {
-		decision: "refuse" as const, argv: [], cwd: "/worktree", handoff: "brief", sessionName: "project-map-open-pi-catalog", attachCommand: [], launcher: { command: "", path: "", source: "path" as const }, diagnostics: [],
+		decision: "refuse" as const, argv: [], cwd: "/worktree", handoff: "brief", sessionName: "project-map-open-pi-catalog", attachCommand: [], launcher: { command: "", path: "", source: "path" as const }, launchNonce: "123e4567-e89b-12d3-a456-426614174000", diagnostics: [],
 		env: { GENTLE_SHELL_INTERACTIVE_HOST: "1", KEEP: "yes", [PROJECT_MAP_OPEN_PI_ENV]: JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a" }) },
 		readiness: { diagnostics: [] } as unknown as ReturnType<typeof readiness>,
 	};
@@ -313,7 +319,7 @@ test("fallback strips the parent's interactive-host signal and keeps its own lau
 
 test("tmux adapter passes its detached plan through an injected runner", () => {
 	const plan = {
-		decision: "open" as const, argv: ["tmux", "new-session", "-d"], cwd: "/worktree", env: {}, handoff: "test", diagnostics: [],
+		decision: "open" as const, argv: ["tmux", "new-session", "-d"], cwd: "/worktree", env: {}, handoff: "test", launchNonce: "123e4567-e89b-12d3-a456-426614174000", diagnostics: [],
 		readiness: {} as ReturnType<typeof readiness>, sessionName: "project-map-open-pi-catalog", attachCommand: ["tmux", "attach-session", "-t", "project-map-open-pi-catalog"], launcher: { command: "sh", path: "sh", source: "path" as const },
 	};
 	let call: unknown;
@@ -328,7 +334,7 @@ test("tmux adapter creates a detached session only in a temporary sandbox", (t) 
 	try {
 		const result = openProjectMapPi({
 			decision: "open", argv: ["tmux", "new-session", "-d", "-s", name, "-c", sandbox, "sh", "-c", "sleep 30"], cwd: sandbox, env: process.env, handoff: "test", diagnostics: [],
-			readiness: {} as ReturnType<typeof readiness>, sessionName: name, attachCommand: ["tmux", "attach-session", "-t", name], launcher: { command: "sh", path: "sh", source: "path" },
+			readiness: {} as ReturnType<typeof readiness>, sessionName: name, attachCommand: ["tmux", "attach-session", "-t", name], launcher: { command: "sh", path: "sh", source: "path" }, launchNonce: "123e4567-e89b-12d3-a456-426614174000",
 		});
 		assert.equal(result.launched, true);
 		assert.doesNotThrow(() => execFileSync("tmux", ["has-session", "-t", name], { stdio: "ignore" }));
@@ -338,8 +344,8 @@ test("tmux adapter creates a detached session only in a temporary sandbox", (t) 
 	}
 });
 
-function confirmationBinding(sessionId: string, workspaceRoot: string, boundAt: string, pid = process.pid): string {
-	const serialized = serializeProjectMapStoreValue("session-binding", { schema: "gentle-shell.project-map-store/v1", kind: "session-binding", session_id: sessionId, pid, incarnation: INCARNATION, workspace_root: workspaceRoot, bound_at: boundAt });
+function confirmationBinding(sessionId: string, workspaceRoot: string, boundAt: string, pid = process.pid, launchNonce?: string): string {
+	const serialized = serializeProjectMapStoreValue("session-binding", { schema: "gentle-shell.project-map-store/v1", kind: "session-binding", session_id: sessionId, pid, incarnation: INCARNATION, workspace_root: workspaceRoot, bound_at: boundAt, ...(launchNonce === undefined ? {} : { launch_nonce: launchNonce }) });
 	assert.ok(serialized.record);
 	return serialized.record;
 }
@@ -454,4 +460,71 @@ test("readiness names every readiness disqualifier", () => {
 		assert.equal(result.permitted, false, entry.name);
 		assert.ok(hasCode(result, entry.code), `${entry.name} should report ${entry.code}`);
 	}, entry.map ?? projectMap(), !selfProvisioned.has(entry.name));
+});
+
+test("the launch plan carries a nonce and hands it to the child in the identity payload", () => {
+	withFixture(({ cwd }) => {
+		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		assert.equal(typeof plan.launchNonce, "string");
+		assert.ok(plan.launchNonce.length > 0);
+		const identity = JSON.parse(plan.env[PROJECT_MAP_OPEN_PI_ENV]!) as { capabilityId: string; parentSessionId: string; launchNonce: string };
+		assert.equal(identity.launchNonce, plan.launchNonce, "the child receives the nonce this launch generated");
+		assert.match(plan.argv.join(" "), new RegExp(plan.launchNonce), "the interactive path carries it through tmux -e");
+	});
+});
+
+test("two launches of the same capability carry different nonces", () => {
+	withFixture(({ cwd }) => {
+		const first = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		const second = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
+		assert.notEqual(first.launchNonce, second.launchNonce);
+	});
+});
+
+test("a binding carrying this launch's nonce confirms, and the observation says the identity is exact", async () => {
+	const nonce = "123e4567-e89b-12d3-a456-426614174000";
+	const freshBinding = { heartbeat: { session_id: "child", pid: process.pid, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] };
+	const result = await awaitProjectMapOpenPiConfirmation({
+		root: "/store", worktree: "/worktree", since: NOW, expectedNonce: nonce, timeoutMs: 0, now: () => NOW,
+		readdir: () => [confirmationEntry("child")],
+		readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z", process.pid, nonce),
+		readHeartbeat: (() => freshBinding) as never,
+	});
+	assert.equal(result.confirmed, true);
+	assert.match(result.observation, /nonce/);
+	assert.match(result.observation, /this launch/i);
+});
+
+test("a binding carrying a different launch nonce does not confirm, even for the same worktree", async () => {
+	const freshBinding = { heartbeat: { session_id: "child", pid: process.pid, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] };
+	const result = await awaitProjectMapOpenPiConfirmation({
+		root: "/store", worktree: "/worktree", since: NOW, expectedNonce: "123e4567-e89b-12d3-a456-426614174000", timeoutMs: 0, now: () => NOW,
+		readdir: () => [confirmationEntry("child")],
+		readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z", process.pid, "123e4567-e89b-12d3-a456-426614174999"),
+		readHeartbeat: (() => freshBinding) as never,
+	});
+	assert.equal(result.confirmed, false);
+});
+
+test("when a nonce is expected, a binding that carries none does not confirm", async () => {
+	const freshBinding = { heartbeat: { session_id: "child", pid: process.pid, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] };
+	const result = await awaitProjectMapOpenPiConfirmation({
+		root: "/store", worktree: "/worktree", since: NOW, expectedNonce: "123e4567-e89b-12d3-a456-426614174000", timeoutMs: 0, now: () => NOW,
+		readdir: () => [confirmationEntry("child")],
+		readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"),
+		readHeartbeat: (() => freshBinding) as never,
+	});
+	assert.equal(result.confirmed, false, "a nonce-less binding is not evidence for a launch that expected one");
+});
+
+test("without an expected nonce the confirmation keeps its previous worktree-level meaning", async () => {
+	const freshBinding = { heartbeat: { session_id: "child", pid: process.pid, incarnation: INCARNATION, beat_at: NOW }, status: "fresh", diagnostics: [] };
+	const result = await awaitProjectMapOpenPiConfirmation({
+		root: "/store", worktree: "/worktree", since: NOW, timeoutMs: 0, now: () => NOW,
+		readdir: () => [confirmationEntry("child")],
+		readFile: () => confirmationBinding("child", "/worktree", "2026-09-26T12:00:00.001Z"),
+		readHeartbeat: (() => freshBinding) as never,
+	});
+	assert.equal(result.confirmed, true);
+	assert.match(result.observation, /worktree/);
 });

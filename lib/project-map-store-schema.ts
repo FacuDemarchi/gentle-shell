@@ -87,6 +87,13 @@ export interface ProjectMapStoreSessionBindingV1 extends RecordBase {
 	incarnation: string;
 	workspace_root: string;
 	bound_at: string;
+	/**
+	 * The nonce this launch generated, when the child was launched by one. Optional so
+	 * that bindings written before this field existed keep round-tripping instead of
+	 * being reported as corrupted; a launch that expects a nonce simply refuses to be
+	 * confirmed by a binding that carries none.
+	 */
+	launch_nonce?: string;
 }
 
 export interface ProjectMapStoreBlockerV1 extends RecordBase {
@@ -227,7 +234,7 @@ function canonical(kind: ProjectMapStoreRecordKind, value: RecordValue): Project
 		case "descriptor": return { ...base, kind, repository_id: value.repository_id as string, generation: value.generation as number, epoch: value.epoch as string, predecessor: value.predecessor as string | null, created_at: value.created_at as string, updated_at: value.updated_at as string };
 		case "claim": return { ...base, kind, capability_id: value.capability_id as string, session_id: value.session_id as string, acquired_at: value.acquired_at as string, lease: { renewal_after: (value.lease as RecordValue).renewal_after as string, renew_by: (value.lease as RecordValue).renew_by as string } };
 		case "heartbeat": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, beat_at: value.beat_at as string };
-		case "session-binding": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, workspace_root: value.workspace_root as string, bound_at: value.bound_at as string };
+		case "session-binding": return { ...base, kind, session_id: value.session_id as string, pid: value.pid as number, incarnation: value.incarnation as string, workspace_root: value.workspace_root as string, bound_at: value.bound_at as string, ...(value.launch_nonce === undefined ? {} : { launch_nonce: value.launch_nonce as string }) };
 		case "blocker": return { ...base, kind, capability_id: value.capability_id as string, blocker_id: value.blocker_id as string, owner: value.owner as string, reason: value.reason as string, raised_by: value.raised_by as string, raised_at: value.raised_at as string, ...(value.resolved_at === undefined ? {} : { resolved_at: value.resolved_at as string }), ...(value.resolution === undefined ? {} : { resolution: value.resolution as string }) };
 		case "contract-proposal": return { ...base, kind, capability_id: value.capability_id as string, contract_id: value.contract_id as string, title: value.title as string, digest: value.digest as string, proposed_by: value.proposed_by as string, proposed_at: value.proposed_at as string, state: value.state as "proposed" | "accepted" | "rejected", ...(value.decided_by === undefined ? {} : { decided_by: value.decided_by as string }), ...(value.decided_at === undefined ? {} : { decided_at: value.decided_at as string }), ...(value.rationale === undefined ? {} : { rationale: value.rationale as string }) };
 		case "readiness-receipt": return { ...base, kind, capability_id: value.capability_id as string, issued_by: value.issued_by as string, issued_at: value.issued_at as string, verified: [...(value.verified as string[])], evidence: [...(value.evidence as string[])], authority: "none" };
@@ -270,7 +277,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			descriptor: ["schema", "kind", "repository_id", "generation", "epoch", "predecessor", "created_at", "updated_at"],
 			claim: ["schema", "kind", "capability_id", "session_id", "acquired_at", "lease"],
 			heartbeat: ["schema", "kind", "session_id", "pid", "incarnation", "beat_at"],
-			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at"],
+			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at", "launch_nonce"],
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at", "resolved_at", "resolution"],
 			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state", "decided_by", "decided_at", "rationale"],
 			"readiness-receipt": ["schema", "kind", "capability_id", "issued_by", "issued_at", "verified", "evidence", "authority"],
@@ -280,7 +287,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 			descriptor: fields.descriptor,
 			claim: fields.claim,
 			heartbeat: fields.heartbeat,
-			"session-binding": fields["session-binding"],
+			"session-binding": ["schema", "kind", "session_id", "pid", "incarnation", "workspace_root", "bound_at"],
 			blocker: ["schema", "kind", "capability_id", "blocker_id", "owner", "reason", "raised_by", "raised_at"],
 			"contract-proposal": ["schema", "kind", "capability_id", "contract_id", "title", "digest", "proposed_by", "proposed_at", "state"],
 			"readiness-receipt": fields["readiness-receipt"],
@@ -315,6 +322,7 @@ export function validateProjectMapStoreValue(kind: ProjectMapStoreRecordKind, va
 				if (value.incarnation !== undefined && (typeof value.incarnation !== "string" || !UUID.test(value.incarnation))) invalid(diagnostics, "$.incarnation", "Expected a UUID.");
 				if (value.workspace_root !== undefined) identifier(value.workspace_root, "$.workspace_root", diagnostics);
 				if (value.bound_at !== undefined) instant(value.bound_at, "$.bound_at", diagnostics);
+				if (value.launch_nonce !== undefined && (typeof value.launch_nonce !== "string" || value.launch_nonce.length === 0)) invalid(diagnostics, "$.launch_nonce", "Expected a non-empty string.");
 				break;
 			case "blocker":
 				if (value.capability_id !== undefined) identifier(value.capability_id, "$.capability_id", diagnostics);

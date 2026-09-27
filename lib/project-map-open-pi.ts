@@ -1,5 +1,5 @@
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,9 +38,9 @@ export interface ProjectMapOpenPiConfirmation {
 
 /** Observes durable child evidence without extending the launch command's lifetime. */
 export async function awaitProjectMapOpenPiConfirmation({
-	root, worktree, since, expectedPid = null, timeoutMs = 5000, pollMs = 250, now = () => new Date().toISOString(), sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), readdir = readdirSync, readFile = readFileSync, readHeartbeat = readProjectMapStoreHeartbeat,
+	root, worktree, since, expectedPid = null, expectedNonce = null, timeoutMs = 5000, pollMs = 250, now = () => new Date().toISOString(), sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)), readdir = readdirSync, readFile = readFileSync, readHeartbeat = readProjectMapStoreHeartbeat,
 }: {
-	root: string; worktree: string; since: string; expectedPid?: number | null; timeoutMs?: number; pollMs?: number;
+	root: string; worktree: string; since: string; expectedPid?: number | null; expectedNonce?: string | null; timeoutMs?: number; pollMs?: number;
 	now?: () => string; sleep?: (ms: number) => Promise<void>;
 	readdir?: (path: string) => string[]; readFile?: (path: string, encoding: "utf8") => string;
 	readHeartbeat?: typeof readProjectMapStoreHeartbeat;
@@ -73,6 +73,10 @@ export async function awaitProjectMapOpenPiConfirmation({
 					continue;
 				}
 				if (projectMapStoreBindingProvesDead(binding) || resolve(binding.workspace_root) !== resolve(worktree)) continue;
+				// A launch that generated a nonce accepts only a binding carrying exactly that
+				// nonce. A binding without one is not evidence for such a launch, which is why
+				// the field can stay optional in the schema without weakening the guarantee.
+				if (expectedNonce !== null && binding.launch_nonce !== expectedNonce) continue;
 				// A pid identifies this launch's child where the host exposes it; without one
 				// the evidence identifies the worktree, and the observation says so.
 				if (expectedPid !== null && binding.pid !== expectedPid) continue;
@@ -83,9 +87,11 @@ export async function awaitProjectMapOpenPiConfirmation({
 				const heartbeat = result.status === "free" ? "missing" : result.status;
 				// The binding and the heartbeat must describe the same process, not a mixed pair.
 				if (heartbeat === "fresh" && result.heartbeat?.pid === binding.pid) {
-					const identity = expectedPid === null
-						? "this identifies the capability worktree rather than the exact child, because this host does not expose the launched child's pid"
-						: `the binding pid ${expectedPid} matches the child this launch started`;
+					const identity = expectedNonce !== null
+						? "the binding carries this launch's nonce, so it is this launch's child"
+						: expectedPid === null
+							? "this identifies the capability worktree rather than the exact child, because this host does not expose the launched child's pid"
+							: `the binding pid ${expectedPid} matches the child this launch started`;
 					return { confirmed: true, sessionId: binding.session_id, heartbeat, observation: `session "${binding.session_id}" (pid ${binding.pid}) wrote its own binding for "${worktree}" at ${binding.bound_at} with a fresh heartbeat, and ${identity}.`, diagnostics };
 				}
 			} catch (error) { diagnostics.push(diagnostic("project-map-open-pi/confirmation-unreadable", `Session binding "${entry}" could not be observed: ${error instanceof Error ? error.message : String(error)}`)); }
@@ -156,6 +162,8 @@ export interface ProjectMapOpenPiPlan {
 	sessionName: string;
 	attachCommand: string[];
 	launcher: ProjectMapOpenPiLauncher;
+	/** The nonce this launch generated, which the child writes and the confirmation requires. */
+	launchNonce: string;
 	diagnostics: ProjectMapOpenPiDiagnostic[];
 }
 
@@ -166,6 +174,8 @@ export interface ProjectMapOpenPiFallback {
 	env: NodeJS.ProcessEnv;
 	handoff: string;
 	sessionDir: string;
+	/** The plan's launch nonce, so both paths confirm against the same evidence. */
+	launchNonce: string;
 	diagnostics: ProjectMapOpenPiDiagnostic[];
 }
 
@@ -235,7 +245,11 @@ export function planProjectMapOpenPi({
 	const target = readiness.worktree.inspection.identity.path;
 	const text = handoff(readiness, sessionId, cwd, now);
 	const sessionName = deriveProjectMapOpenPiSessionName(capabilityId);
-	const launchIdentity = JSON.stringify({ capabilityId, parentSessionId: sessionId });
+	// A nonce per launch is what makes the confirmation exact on the tmux path, where the
+	// host does not expose the child's pid: the child writes it into its own binding, and
+	// a session that merely bound the same worktree cannot carry it.
+	const launchNonce = randomUUID();
+	const launchIdentity = JSON.stringify({ capabilityId, parentSessionId: sessionId, launchNonce });
 	const diagnostics = [...readiness.diagnostics];
 	if (launcher === null) diagnostics.push(diagnostic("project-map-open-pi/launcher-unavailable", "gentle-shell could not be resolved from this package or PATH."));
 	else if (sessionExists(sessionName)) diagnostics.push(diagnostic("project-map-open-pi/session-name-occupied", `tmux session "${sessionName}" already exists; it was not modified.`));
@@ -256,6 +270,7 @@ export function planProjectMapOpenPi({
 		sessionName,
 		attachCommand: ["tmux", "attach-session", "-t", sessionName],
 		launcher: executable,
+		launchNonce,
 		diagnostics,
 	};
 }
@@ -272,7 +287,7 @@ export function planProjectMapOpenPiFallback(plan: ProjectMapOpenPiPlan, {
 	const env = withoutInteractiveHost({ ...plan.env });
 	const sessionDirectoryDiagnostic = sessionDir.trim().length === 0 ? diagnostic("project-map-open-pi/session-dir-required", "A background subagent requires a session directory.") : null;
 	if (sessionDirectoryDiagnostic !== null || readinessErrors.some((entry) => entry.code !== "project-map-open-pi/host-unavailable")) {
-		return { decision: "refuse", argv: [], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, diagnostics: [...readinessErrors, ...(sessionDirectoryDiagnostic === null ? [] : [sessionDirectoryDiagnostic])] };
+		return { decision: "refuse", argv: [], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, launchNonce: plan.launchNonce, diagnostics: [...readinessErrors, ...(sessionDirectoryDiagnostic === null ? [] : [sessionDirectoryDiagnostic])] };
 	}
 	let parentSessionId = "";
 	try {
@@ -291,7 +306,7 @@ export function planProjectMapOpenPiFallback(plan: ProjectMapOpenPiPlan, {
 		model: undefined, thinking: undefined, sessionDir, resumeSessionPath: undefined, env, extensionPaths,
 		agent: { name: "project-map-open-pi", description: "Project Map Open Pi background launch", filePath: extensionPaths.find((path) => exists(path)) ?? "", scope: "project", instructions: plan.handoff, model: undefined, thinking: undefined, mode: undefined, tools: [] },
 	};
-	return { decision: "offer", argv: [pi.command, ...pi.args, ...oneShotPrintArguments(childArguments(request)), plan.handoff], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, diagnostics: [] };
+	return { decision: "offer", argv: [pi.command, ...pi.args, ...oneShotPrintArguments(childArguments(request)), plan.handoff], cwd: plan.cwd, env, handoff: plan.handoff, sessionDir, launchNonce: plan.launchNonce, diagnostics: [] };
 }
 
 /** Swaps the runner's driven rpc mode for pi's one-shot print mode; every other flag is untouched. */
