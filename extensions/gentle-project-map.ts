@@ -122,7 +122,6 @@ export interface ProjectMapCommandContext {
 	ui: {
 		notify: (message: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
-		input?: (title: string, placeholder?: string) => Promise<string | undefined>;
 		select?: (title: string, options: string[]) => Promise<string | undefined>;
 		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
 	};
@@ -891,17 +890,14 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			: [];
 		const summary = [describe(generated.map), ...replaced, "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...omissions.map((entry) => `- ${entry}`)].join("\n");
 		ctx.ui.notify(summary);
-		// The confirmation is typed rather than chosen from a dialog: the human answers the
-		// question in their own input. A dismissal is `undefined` and is not a decline — it
-		// simply is not a yes, and nothing is written.
-		const answer = ctx.hasUI && ctx.ui.input !== undefined
-			? await ctx.ui.input(`Write the Project Map draft to ${PROJECT_MAP_ARTIFACT_PATH}?`, 'Type "yes" to write it')
-			: undefined;
-		const confirmed = typeof answer === "string" && answer.trim().toLowerCase() === "yes";
+		// The confirmation is the same two-option dialog every other write in this command uses:
+		// the human accepts or rejects the write instead of typing an answer, and a dialog that is
+		// dismissed is not an acceptance.
+		const confirmed = ctx.hasUI
+			? await ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.`)
+			: false;
 		if (!confirmed) {
-			ctx.ui.notify(typeof answer === "string"
-				? "Nothing was written: the answer must be \"yes\" to write the draft."
-				: "Draft discarded; nothing was written.");
+			ctx.ui.notify("Draft discarded; nothing was written.");
 			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 		}
 		if (artifactMovedSince(artifactPath, observed)) {
