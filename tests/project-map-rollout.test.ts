@@ -168,6 +168,21 @@ test("regenerating the draft replaces the artifact and disturbs nothing else", a
 	}
 });
 
+test("every Project Map surface on disk is pinned in the pack list", () => {
+	// A source guard, not a packing proof: the real check is `node scripts/verify-package-files.mjs`,
+	// which runs in `prepack`/`prepublishOnly` and inside this unit's evidence. What this pins is
+	// that nobody adds a surface without pinning it, because a package that silently loses a
+	// module is the worst way to find out.
+	const script = readFileSync(join(import.meta.dirname, "..", "scripts", "verify-package-files.mjs"), "utf8");
+	const pinned = new Set([...script.matchAll(/"((?:lib\/(?:project-map|shell-project-map)[^"]+|extensions\/gentle-project-map)\.ts)"/g)].map((match) => match[1]!));
+	const onDisk = [
+		...readdirSync(join(import.meta.dirname, "..", "lib")).filter((name) => /^(project-map|shell-project-map).*\.ts$/.test(name)).map((name) => `lib/${name}`),
+		"extensions/gentle-project-map.ts",
+	];
+	const unpinned = onDisk.filter((path) => !pinned.has(path)).sort();
+	assert.deepEqual(unpinned, [], "every surface is pinned by name in requiredPaths");
+	assert.equal(pinned.size, onDisk.length, "and the pack list pins no surface that does not exist");
+});
 test("initializing a project leaves an existing coordination store byte-identical, and the store is outside the worktree", async () => {
 	const sandbox = mkdtempSync(join(tmpdir(), "pm9-rollout-store-"));
 	const root = join(sandbox, "example-shop");
