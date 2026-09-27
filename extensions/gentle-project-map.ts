@@ -500,7 +500,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 				await Promise.resolve();
 				const root = resolveProjectMapStoreRoot(ctx.cwd);
 				if (root.root === null) { safeNotify(`${label} stayed unconfirmed: the coordination store is unavailable, so the child's own binding cannot be observed.`); return; }
-				const confirmation = await (options.confirmLaunch ?? awaitProjectMapOpenPiConfirmation)({ root: root.root, worktree: plan.cwd, since: instant, expectedPid, timeoutMs: options.confirmTimeoutMs });
+				const confirmation = await (options.confirmLaunch ?? awaitProjectMapOpenPiConfirmation)({ root: root.root, worktree: plan.cwd, since: instant, expectedPid, expectedNonce: plan.launchNonce, timeoutMs: options.confirmTimeoutMs });
 				safeNotify(confirmation.confirmed ? `${label} confirmed: ${confirmation.observation}` : `${label} stayed unconfirmed: ${confirmation.observation}`);
 			} catch (error) { safeNotify(`${label} observation failed: ${error instanceof Error ? error.message : String(error)}.`); }
 		};
@@ -974,13 +974,14 @@ export function handleProjectMapOpenPiSessionStart(
 ): void {
 	if (launchIdentity === undefined) return;
 	try {
-		const identity = JSON.parse(launchIdentity) as { capabilityId?: unknown; parentSessionId?: unknown };
+		const identity = JSON.parse(launchIdentity) as { capabilityId?: unknown; parentSessionId?: unknown; launchNonce?: unknown };
 		const sessionId = ctx.sessionManager?.getSessionId();
 		if (typeof identity.capabilityId !== "string" || typeof identity.parentSessionId !== "string" || sessionId === undefined || sessionId.length === 0) throw new Error("launch identity or child session identity is unavailable");
 		const root = resolveProjectMapStoreRoot(ctx.cwd);
 		if (root.root === null) throw new Error(describeDiagnostics(root.diagnostics));
 		const instant = now(), incarnation = randomUUID();
-		const binding = writer.bind({ root: root.root, sessionId, workspaceRoot: ctx.cwd, pid: process.pid, incarnation, now: instant });
+		const launchNonce = typeof identity.launchNonce === "string" && identity.launchNonce.length > 0 ? identity.launchNonce : undefined;
+		const binding = writer.bind({ root: root.root, sessionId, workspaceRoot: ctx.cwd, pid: process.pid, incarnation, now: instant, ...(launchNonce === undefined ? {} : { launchNonce }) });
 		if (binding.binding === null) throw new Error(describeDiagnostics(binding.diagnostics));
 		const heartbeat = writer.heartbeat({ root: root.root, sessionId, pid: process.pid, incarnation, now: instant });
 		if (heartbeat.heartbeat === null) throw new Error(describeDiagnostics(heartbeat.diagnostics));

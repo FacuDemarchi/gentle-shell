@@ -307,3 +307,30 @@ test("never throws on malformed values and hostile prototypes", () => {
 	}
 	for (const value of [undefined, null, 1, {}]) assert.doesNotThrow(() => parseProjectMapStoreValue("claim", value as string));
 });
+
+const BINDING_BODY = { schema: PROJECT_MAP_STORE_SCHEMA_V1, kind: "session-binding" as const, session_id: "session-a", pid: 7, incarnation: "123e4567-e89b-12d3-a456-426614174001", workspace_root: "/w", bound_at: "2026-09-26T12:00:00.000Z" };
+
+test("a session binding without a launch nonce still round-trips, so no existing record breaks", () => {
+	const serialized = serializeProjectMapStoreValue("session-binding", BINDING_BODY);
+	assert.ok(serialized.record);
+	assert.doesNotMatch(serialized.record!, /launch_nonce/);
+	const parsed = parseProjectMapStoreValue("session-binding", serialized.record!);
+	assert.ok(parsed.record);
+	assert.equal((parsed.record as { launch_nonce?: string }).launch_nonce, undefined);
+});
+
+test("a session binding carrying a launch nonce round-trips it canonically", () => {
+	const nonce = "123e4567-e89b-12d3-a456-426614174000";
+	const serialized = serializeProjectMapStoreValue("session-binding", { ...BINDING_BODY, launch_nonce: nonce });
+	assert.ok(serialized.record);
+	assert.match(serialized.record!, /launch_nonce/);
+	const parsed = parseProjectMapStoreValue("session-binding", serialized.record!);
+	assert.ok(parsed.record);
+	assert.equal((parsed.record as { launch_nonce?: string }).launch_nonce, nonce);
+});
+
+test("a launch nonce that is not a non-empty string is refused", () => {
+	for (const launch_nonce of ["", 7, null, {}, []]) {
+		assert.equal(validateProjectMapStoreValue("session-binding", { ...BINDING_BODY, launch_nonce }).record, null, `accepted ${JSON.stringify(launch_nonce)}`);
+	}
+});

@@ -45,6 +45,8 @@ export interface ProjectMapStoreSessionBindingMutationOptions extends ReadProjec
 	incarnation: string;
 	workspaceRoot: string;
 	now: string;
+	/** The nonce the launching parent generated, when this session was launched by one. */
+	launchNonce?: string;
 }
 
 export interface ProjectMapStoreHeartbeatReadResult {
@@ -210,6 +212,7 @@ function bindingRecord(options: ProjectMapStoreSessionBindingMutationOptions): P
 		incarnation: options.incarnation,
 		workspace_root: options.workspaceRoot,
 		bound_at: options.now,
+		...(options.launchNonce === undefined ? {} : { launch_nonce: options.launchNonce }),
 	};
 }
 
