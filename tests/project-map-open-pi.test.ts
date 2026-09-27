@@ -202,16 +202,20 @@ test("the launch paths feed only non-destructive commands to their executors", a
 	});
 });
 
-test("the tmux session receives the launch identity in its own environment", (t) => {
+test("the tmux session receives the launch identity and the opt-in in its own environment", (t) => {
 	if (!probeProjectMapOpenPiHost({ env: process.env, timeoutMs: 1000 }).available) return t.skip("tmux is not installed");
 	withFixture(({ cwd, store }) => {
 		claim(store);
 		const plan = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST });
-		// Run the real plan's own -e argument against a real tmux server: tmux does not forward new
-		// client variables on its own, so this fails if the identity travels by environment alone.
+		// Run the real plan's own -e pairs against a real tmux server: tmux does not forward new
+		// client variables on its own, so this fails if either the identity or the executable
+		// opt-in travels by environment alone.
+		const forwarded: string[] = [];
+		for (let index = 3; index + 1 < plan.argv.length && plan.argv[index] === "-e"; index += 2) forwarded.push(plan.argv[index]!, plan.argv[index + 1]!);
+		assert.deepEqual(forwarded.filter((entry) => entry !== "-e"), [`${PROJECT_MAP_OPEN_PI_ENV}=${JSON.stringify({ capabilityId: "catalog", parentSessionId: "session-a", launchNonce: plan.launchNonce })}`, `${PROJECT_MAP_EXECUTABLE_ENV}=1`]);
 		const name = `project-map-open-pi-identity-${process.pid}`;
 		try {
-			const opened = openProjectMapPi({ ...plan, argv: [...plan.argv.slice(0, 5), "-s", name, "-c", cwd, "sleep", "20"] });
+			const opened = openProjectMapPi({ ...plan, argv: ["tmux", "new-session", "-d", ...forwarded, "-s", name, "-c", cwd, "sleep", "20"] });
 			assert.equal(opened.launched, true);
 			// The session environment is set when the session is created, so this needs no waiting.
 			const value = String(execFileSync("tmux", ["show-environment", "-t", name, PROJECT_MAP_OPEN_PI_ENV], { encoding: "utf8" })).trim();
@@ -219,6 +223,9 @@ test("the tmux session receives the launch identity in its own environment", (t)
 			assert.equal(observed.capabilityId, "catalog");
 			assert.equal(observed.parentSessionId, "session-a");
 			assert.equal(observed.launchNonce, plan.launchNonce, "the real tmux session received the nonce this launch generated");
+			// PM9-1's propagation, proven against the real transport rather than a stub.
+			const gate = String(execFileSync("tmux", ["show-environment", "-t", name, PROJECT_MAP_EXECUTABLE_ENV], { encoding: "utf8" })).trim();
+			assert.equal(gate, `${PROJECT_MAP_EXECUTABLE_ENV}=1`, "the child session starts with the executable half enabled");
 		} finally {
 			try { execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" }); } catch {}
 		}
@@ -244,6 +251,12 @@ test("resolves the package launcher through Node before a verified PATH fallback
 	const fallback = resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin:/usr/bin" }, exists: (path) => path === "/usr/bin/gentle-shell" });
 	assert.deepEqual(fallback, { command: "/usr/bin/gentle-shell", path: "/usr/bin/gentle-shell", source: "path" });
 	assert.equal(resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin" }, exists: () => false }), null);
+	// PM9-3: every platform branch is exercised at the adapter level rather than inferred from
+	// `process.platform`. On Windows the PATH launcher is the .cmd wrapper, and only that name.
+	const windows = resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/windows-bin" }, exists: (path) => path.endsWith("gentle-shell.cmd"), platform: "win32" });
+	assert.deepEqual(windows, { command: join("/windows-bin", "gentle-shell.cmd"), path: join("/windows-bin", "gentle-shell.cmd"), source: "path" });
+	assert.equal(resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/windows-bin" }, exists: (path) => path.endsWith("gentle-shell"), platform: "win32" }), null, "the extensionless name is not a Windows launcher");
+	assert.equal(resolveProjectMapOpenPiLauncher({ packageRoot: "/package", nodeExecPath: "/node", env: { PATH: "/bin" }, exists: (path) => path.endsWith("gentle-shell.cmd"), platform: "linux" }), null, "and the .cmd wrapper is not a POSIX launcher");
 	withFixture(({ cwd, store }) => {
 		claim(store);
 		const refused = planProjectMapOpenPi({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW, host: HOST, launcher: null });
