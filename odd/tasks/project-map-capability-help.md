@@ -30,7 +30,13 @@ Three separate gaps produce one confusion.
 - **PMCH-2 — the help modal.** `lib/project-map-help-modal.ts`: the capability's declared facts plus the description, in the shell's rounded frame, scrollable, closed with escape/enter/ctrl+c.
 - **PMCH-3 — the marker and its target.** `?` left of the lifecycle glyph, its own hit range so clicking it explains instead of selecting, and a hovered treatment.
 - **PMCH-4 — the wiring.** An `onExplain` callback on the card part, `ctx.ui.custom` with a centered overlay, and the `alt+e` shortcut.
-- **PMCH-5 — the documentation.**
+- **PMCH-5 — the documentation.** `docs/project-map.md` gains an *Explaining a capability* section and `docs/gentle-shell.md` names the marker and the key.
+
+## Follow-up work this unit does not do
+
+- **The marker's hover treatment.** The card's pointer handler can paint, so highlighting the marker and previewing the description on one line inside the card is possible; it is not implemented, and it would only ever paint where pi-tui delivers a plain move event (`tmux`, `zellij` and `screen` do not). Recorded rather than claimed in the reference.
+- **The extraction failures.** A work unit line with text after its closing `**` is invisible in the map with no omission, a title over 64 characters is dropped, and a document whose work units use another shape contributes nothing. All three are recorded findings that need their own candidate.
+- **Writing a capability's meaning.** `outcome`, `state`, `dependsOn`, `foundationRefs` and `featureDocs` have no writer on the command surface, so a capability can only be described by its document and a `state` cannot be set to `ready`, which `open` requires.
 
 ## Acceptance criteria
 

@@ -24,6 +24,9 @@ import gentleProjectMap, {
 	parseProjectMapNextKey,
 	parseProjectMapPrevKey,
 	parseProjectMapSubAction,
+	explainProjectMapCapability,
+	parseProjectMapHelpKey,
+	PROJECT_MAP_HELP_KEY_DEFAULT,
 	projectMapOpenPiDecision,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
@@ -109,6 +112,41 @@ test("parses a known sub-action and rejects everything else", () => {
 	const empty = parseProjectMapSubAction("");
 	assert.equal(empty.ok, true);
 	assert.equal(empty.action, "ensure", "the bare command is the feature's own gesture, not a usage error");
+});
+
+test("explaining a capability opens the overlay with what its document says", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(90));
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.ok(id, "the fixture drafted a capability");
+		await explainProjectMapCapability(probe.ctx, id);
+		const body = opened.join("\n");
+		assert.ok(body.includes(id), "the overlay names the capability");
+		assert.ok(body.includes("The body line the document carries."), "the overlay shows the document's own words");
+		assert.ok(body.includes("What the document says:"), "and labels them as the document's");
+	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+});
+
+test("explaining an unknown capability says so instead of opening an empty overlay", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		let opened = 0;
+		probe.ctx.ui.custom = async () => {
+			opened += 1;
+			return {} as never;
+		};
+		await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		await explainProjectMapCapability(probe.ctx, "not-a-capability");
+		assert.equal(opened, 0, "nothing is opened for a capability the map does not declare");
+		assert.ok(probe.notified.some((message) => message.includes("not-a-capability")));
+	});
 });
 
 test("status reports a missing artifact and writes nothing", async () => {
@@ -683,6 +721,16 @@ test("resolves Project Map selection shortcuts with defaults, overrides, and off
 	assert.ok(extension.shortcuts.has("alt+k"));
 });
 
+test("resolves the explain shortcut with a default, an override, and off", () => {
+	assert.equal(PROJECT_MAP_HELP_KEY_DEFAULT, "alt+e");
+	assert.equal(parseProjectMapHelpKey({}), "alt+e");
+	assert.equal(parseProjectMapHelpKey({ GENTLE_PI_PROJECT_MAP_HELP_KEY: "ctrl+e" }), "ctrl+e");
+	assert.equal(parseProjectMapHelpKey({ GENTLE_PI_PROJECT_MAP_HELP_KEY: "" }), "alt+e", "an empty value keeps the default");
+	assert.equal(parseProjectMapHelpKey({ GENTLE_PI_PROJECT_MAP_HELP_KEY: "off" }), undefined);
+	assert.ok(projectMapExtension().shortcuts.has("alt+e"));
+	assert.ok(!projectMapExtension({ GENTLE_PI_PROJECT_MAP_HELP_KEY: "off" }).shortcuts.has("alt+e"));
+});
+
 /**
  * The tabs contribution reads the real coordination store, so its tests need a
  * repository Git can identify — `repository()` alone is not one — plus an
@@ -911,15 +959,15 @@ test("selection shortcuts clamp, expand capabilities, and reset at session shutd
 		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
 		const body = () => sidebarState(tui).parts.get("project-map")!.render(80).join("\n");
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ ✓ alpha/);
+		assert.match(body(), /▸ \? ✓ alpha/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ ○ beta/);
+		assert.match(body(), /▸ \? ○ beta/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ ○ beta/, "next clamps at the end");
+		assert.match(body(), /▸ \? ○ beta/, "next clamps at the end");
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ ✓ alpha/);
+		assert.match(body(), /▸ \? ✓ alpha/);
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ ✓ alpha/, "previous clamps at the start");
+		assert.match(body(), /▸ \? ✓ alpha/, "previous clamps at the start");
 		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
 		assert.match(body(), /▸ Product capabilities/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
@@ -928,7 +976,7 @@ test("selection shortcuts clamp, expand capabilities, and reset at session shutd
 		const resumed = widgetContext(directory, "selection");
 		await extension.fire("session_start", resumed.ctx);
 		resumed.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
-		assert.equal(sidebarState(tui).parts.get("project-map")!.render(80).join("\n").includes("▸ ✓"), false, "selection is session-scoped");
+		assert.equal(sidebarState(tui).parts.get("project-map")!.render(80).join("\n").includes("▸ ? ✓"), false, "selection is session-scoped");
 	});
 });
 

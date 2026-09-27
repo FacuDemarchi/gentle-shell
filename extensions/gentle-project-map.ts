@@ -17,6 +17,8 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
+import { readCapabilityDescription } from "../lib/project-map-description.ts";
+import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpResult } from "../lib/project-map-help-modal.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
 import { listPresence } from "../lib/orchestrator-presence.ts";
@@ -53,6 +55,7 @@ export const PROJECT_MAP_WIDGET_KEY = "gentle-project-map";
 export const PROJECT_MAP_COLLAPSE_KEY_DEFAULT = "alt+m";
 export const PROJECT_MAP_NEXT_KEY_DEFAULT = "alt+j";
 export const PROJECT_MAP_PREV_KEY_DEFAULT = "alt+k";
+export const PROJECT_MAP_HELP_KEY_DEFAULT = "alt+e";
 export const OPEN_PI_TMUX_CHOICE = "Open in tmux (interactive session)";
 export const OPEN_PI_SUBAGENT_CHOICE = "Start a background subagent instead";
 
@@ -87,6 +90,10 @@ export function parseProjectMapNextKey(env: NodeJS.ProcessEnv = process.env): st
 
 export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_PREV_KEY?.trim(), PROJECT_MAP_PREV_KEY_DEFAULT);
+}
+
+export function parseProjectMapHelpKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_HELP_KEY?.trim(), PROJECT_MAP_HELP_KEY_DEFAULT);
 }
 export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"] as const;
 
@@ -123,6 +130,13 @@ export interface ProjectMapCommandContext {
 		notify: (message: string) => void;
 		confirm: (title: string, message: string) => Promise<boolean>;
 		select?: (title: string, options: string[]) => Promise<string | undefined>;
+		/**
+		 * The overlay host. The card cannot reach it — its pointer handler is synchronous and an
+		 * overlay is awaited — so a click on the marker reports the capability and this extension
+		 * opens the modal. Declared structurally because this context is the subset the command
+		 * needs, not the whole Pi context.
+		 */
+		custom?: <T>(factory: (tui: TUI, theme: CardTheme, keybindings: unknown, done: (result: T) => void) => Component & { dispose?(): void }, options?: { overlay?: boolean; overlayOptions?: { anchor?: string; width?: number | string; minWidth?: number; maxHeight?: number | string } }) => Promise<T>;
 		setWidget?: (key: string, widget: ((tui: TUI, theme: CardTheme) => Component) | undefined, options?: { placement: "belowEditor" }) => void;
 	};
 	sessionManager?: {
@@ -349,6 +363,40 @@ function readSource(path: string): SourceRead {
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException | null)?.code;
 		return { ok: false, text: "", reason: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unreadable" };
+	}
+}
+
+/**
+ * Explains one capability: the facts the map declares, and what the document it came from says
+ * about it.
+ *
+ * The card cannot open an overlay — its pointer handler is synchronous and an overlay is an
+ * awaited `ctx.ui.custom` — so a click on the marker reports the capability and this opens the
+ * modal. A document the map names but cannot be read is not an error: the modal then says the
+ * description is missing rather than inventing one.
+ */
+export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string): Promise<void> {
+	const read = readProjectMapFile(join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH));
+	const capability = read.map?.capabilities.find((entry) => entry.id === capabilityId);
+	if (capability === undefined) {
+		ctx.ui.notify(`No capability named "${capabilityId}" is declared in ${PROJECT_MAP_ARTIFACT_PATH}.`);
+		return;
+	}
+	if (!ctx.hasUI || ctx.ui.custom === undefined) {
+		ctx.ui.notify(`Explaining ${capabilityId} needs an interactive session.`);
+		return;
+	}
+	const document = capability.featureDocs[0];
+	const source = document === undefined ? null : readSource(join(ctx.cwd, document));
+	const description = source !== null && source.ok ? readCapabilityDescription(source.text, capabilityId) : null;
+	const content = buildProjectMapHelpContent(capability, description);
+	try {
+		await ctx.ui.custom<ProjectMapHelpResult>(
+			(tui, theme, _keybindings, done) => new ProjectMapHelpModal(content, done, theme, () => Math.max(0, tui.terminal.rows)),
+			{ overlay: true, overlayOptions: { anchor: "center", width: "80%", minWidth: 60, maxHeight: "85%" } },
+		);
+	} catch (error) {
+		ctx.ui.notify(`The capability could not be explained: ${error instanceof Error ? error.message : String(error)}`);
 	}
 }
 
@@ -1077,10 +1125,10 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	if (launchIdentity !== undefined) pi.on("session_start", (_event, raw) => handleProjectMapOpenPiSessionStart(raw as ProjectMapCommandContext, launchIdentity));
 	const sessions = new Map<string, ProjectMapSessionRecord>();
 	const mounted = new Map<string, { part: Component & { dispose?(): void }; tui: TUI; disposeTabs?: () => void }>();
-	const collapseKey = parseProjectMapCollapseKey(env);
-	const renderHost = projectMapOpenPiHostOnce();
+	const collapseKey = parseProjectMapCollapseKey(env);	const renderHost = projectMapOpenPiHostOnce();
 	const nextKey = parseProjectMapNextKey(env);
 	const prevKey = parseProjectMapPrevKey(env);
+	const helpKey = parseProjectMapHelpKey(env);
 	const record = (ctx: ProjectMapCommandContext): ProjectMapSessionRecord => {
 		const key = sessionKey(ctx);
 		const existing = sessions.get(key);
@@ -1149,7 +1197,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 			}, tabs === undefined ? undefined : {
 				lines: (width: number) => renderOrchestratorSessionTabDetail({ tabs: tabs.read(), selection: record(ctx).tabsSelection, width, theme }),
 				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
-			});
+			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId); });
 			const disposeTabs = tabs === undefined ? undefined : sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
 				read: () => tabs.read(),
 				selection: {
@@ -1220,6 +1268,18 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 	};
 	if (nextKey) pi.registerShortcut(nextKey as Parameters<ExtensionAPI["registerShortcut"]>[0], { description: "Select the next Project Map capability", handler: selectBy(1) });
 	if (prevKey) pi.registerShortcut(prevKey as Parameters<ExtensionAPI["registerShortcut"]>[0], { description: "Select the previous Project Map capability", handler: selectBy(-1) });
+	if (helpKey) pi.registerShortcut(helpKey as Parameters<ExtensionAPI["registerShortcut"]>[0], {
+		description: "Explain the selected Project Map capability",
+		handler: async (ctx) => {
+			const commandCtx = ctx as unknown as ProjectMapCommandContext;
+			const selection = record(commandCtx).selection;
+			if (selection === undefined) {
+				commandCtx.ui.notify("Select a Project Map capability first, then explain it.");
+				return;
+			}
+			await explainProjectMapCapability(commandCtx, selection);
+		},
+	});
 
 	pi.on("session_start", (_event, ctx) => {
 		mount(ctx as unknown as ProjectMapCommandContext);

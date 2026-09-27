@@ -80,7 +80,7 @@ test("composes the ready descriptor through renderCard", () => {
 		// The descriptor at its default budget carries the identifier in full; the render at a
 		// narrow width is what truncates it, and nothing is lost: the Inspector prints it whole.
 		assert.ok(projectMapCardDescriptor(state).body.join("\n").includes("capability-with-an-unbreakable-identifier"));
-		assert.ok(actual.join("\n").includes("capability-with-a…kable-identifier"));
+		assert.ok(actual.join("\n").includes("capability-with-…able-identifier"));
 	});
 });
 
@@ -195,12 +195,33 @@ test("capability clicks select, clear, and reveal only the selected row", () => 
 		const click = () => rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
 		assert.deepEqual(click(), { handled: true, render: true });
 		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier"]);
-		const selectedRow = rail.render(56).findIndex((line) => line.includes("▸ ✓"));
+		const selectedRow = rail.render(56).findIndex((line) => line.includes("▸ ? ✓"));
 		assert.deepEqual(revealed, [selectedRow], "reveal receives the rendered selected-row line");
 		assert.deepEqual(click(), { handled: true, render: true });
 		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier", undefined]);
 		assert.deepEqual(revealed, [selectedRow], "clearing selection has no selected row to reveal");
 		assert.equal(rail.handleMouse?.({ type: "click", button: "left", x: 2, y: lines.length - 1, screenX: 2, screenY: lines.length - 1, width: 56, height: lines.length, shift: false, alt: false, ctrl: false }), undefined);
+	});
+});
+
+// Explaining a capability is not selecting it: the marker has its own target, and a click that
+// lands on it must not change what the Inspector shows.
+test("the marker explains a capability while the rest of the row still selects it", () => {
+	withArtifact(JSON.stringify(map()), (path) => {
+		const current = session();
+		const explained: string[] = [];
+		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, (id) => explained.push(id));
+		const lines = rail.render(56);
+		const header = lines.findIndex((line) => line.includes("Product capabilities"));
+		const coverage = lines.findIndex((line) => line.includes("Coverage"));
+		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < coverage && entry.line.includes("? "))!.index;
+		const click = (x: number) => rail.handleMouse?.({ type: "click", button: "left", x, y: row, screenX: x, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
+		// The marker is two body columns in, and the frame spends two columns before the body.
+		assert.deepEqual(click(4), { handled: true }, "the marker is handled, and nothing repaints");
+		assert.deepEqual(explained, ["capability-with-an-unbreakable-identifier"]);
+		assert.deepEqual(current.selected, [], "explaining does not select");
+		assert.deepEqual(click(10), { handled: true, render: true });
+		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier"], "the rest of the row still selects");
 	});
 });
 
@@ -212,7 +233,7 @@ test("a selection change made outside the rail reveals on the next render", () =
 		rail.render(20);
 		assert.deepEqual(revealed, [], "the first render reveals nothing");
 		current.select("capability-with-an-unbreakable-identifier");
-		const selectedRow = rail.render(20).findIndex((line) => line.includes("▸ ✓"));
+		const selectedRow = rail.render(20).findIndex((line) => line.includes("▸ ? ✓"));
 		assert.deepEqual(revealed, [selectedRow], "the render after an external selection reveals its row");
 		rail.render(20);
 		assert.deepEqual(revealed, [selectedRow], "an unchanged selection does not reveal again");
