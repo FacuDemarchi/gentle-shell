@@ -50,6 +50,11 @@ export interface ProjectMapHelpContent {
 	description: string[];
 	/** True when the map names a document, so the description is the document's silence. */
 	hasDocument: boolean;
+	/**
+	 * One line about the description itself, printed above it: whether it is a translation and
+	 * whether that translation is still current. Absent when the description needs no explanation.
+	 */
+	descriptionNote?: string;
 }
 
 export type ProjectMapHelpResult = { type: "close" };
@@ -62,7 +67,7 @@ export type ProjectMapHelpResult = { type: "close" };
  * An outcome that normalizes to the capability's own id is left out: the generator copies the
  * work unit's title into it, so printing it would repeat the id in different words.
  */
-export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = []): ProjectMapHelpContent {
+export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string): ProjectMapHelpContent {
 	const list = (values: readonly string[]): string => (values.length === 0 ? "ninguno" : values.join(", "));
 	const facts: string[] = [];
 	if (normalizeIdentifier(capability.outcome) !== capability.id) facts.push(`Resultado: ${capability.outcome}`);
@@ -75,6 +80,7 @@ export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, d
 		capabilityId: capability.id,
 		subtitle: STATE_LABEL[capability.state] ?? capability.state,
 		facts,
+		...(descriptionNote === undefined || descriptionNote.length === 0 ? {} : { descriptionNote }),
 		description: description?.lines ?? [],
 		hasDocument: capability.featureDocs.length > 0,
 	};
@@ -131,6 +137,7 @@ export class ProjectMapHelpModal {
 			lines.push("El documento no declara ninguna unidad de trabajo que coincida con esta capability, o su unidad no tiene cuerpo.");
 			return lines;
 		}
+		if (this.content.descriptionNote !== undefined) lines.push(this.content.descriptionNote);
 		lines.push("Lo que dice el documento:");
 		lines.push(...this.content.description.map((line) => `· ${line}`));
 		return lines;

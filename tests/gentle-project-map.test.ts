@@ -14,6 +14,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree } from "../lib/project-map-store-worktrees.ts";
 import { issueProjectMapStoreReadinessReceipt, readProjectMapStoreReadinessReceipts } from "../lib/project-map-store-receipts.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
+import { hashProjectMapDescription } from "../lib/project-map-translations.ts";
 import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import gentleProjectMap, {
 	PROJECT_MAP_COLLAPSE_KEY_DEFAULT,
@@ -90,7 +91,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate", "translate"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -156,6 +157,76 @@ test("the help overlay reserves the rail when the fullscreen sidebar owns it", a
 		await explainProjectMapCapability(probe.ctx, id, 50);
 		assert.equal(opened[1]?.overlayOptions?.anchor, "left-center", "rail active: the overlay anchors left, never over the rail");
 		assert.deepEqual(opened[1]?.overlayOptions?.margin, { left: 2, right: 52 }, "and reserves the rail's columns plus the frame gap");
+	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n" });
+});
+
+test("the explanation shows a current translation, and says why it is not translated otherwise", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(90));
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.ok(id, "the fixture drafted a capability");
+		const target = join(directory, "openspec", "project-map.es.json");
+		const write = (sourceHash: string) => writeFileSync(target, JSON.stringify({
+			version: "gentle-pi.project-map-translations/v1",
+			language: "es",
+			capabilities: { [id]: { source: "odd/tasks/roadmap.md", sourceHash, title: "Agregar generación de borrador y aprobación humana del plan", lines: ["La línea de cuerpo que el documento trae."] } },
+		}), "utf8");
+
+		// No target yet: the document's own words, and the note says why.
+		await explainProjectMapCapability(probe.ctx, id);
+		const untranslated = opened.join("\n");
+		assert.ok(untranslated.includes("The body line the document carries."));
+		assert.ok(untranslated.includes("Traducción: no generada"), "an English paragraph in a Spanish frame is explained");
+
+		// A current translation wins, title included, and the note disappears.
+		opened.length = 0;
+		write(hashProjectMapDescription(["The body line the document carries."]));
+		await explainProjectMapCapability(probe.ctx, id);
+		const translated = opened.join("\n");
+		assert.ok(translated.includes("La línea de cuerpo que el documento trae."));
+		assert.ok(translated.includes("Resultado: Agregar generación de borrador"), "the translated title replaces the outcome");
+		assert.equal(translated.includes("Traducción:"), false, "and no note is shown");
+		assert.equal(translated.includes("The body line the document carries."), false, "the original body is not shown next to it");
+
+		// A body that moved invalidates its translation instead of showing a stale one.
+		opened.length = 0;
+		write(hashProjectMapDescription(["A different body."]));
+		await explainProjectMapCapability(probe.ctx, id);
+		const stale = opened.join("\n");
+		assert.ok(stale.includes("Traducción: desactualizada"), "staleness is named");
+		assert.ok(stale.includes("The body line the document carries."), "and the current words are shown");
+	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+});
+
+test("the translate command lists what needs a pass, with the hash to copy and the shape", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		const report = await runProjectMapCommand("translate", probe.ctx, { now: () => NOW });
+		assert.equal(report.action, "translate");
+		assert.equal(report.wrote, false, "a translation pass reports work; it writes nothing");
+		const message = probe.notified.join("\n");
+		assert.ok(message.includes("openspec/project-map.es.json"));
+		assert.ok(message.includes(id!), "the capability is listed");
+		assert.ok(message.includes(hashProjectMapDescription(["The body line the document carries."])), "the hash the writer must copy is printed");
+		assert.ok(message.includes("gentle-pi.project-map-translations/v1"), "and the exact shape to write");
+	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+});
+
+test("the translate command refuses when there is no map to translate", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const report = await runProjectMapCommand("translate", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(probe.notified.join("\n").includes("nothing to translate"));
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n" });
 });
 

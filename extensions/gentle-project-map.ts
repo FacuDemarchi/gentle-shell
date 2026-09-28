@@ -17,8 +17,16 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
-import { readCapabilityDescription } from "../lib/project-map-description.ts";
+import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
+import {
+	PROJECT_MAP_TRANSLATIONS_LANGUAGE,
+	PROJECT_MAP_TRANSLATIONS_PATH,
+	projectMapTranslationFor,
+	projectMapTranslationWorklist,
+	renderProjectMapTranslationShape,
+	readProjectMapTranslations,
+} from "../lib/project-map-translations.ts";
 import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpResult } from "../lib/project-map-help-modal.ts";
 import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
@@ -35,6 +43,7 @@ import { invalidateSidebar, RAIL_WIDTH } from "../lib/shell-sidebar-layout.ts";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
 	readProjectMapFile,
+	type ProjectMapCapabilityV1,
 	type ProjectMapDiagnostic,
 	type ProjectMapV1,
 } from "../lib/shell-project-map-schema.ts";
@@ -97,7 +106,7 @@ export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapHelpKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_HELP_KEY?.trim(), PROJECT_MAP_HELP_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate", "translate"] as const;
 
 export function projectMapOpenPiDecision(readiness: ProjectMapOpenPiReadiness, env: NodeJS.ProcessEnv = process.env): ProjectMapOpenPiReadiness {
 	const message = projectMapExecutableRefusal(env);
@@ -122,6 +131,7 @@ const USAGE = {
 	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
 	worktree: `Usage: /${PROJECT_MAP_COMMAND_NAME} worktree <inspect|provision|list> [capability-id]`,
 	integrate: `Usage: /${PROJECT_MAP_COMMAND_NAME} integrate`,
+	translate: `Usage: /${PROJECT_MAP_COMMAND_NAME} translate`,
 	open: `Usage: /${PROJECT_MAP_COMMAND_NAME} open <capability-id>`,
 } as const;
 
@@ -378,6 +388,10 @@ function readSource(path: string): SourceRead {
  * centered overlay would cover the thing being explained. Zero means no rail, and the overlay
  * then opens centered like the shell's other overlays. A document the map names but cannot be
  * read is not an error: the modal then says the description is missing rather than inventing one.
+ *
+ * The words themselves come from `translatedExplanation`, which is the only place a translation is
+ * ever consulted: this read is synchronous and the extension has no model, so the translation was
+ * made once by an agent and stored next to the map.
  */
 export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string, railColumns = 0): Promise<void> {
 	const read = readProjectMapFile(join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH));
@@ -394,9 +408,15 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	const document = capability.featureDocs[0];
 	const source = document === undefined ? null : readSource(join(ctx.cwd, document));
 	const description = source !== null && source.ok ? readCapabilityDescription(source.text, capabilityId) : null;
+	const translated = translatedExplanation(ctx.cwd, capability, description);
 	// The static blockers are the one fact the retired Inspector alone carried, so they travel
 	// with the explanation instead of disappearing with it.
-	const content = buildProjectMapHelpContent(capability, description, projectMapStaticBlockers(map, capabilityId));
+	const content = buildProjectMapHelpContent(
+		translated.capability,
+		translated.description,
+		projectMapStaticBlockers(map, capabilityId),
+		translated.note,
+	);
 	try {
 		await ctx.ui.custom<ProjectMapHelpResult>(
 			(tui, theme, _keybindings, done) => new ProjectMapHelpModal(content, done, theme, () => Math.max(0, tui.terminal.rows)),
@@ -405,6 +425,35 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	} catch (error) {
 		ctx.ui.notify(`The capability could not be explained: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+/**
+ * The explanation's words, in Spanish when a current translation exists.
+ *
+ * The card cannot translate: this read is synchronous and an extension has no model call. So the
+ * translation is made once, stored next to the map, and this decides whether what is stored still
+ * matches the body it was made from. A missing or stale translation is never an error and never
+ * silent: the explanation falls back to the document's own words and says which of the two it is,
+ * so an English paragraph in a Spanish frame is explained rather than mysterious.
+ */
+function translatedExplanation(cwd: string, capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null): { capability: ProjectMapCapabilityV1; description: ProjectMapDescription | null; note: string | undefined } {
+	if (description === null) return { capability, description, note: undefined };
+	const target = PROJECT_MAP_TRANSLATIONS_PATH;
+	const hint = ` · /${PROJECT_MAP_COMMAND_NAME} translate`;
+	const stored = readSource(join(cwd, target));
+	if (!stored.ok) return { capability, description, note: `Traducción: no generada${hint}` };
+	const parsed = readProjectMapTranslations(stored.text);
+	if (parsed.translations === null) return { capability, description, note: `Traducción: ${target} no se pudo usar — ${parsed.diagnostics[0] ?? "forma inválida"}` };
+	const lookup = projectMapTranslationFor(parsed.translations, capability.id, description.lines);
+	if (lookup.translation === null) {
+		return { capability, description, note: lookup.state === "stale" ? `Traducción: desactualizada, el documento cambió${hint}` : `Traducción: no generada${hint}` };
+	}
+	const translation = lookup.translation;
+	return {
+		capability: translation.title === undefined ? capability : { ...capability, outcome: translation.title },
+		description: { title: description.title, lines: translation.lines },
+		note: undefined,
+	};
 }
 
 /**
@@ -927,6 +976,51 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		}
 		ctx.ui.notify(describe(read.map));
 		return { action: "status", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
+	}
+
+	/**
+	 * What a translation pass still has to do, and the exact shape to write.
+	 *
+	 * Read-only on purpose: the extension cannot translate, so this reports the work instead of
+	 * doing it. The hash is the part a human or an agent cannot reproduce by hand — it is the
+	 * identity of the body the reader extracted, not of the file — so the command prints it and
+	 * the writer copies it verbatim.
+	 */
+	if (parsed.action === "translate") {
+		const read = readProjectMapFile(artifactPath);
+		if (read.map === null) {
+			ctx.ui.notify(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}, so there is nothing to translate.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return emptyReport("translate", read.diagnostics);
+		}
+		const sidecar = readSource(join(ctx.cwd, PROJECT_MAP_TRANSLATIONS_PATH));
+		const stored = sidecar.ok ? readProjectMapTranslations(sidecar.text) : { translations: null, diagnostics: [] };
+		const described = read.map.capabilities.map((capability) => {
+			const document = capability.featureDocs[0];
+			const source = document === undefined ? null : readSource(join(ctx.cwd, document));
+			const description = source !== null && source.ok ? readCapabilityDescription(source.text, capability.id) : null;
+			return { id: capability.id, source: document ?? null, lines: description?.lines ?? null };
+		});
+		const worklist = projectMapTranslationWorklist(described, stored.translations);
+		const lines = [
+			`Project Map translations · ${PROJECT_MAP_TRANSLATIONS_LANGUAGE}`,
+			`Target: ${PROJECT_MAP_TRANSLATIONS_PATH}${sidecar.ok ? "" : " (does not exist yet)"}`,
+			`Already translated: ${worklist.fresh} · need a pass: ${worklist.items.length} · no document: ${worklist.withoutDocument.length}`,
+			...stored.diagnostics.map((diagnostic) => `The target could not be used: ${diagnostic}`),
+			...(worklist.items.length === 0
+				? ["Every capability the map declares with a document is translated and current."]
+				: [
+					"",
+					"Needs a pass — capability, body hash, document:",
+					...worklist.items.map((item) => `  ${item.capabilityId}  ${item.sourceHash}  ${item.source}${item.state === "stale" ? "  (stale)" : ""}`),
+					"",
+					"Read each document, translate that work unit's title and body into Spanish, and write the target with this shape:",
+					renderProjectMapTranslationShape(),
+					"Copy each hash verbatim: it identifies the body that was translated, and the explanation only shows a translation whose hash still matches.",
+				]),
+			...(worklist.withoutDocument.length === 0 ? [] : ["", `No document to translate: ${worklist.withoutDocument.join(", ")}`]),
+		];
+		ctx.ui.notify(lines.join("\n"));
+		return { action: "translate", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [...read.diagnostics, ...stored.diagnostics.map((message) => refusal(message, "$.translations"))] };
 	}
 
 	/**
