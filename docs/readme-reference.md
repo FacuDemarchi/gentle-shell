@@ -905,6 +905,21 @@ Both files use the strict shape `{"schema":"gentle-pi.background-subagents/v1","
 
 Because the project file outranks the global one, `enable` still writes the global file but reports plainly when a project file keeps the effective policy unchanged. The resolved capability (`ready` or `absent`) reports whether `subagent_run` is actually callable in this session; a policy of `on` with capability `absent` means Gentle Agents is disabled or the retired subagents package is still installed.
 
+### Artifact language
+
+The always-on prompt tells the agent which language to write generated artifacts in. It defaults to English, and it can be configured per project or per machine — the Project Map's `?` explanation quotes the project's own ODD documents, so their language is the language of that surface, and a reader who wants Spanish prose everywhere should not have to fork the package default.
+
+| Priority | Source                                     | Notes                                                        |
+| -------- | ------------------------------------------ | ------------------------------------------------------------ |
+| 1        | `<cwd>/.pi/gentle-ai/artifact-language.json` | Project file. Outranks everything, including a global write. |
+| 2        | `<configHome>/artifact-language.json`      | Global file. `configHome` honors `GENTLE_PI_CONFIG_HOME` and defaults to `~/.pi/gentle-ai`. |
+| 3        | `GENTLE_PI_ARTIFACT_LANGUAGE`              | Exactly `en` or `es`. Any other value is ignored.            |
+| 4        | Built-in default                           | `en`.                                                        |
+
+Both files use the strict shape `{"schema":"gentle-pi.artifact-language/v1","language":"es"}`. A file that is present but malformed fails closed to `en` and is **not** skipped in favor of a lower-priority source.
+
+The setting splits by audience, and the split is the point. With `es`, human-facing prose — ODD/SDD unit and task documents, and UI copy — is Spanish, while code, code comments, identifiers, commit messages, filenames, tests, fixtures, and machine-facing files stay English, because those are read by tooling and by everyone. With `en` every generated artifact is English, which is the package default. The directive is substituted into the prompt as one sentence, and both values are measured against the prompt's 8,192 B budget by the test suite.
+
 ### Esc behavior
 
 The Gentle prompt matches Claude Code's Esc model on top of Pi's own. Four flows share the frame's single hint slot on the bottom rule, each decided by its own state:
