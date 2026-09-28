@@ -102,6 +102,7 @@ const requiredPaths = [
   "lib/project-map-description.ts",
   "lib/project-map-help-modal.ts",
   "lib/project-map-launchable.ts",
+  "lib/project-map-translations.ts",
   "lib/project-map-integration-documents.ts",
   "lib/project-map-integration-repository.ts",
   "lib/project-map-integration.ts",
