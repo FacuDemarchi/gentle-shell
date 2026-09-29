@@ -38,7 +38,20 @@ The map's whole purpose is to be the plan of record for parallel work: a capabil
 
 **D6 — The row shows the functional point.** `capabilityRow` paints `capability.outcome`, middle-truncated to the row's real width. `id` remains the key for selection, the launchable set and Coverage.
 
-**D7 — Surfaces come from what the functional point declares, through a mapping the project declares.** The generator reads the body line `**Allowed edit surfaces:**`, extracts the backticked paths, and applies `project_map.surfaces` (surface → path prefixes) to them. A declared surface with no matching prefix, and a path matching no rule, are omissions. Without `project_map.surfaces` the derivation is off and `surfaces` stays empty. Rationale: the repository's own principle is that an undeclared surface is an absence of evidence, never evidence of absence; a path→surface mapping is a project fact the tool must not invent, and a derived surface is a declaration the human can correct with `declare`.
+**D7 — Surfaces come from what the functional point declares, through a mapping the project declares.** The generator reads its body line `**Allowed edit surfaces:**`, extracts the backticked paths from that line, and maps each path to a surface through `project_map.surfaces`, which the project declares in `openspec/config.yaml` as one comma-separated prefix list per surface:
+
+```yaml
+project_map:
+  roadmap: odd/tasks/first-merchant-pilot.md
+  surfaces:
+    web: apps/web/
+    api: apps/api/, packages/core/, packages/contracts/
+    data: packages/database/, supabase/migrations/
+    operations: docs/operations/
+    tests: tests/
+```
+
+The longest matching prefix decides a path's surface, and the seven names are the schema's own, including the camel-cased `productUx`; a configuration is written with the surface's exact name. What is reported, and what is not: a path that matches no rule is reported, **once per capability**, in one omission that names every such path, rather than one omission per path; a surface declared with a blank value — a bare key such as `web:` or an empty quoted value such as `web: ""` — is an omission, because a declaration that says nothing is not a mapping; and a key under `surfaces` that is not one of the seven surfaces is an omission naming the key, whether or not it carried a value. The bare spelling is only seen for a name the shared configuration reader recognises as a key: a camel-cased surface such as `productUx` is a nesting level to that reader when it carries no value, so it is written with an explicit empty value to be reported as blank. The reader's own key classes are left exactly as they were for keys without a value, because a bare key is a parent to the lines beneath it and widening that class reparents keys other readers resolve. A capability whose body declares no such line keeps `surfaces: []` — undeclared stays an absence of evidence, and no surface is ever guessed. Without `project_map.surfaces` the derivation is off, `surfaces` stays empty, and the map's assumption says so instead of the assumption that no structured source exists. A YAML flow list is not the declared shape: the reader does not interpret it, so the comma-separated value is the form a project writes. Rationale: a path→surface mapping is a project fact the tool must not invent, and a derived surface is a declaration the human can correct with `declare`.
 
 ## Scope
 
@@ -82,7 +95,7 @@ The map's whole purpose is to be the plan of record for parallel work: a capabil
 - `docs/project-map.md`
 - `odd/tasks/project-map-roadmap-functional-points.md`
 
-`lib/project-map-description.ts` and its test were added on 2026-09-29 by the first correction round: the reader is where the `[~]` asymmetry lived, and a slice cannot fix a contract in one half only. `lib/project-map-help-modal.ts` was added by the follow-up to the second round: its two module comments still asserted the pre-slice semantics (`outcome` is the work unit's title, so it repeats the id). Comments only; the component's behaviour is unchanged. `tests/shell-project-map-card.test.ts` was added for PMFP-3: the card composes the same rows the view renders, so a row whose text changes can move an assertion there even though no line of that test is about the map's data.
+`lib/project-map-description.ts` and its test were added on 2026-09-29 by the first correction round: the reader is where the `[~]` asymmetry lived, and a slice cannot fix a contract in one half only. `lib/project-map-help-modal.ts` was added by the follow-up to the second round: its two module comments still asserted the pre-slice semantics (`outcome` is the work unit's title, so it repeats the id). Comments only; the component's behaviour is unchanged. `tests/shell-project-map-card.test.ts` was added for PMFP-3: the card composes the same rows the view renders, so a row whose text changes can move an assertion there even though no line of that test is about the map's data. `lib/project-map-description.ts`, its test and `extensions/gentle-project-map.ts` are in PMFP-4's surfaces because the derivation must read a work unit's body, and the shared label and body primitives belong to the lower module: PMFP-1 left `splitWorkUnitLabel` in the reader while the reader already imported `normalizeIdentifier` from the draft module, so the two modules import each other. PMFP-4 moves the shared primitives down and removes that cycle rather than deepening it.
 
 Any other path, including `lib/shell-project-map-schema.ts` and `scripts/verify-package-files.mjs`, is out of scope: a change there means the design drifted and the slice stops.
 
@@ -93,7 +106,7 @@ Any other path, including `lib/shell-project-map-schema.ts` and `scripts/verify-
 | **PMFP-1 — a work unit is read as the document wrote it** | Tolerance for text after `**`, `[~]` → `active`, unknown top-level markers become omissions, `outcome` is the written label, a long title truncates instead of vanishing | `lib/shell-project-map-draft.ts`, `tests/shell-project-map-draft.test.ts`, `docs/project-map.md` | ~250 lines |
 | **PMFP-2 — the roadmap is declared** | `project_map.roadmap` selects the only capability source; the declared document is read even outside `odd/tasks/`; no declaration keeps today's sources plus an assumption; a declared-but-unreadable or unsafe path is an omission | `lib/shell-project-map-draft.ts`, `extensions/gentle-project-map.ts`, `tests/shell-project-map-draft.test.ts`, `tests/gentle-project-map.test.ts`, `tests/project-map-rollout.test.ts`, `docs/project-map.md` | ~250 lines |
 | **PMFP-3 — the row shows the functional point** | `capabilityRow` paints `outcome`; selection, launch and Coverage stay keyed by `id` | `lib/shell-project-map-view.ts`, `tests/shell-project-map-view.test.ts`, `docs/project-map.md` | ~120 lines |
-| **PMFP-4 — Coverage closes from the declared surfaces** | `**Allowed edit surfaces:**` parsed from the functional point's body, `project_map.surfaces` applied, unmatched paths and surfaces reported | `lib/shell-project-map-draft.ts`, `tests/shell-project-map-draft.test.ts`, `docs/project-map.md` | ~280 lines |
+| **PMFP-4 — Coverage closes from the declared surfaces** | The body's `**Allowed edit surfaces:**` line parsed, `project_map.surfaces` applied with the longest matching prefix, unmatched paths and unusable declarations reported | `lib/shell-project-map-draft.ts`, `lib/project-map-description.ts`, `extensions/gentle-project-map.ts`, `tests/shell-project-map-draft.test.ts`, `tests/project-map-description.test.ts`, `docs/project-map.md` | ~280 lines |
 
 ## Acceptance criteria
 
@@ -184,6 +197,31 @@ What the verifier confirmed and what the slice rests on: with no declaration the
 - **The test instrumentation patches `node:fs` process-wide for the duration of one helper.** It restores in `finally` and resynchronizes ESM exports, and the verifier found no order dependence under serial execution, but enabling the test runner's concurrency would require reconsidering it.
 - **The third correction round's RED transcript was lost to context compaction** and is not reproducible. Its behaviour is pinned by tests and was verified independently by behaviour instead; it is recorded here because a claim of strict-TDD evidence that cannot be produced is not evidence.
 - **A process error of the orchestrator's, recorded so it is not repeated:** a correction order was once sent to the read-only verifier instead of to the writer. The task was cancelled immediately and the working tree was confirmed unchanged before anything else happened. Verifier and writer sessions are not interchangeable, and the write authority that accompanies a correction belongs only to a writer.
+
+## PMFP-4 delivery, and the unit closed (2026-09-29)
+
+Committed as `bfc5fdb5`, six files, 511 changed lines against a 280-line forecast — over the review budget, and one commit because the slice's two halves share `lib/shell-project-map-draft.ts`: the relocation of the shared label and body primitives, which removed the import cycle PMFP-1 introduced, and the derivation that reads a capability's own declared edit surfaces through `project_map.surfaces`. Separating them would need partial staging of a 190-line file and could leave a commit that does not build.
+
+The four slices are delivered: `a1f4f2c2` and `02e7f6bc` (PMFP-1), `d9a63596` (PMFP-2), `3f6a8941` (PMFP-3), `bfc5fdb5` (PMFP-4), with three docs-only records. Nothing is pushed.
+
+Two verification rounds refuted this slice before it closed, and both findings were mine to fix rather than the writer's:
+
+| Finding | Disposition |
+| --- | --- |
+| `productUx`, the first of the seven frozen surfaces, could not be declared at all: the configuration reader's key classes were lowercase-only, so the key was discarded before the surface map could see it | **Fixed** by admitting uppercase in the valued class |
+| A declaration with no value — a bare key or an empty quoted value — was invisible, so D7's promised report did not exist | **Fixed** with one walk and two views, so a key written with nothing is visible without a second parser of the same text |
+| Widening the **bare** key class to reach the second defect reparented keys other readers resolve: `rules: / apply: / Upper: / test_command:` changed the integration-readiness answer from `npm test` to `null` | **Reverted** to the class's exact previous form; only the valued class admits uppercase, and D7 records the boundary that a bare camel-cased key stays a nesting level |
+| The two views could contradict each other: a usable value followed by a bare declaration reported the surface blank *and* used it | **Fixed** by deciding blank from both views, so an earlier usable value stands as it does for the roadmap key |
+| The documentation's flow-list clause was imprecise: `web: []` is read as the literal prefix `"[]"`, which activates the derivation and reports every declared path as unmatched — not "rejected" | **Fixed** in the sentence |
+
+What the verification confirmed: with no mapping the generated map is byte-identical to the previous slice on both repositories, capabilities, serialized map, omissions and assumptions; the relocation is faithful over 273 work-unit lookups with zero differences; the reader's consumer and the integration-readiness command answer exactly what they answered before; and declaring the roadmap plus a mapping makes Coverage report shares, `web 5/7 · api 4/7 · data 3/4 · tests 2/2` among them, where it used to answer `—` for every surface.
+
+## Operational facts this unit paid for
+
+- **`git diff --check` writes its diagnostics to stderr and the harness can swallow them.** A blank line at the end of a test file survived a full round of review because the command printed nothing where the report was read, and `git diff --check && echo clean` reads the silence as success: the `&&` never runs. Check the exit code, not the absence of text.
+- **A bare key in a configuration is a parent to the lines beneath it.** Widening the class that recognises it inserts a nesting level that was previously ignored and reparents keys other readers resolve. A shared parser is not widened for one consumer's convenience; the value class was widened and the bare class was not, and that distinction is the reason the integration command still answers what it answered.
+- **A verification round found something real every time, across four slices.** Three of those findings were mine: I asserted a property without testing it ("the row stays one line at any width"), I asserted a comment was true when it was not, and I specified a test for a state that valid input cannot reach. The verifier is not ceremony here; it is what caught the errors the author could not see.
+- **A correction order once went to the read-only verifier instead of the writer**, and was cancelled with the tree confirmed unchanged. Writer and verifier sessions are not interchangeable.
 
 ## Not done, and why
 
