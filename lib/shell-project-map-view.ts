@@ -180,6 +180,8 @@ function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], i
 		const label = SURFACE_LABEL[entry.surface];
 		if (entry.declared === 0) return `${label} —`;
 		const share = Math.round((entry.done / entry.declared) * 100);
+		// Coverage is an identifier roll-up: labels are for rows, while this compact list names
+		// the capabilities that declare the surface.
 		const capabilities = map.capabilities
 			.filter((capability) => capability.surfaces.includes(entry.surface))
 			.map((capability) => `${capability.id} ${PROJECT_MAP_STATE_GLYPH[capability.state]}`)
@@ -252,8 +254,11 @@ const CARD_BODY_BUDGET = 60;
 const EMPTY_LAUNCHABLE: ReadonlySet<string> = new Set<string>();
 
 /**
- * Keeps both ends of an identifier visible: a capability id is read from either end, and an
- * end-truncated one keeps only the half nobody recognises. The Inspector carries it in full.
+ * Keeps a useful beginning and, once three characters fit, an identifying end of compact
+ * display text: an end-truncated label can lose the functional-point code or its distinguishing
+ * end, while the card keeps the identifier in click metadata and the explanation carries it in
+ * full. One or two characters leave only `…` or a head plus `…` once the text has to be cut;
+ * text that already fits the room comes back unchanged.
  */
 function middleTruncate(text: string, room: number): string {
 	if (room <= 0) return "";
@@ -287,19 +292,33 @@ export type ProjectMapRowPaint = (role: string, text: string) => string;
 const IDENTITY_PAINT: ProjectMapRowPaint = (_role, text) => text;
 
 /**
- * One capability row, built to fit the inner width exactly.
+ * The label a row paints. The schema permits a hand-edited outcome, so the whitespace is
+ * collapsed here rather than trusted: a newline would otherwise become a second rendered row.
+ *
+ * One definition on purpose: the card's digest folds in this same label, so a second copy of the
+ * rule would let the painted text and the cache key drift apart.
+ */
+function paintedLabel(capability: ProjectMapCapabilityV1): string {
+	return capability.outcome.replace(/\s+/g, " ");
+}
+
+/**
+ * One capability row, built to fit the inner width when its markers and its surface tail leave
+ * room for the label. Below that floor the row is as short as its own markers allow, which is
+ * wider than the width it was given.
  *
  * An undeclared surface renders `—`, the same vocabulary Coverage uses: undeclared is an
  * absence of evidence, never a zero.
  */
 function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number, launchable: boolean, paint: ProjectMapRowPaint): string {
+	const outcome = paintedLabel(capability);
 	const surfaces = capability.surfaces.length === 0 ? "—" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
 	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${launchable ? `${PROJECT_MAP_LAUNCH_MARKER} ` : ""}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
-	// The identifier budget is measured on the plain head: the painted marker carries an escape
+	// The label budget is measured on the plain head: the painted marker carries an escape
 	// sequence, and counting its bytes would shorten every launchable row for no reason.
 	const head = launchable ? plainHead.replace(PROJECT_MAP_LAUNCH_MARKER, paint("accent", PROJECT_MAP_LAUNCH_MARKER)) : plainHead;
 	const tail = ` · ${surfaces}`;
-	return `${head}${middleTruncate(capability.id, innerWidth - plainHead.length - tail.length)}${tail}`;
+	return `${head}${middleTruncate(outcome, innerWidth - plainHead.length - tail.length)}${tail}`;
 }
 
 export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
@@ -372,5 +391,6 @@ export function projectMapCardDigest(state: ProjectMapCardState, collapse: Proje
 	// The launch marker is not part of the descriptor's text at this budget (the paint is
 	// identity here), so the set that decides it is folded in explicitly: without it the rail's
 	// section cache would keep painting the previous frame's markers.
-	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body, launchable: launchable === undefined ? [] : [...launchable].sort() })}`;
+	const labels = state.kind === "ready" ? state.map.capabilities.map(paintedLabel) : [];
+	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body, labels, launchable: launchable === undefined ? [] : [...launchable].sort() })}`;
 }

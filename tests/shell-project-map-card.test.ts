@@ -77,10 +77,11 @@ test("composes the ready descriptor through renderCard", () => {
 		assert.ok(actual.join("\n").includes(descriptor.title));
 		assert.ok(actual.join("\n").includes(descriptor.subtitle));
 		assert.equal(descriptor.tone, "info");
-		// The descriptor at its default budget carries the identifier in full; the render at a
-		// narrow width is what truncates it, and nothing is lost: the Inspector prints it whole.
-		assert.ok(projectMapCardDescriptor(state).body.join("\n").includes("capability-with-an-unbreakable-identifier"));
-		assert.ok(actual.join("\n").includes("capability-with-…able-identifier"));
+		// The descriptor at its default budget carries the document's label in full; the narrow
+		// render truncates that label, while click metadata retains the identifier.
+		assert.ok(projectMapCardDescriptor(state).body.join("\n").includes("A deliberately long diagnostic-capable outcome."));
+		assert.ok(actual.join("\n").includes("A deliberately"));
+		assert.ok(actual.join("\n").includes("…"));
 	});
 });
 
@@ -180,9 +181,9 @@ test("capability clicks select, clear, and reveal only the selected row", () => 
 		const current = session();
 		const revealed: number[] = [];
 		const rail = projectMapCardRail(path, theme, current, undefined, (line) => revealed.push(line));
-		// Wide enough to carry the identifier whole, so the row is found by its own text.
+		// The document's label is painted, while a click still selects by identifier.
 		const lines = rail.render(56);
-		const row = lines.findIndex((line) => line.includes("capability-with"));
+		const row = lines.findIndex((line) => line.includes("A deliberately"));
 		const click = () => rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
 		assert.deepEqual(click(), { handled: true, render: true });
 		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier"]);

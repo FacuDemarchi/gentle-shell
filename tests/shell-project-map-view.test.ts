@@ -145,31 +145,71 @@ test("renders grouped rows with done indicators and lifecycle glyphs", () => {
 	assert.ok(body.includes("▾ Foundations 1/1"));
 	assert.ok(body.includes("▾ Product capabilities 1/3"));
 	assert.ok(body.includes(`✓ repository-tooling`));
-	assert.ok(body.includes(`✓ merchant-catalog · Web · API`));
-	assert.ok(body.includes(`✕ checkout · Web`));
+	assert.ok(body.includes(`✓ Merchants manage a catalog. · Web · API`));
+	assert.ok(body.includes(`✕ Shoppers check out. · Web`));
 });
 
 test("structured card body records group headers and the selected capability row", () => {
 	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "checkout");
 	assert.deepEqual(body.headers, [{ line: 0, group: "foundations" }, { line: 2, group: "capabilities" }]);
 	assert.equal(body.selected, 5);
-	assert.match(body.lines[body.selected!], /^▸ \? ✕ checkout/, "selection replaces the indent while retaining the lifecycle glyph");
+	assert.match(body.lines[body.selected!], /^▸ \? ✕ Shoppers check out\./, "selection replaces the indent while retaining the lifecycle glyph");
 });
 
-// A capability row is exactly one body line, at any width. A row that spilled onto a second
-// line lost its glyph and its indent, so it read as two unrelated lines — the defect this
-// replaces. The identifier is truncated in the middle instead, because a capability id is
-// read from either end, and the Inspector carries it in full.
-test("a capability row is one body line, truncated in the middle when it does not fit", () => {
-	const longId = `capability-${"x".repeat(53)}`;
-	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id: longId }] })), PROJECT_MAP_EXPANDED, undefined, 46);
+// A capability row is built as one body line rather than intentionally wrapped. A row that
+// spilled onto a second line lost its glyph and its indent, so it read as two unrelated lines.
+// The functional-point label is truncated in the middle instead, and the card keeps the
+// identifier in its click metadata.
+test("a capability row is one body line, middle-truncates a long outcome, and keeps its markers", () => {
+	const id = "repo-production";
+	const outcome = `FP-1a — ${"Repo-side production path ".repeat(3)}(no accounts needed)`;
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46, new Set([id]));
 	const target = body.capabilities[0]!;
 	assert.equal(target.height, 1, "the row is one body line");
+	assert.equal(target.id, id, "the click target remains the identifier");
 	const row = body.lines[target.line]!;
-	assert.ok(row.includes("✓"), "the row starts on its glyph");
+	assert.match(row, /^  \? ✿ ✓ /, "the row keeps its indent and marker columns");
 	assert.ok(row.includes("· Web"), "the row keeps its surfaces");
-	assert.ok(row.includes("…"), "a row that does not fit truncates its identifier");
+	assert.ok(row.includes("…"), "a row that does not fit truncates its functional-point label");
 	assert.ok(row.length <= 46, `${row.length} exceeds the body budget`);
+});
+
+test("a painted functional-point label keeps selection and click metadata addressed by id", () => {
+	const id = "repo-production";
+	const outcome = "FP-1a — Repo-side production path (no accounts needed)";
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, id, 80, new Set([id]));
+	const target = body.capabilities[0]!;
+	assert.equal(target.id, id, "click metadata carries the identifier, not the painted label");
+	assert.equal(body.selected, target.line, "selection matches the identifier");
+	assert.equal(target.help, 2, "the help marker keeps its column");
+	assert.ok(target.launch !== undefined, "the launch marker stays available by identifier");
+	const row = body.lines[target.line]!;
+	assert.match(row, /^▸ \? ✿ ✓ FP-1a — Repo-side production path \(no accounts needed\) · Web · API$/);
+	assert.equal(row.includes(id), false, "the identifier is not painted in place of the label");
+});
+
+test("collapses outcome whitespace so a hand-edited label cannot split a row", () => {
+	const newlineId = "repo-production";
+	const spacesId = "spaced-label";
+	const body = projectMapCardBody(ready(map({
+		capabilities: [
+			{ ...map().capabilities[0]!, id: newlineId, outcome: "FP-1\nSecond line" },
+			{ ...map().capabilities[1]!, id: spacesId, outcome: "Spaces   collapse\ttoo", surfaces: ["web"] },
+		],
+	})), PROJECT_MAP_EXPANDED, newlineId, 80, new Set([newlineId]));
+	const newlineTarget = body.capabilities.find((entry) => entry.id === newlineId)!;
+	const spacesTarget = body.capabilities.find((entry) => entry.id === spacesId)!;
+	assert.equal(body.lines[newlineTarget.line], "▸ ? ✿ ✓ FP-1 Second line · Web · API");
+	assert.equal(body.lines[spacesTarget.line], "  ? ○ Spaces collapse too · Web");
+	assert.equal(body.lines[newlineTarget.line]!.includes("\n"), false, "a newline in the artifact stays inside one painted row");
+	assert.equal(newlineTarget.id, newlineId, "click metadata remains addressed by id");
+	assert.equal(spacesTarget.id, spacesId, "every collapsed label keeps its own id target");
+});
+
+test("a capability whose outcome is its id keeps its plain row text", () => {
+	const capability = { ...map().capabilities[1]!, outcome: "shopping-cart" };
+	const body = projectMapCardBody(ready(map({ capabilities: [capability] })), PROJECT_MAP_EXPANDED);
+	assert.equal(body.lines[body.capabilities[0]!.line], "  ? ○ shopping-cart · —");
 });
 
 test("a capability row carries the marker left of its lifecycle glyph", () => {
@@ -198,7 +238,7 @@ test("a capability that cannot be launched keeps the row it has today", () => {
 
 test("a capability that declares no surface renders the same absence Coverage uses", () => {
 	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("shopping-cart · —"));
+	assert.ok(body.includes("Shoppers build a cart. · —"));
 });
 
 test("static blockers name the state, the foundations and the dependencies that are not done", () => {
@@ -253,7 +293,7 @@ test("reads a rendered group header back to its group and rejects content rows",
 
 test("says a capability declares no surface instead of rendering an empty list", () => {
 	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("shopping-cart · —"));
+	assert.ok(body.includes("Shoppers build a cart. · —"));
 });
 
 test("computes coverage from declared capabilities and counts only done ones", () => {
@@ -280,6 +320,7 @@ test("renders a declared surface with its share, counts, and declaring capabilit
 	assert.ok(body.includes("merchant-catalog ✓"), `expected the done declaring capability, got ${body}`);
 	assert.ok(body.includes("checkout ✕"), `expected the blocked declaring capability, got ${body}`);
 	assert.ok(body.includes("API 100% (1/1): merchant-catalog ✓"), `expected the API explanation, got ${body}`);
+	assert.equal(body.includes("Merchants manage a catalog. ✓"), false, "Coverage remains an identifier roll-up");
 });
 
 test("reports every surface of the frozen vocabulary exactly once", () => {
@@ -288,6 +329,17 @@ test("reports every surface of the frozen vocabulary exactly once", () => {
 		coverage.map((entry) => entry.surface),
 		["productUx", "web", "api", "data", "security", "operations", "tests"],
 	);
+});
+
+test("folds every painted label into the digest, even past the default row budget", () => {
+	const first = `${"A".repeat(30)}FIRST${"Z".repeat(30)}`;
+	const other = `${"A".repeat(30)}OTHER${"Z".repeat(30)}`;
+	const state = (outcome: string) => ready(map({ capabilities: [{ ...map().capabilities[0]!, outcome }] }));
+	assert.notEqual(projectMapCardDigest(state(first)), projectMapCardDigest(state(other)), "a wider card must not reuse a stale label frame");
+	const collapsed = state("Same   painted label");
+	const equivalent = state("Same\npainted\tlabel");
+	assert.deepEqual(projectMapCardDescriptor(collapsed), projectMapCardDescriptor(equivalent), "the two states render identically after paint-time whitespace collapse");
+	assert.equal(projectMapCardDigest(collapsed), projectMapCardDigest(equivalent), "identically rendered states keep a stable digest");
 });
 
 test("keeps the digest stable when the card does not change and moves when it does", () => {

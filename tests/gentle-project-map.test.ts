@@ -972,7 +972,7 @@ test("the card marks a launchable capability and its marker runs the open plan",
 		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
 		const rail = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!;
 		const lines = rail.render(56);
-		const row = lines.findIndex((line) => line.includes("✿") && line.includes("catalog"));
+		const row = lines.findIndex((line) => line.includes("✿") && line.includes("Catalog"));
 		assert.ok(row > 0, "the launchable capability carries the marker");
 		// Four body columns in, plus the frame's two.
 		rail.handleMouse?.({ type: "click", button: "left", x: 6, y: row, screenX: 6, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
@@ -998,7 +998,7 @@ test("the card leaves an unlaunchable capability unmarked", async () => {
 		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
 		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
 		const lines = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(56);
-		const row = lines.findIndex((line) => line.includes("catalog"));
+		const row = lines.findIndex((line) => line.includes("Catalog"));
 		assert.ok(row > 0, "the capability still renders");
 		assert.equal(lines[row]!.includes("✿"), false, "and carries no launch marker");
 	});
@@ -1148,7 +1148,7 @@ test("the card part receives a session toggle that changes only the clicked grou
 		assert.match(body, /▸ Foundations 1\/1/);
 		assert.equal(body.includes("✓ tooling"), false);
 		assert.match(body, /▾ Product capabilities 1\/1/);
-		assert.ok(body.includes("✓ catalog"));
+		assert.ok(body.includes("✓ Catalog"));
 	});
 });
 
@@ -1168,15 +1168,15 @@ test("selection shortcuts clamp, expand capabilities, and reset at session shutd
 		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
 		const body = () => sidebarState(tui).parts.get("project-map")!.render(80).join("\n");
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ alpha/);
+		assert.match(body(), /▸ \? ✓ Alpha/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ○ beta/);
+		assert.match(body(), /▸ \? ○ Beta/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ○ beta/, "next clamps at the end");
+		assert.match(body(), /▸ \? ○ Beta/, "next clamps at the end");
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ alpha/);
+		assert.match(body(), /▸ \? ✓ Alpha/);
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ alpha/, "previous clamps at the start");
+		assert.match(body(), /▸ \? ✓ Alpha/, "previous clamps at the start");
 		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
 		assert.match(body(), /▸ Product capabilities/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
