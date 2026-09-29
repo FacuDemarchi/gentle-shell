@@ -51,6 +51,20 @@ project_map:
 
 The dotted `project_map.roadmap: <path>` spelling is also accepted. When a declaration is repeated, the last usable declaration wins, and a blank value leaves an earlier declaration standing. The declared document is the only capability source and may live outside `odd/tasks/`; the other task documents are still read for reference but contribute no capability. Without the key, every top-level work unit of every `odd/tasks/*.md` remains a capability source, and the generated map records that fallback and its potentially mixed granularity in its assumptions.
 
+A project can also map its own repository paths to the frozen surface vocabulary:
+
+```yaml
+project_map:
+  surfaces:
+    web: apps/web/
+    api: apps/api/, packages/contracts/
+    data: packages/database/, supabase/migrations/
+    operations: docs/operations/
+    tests: tests/
+```
+
+Each value is a comma-separated list of path prefixes; that string form is the declared shape. A YAML flow list such as `[]` is not parsed as a list: it is one literal prefix, so declared paths do not match it and are reported as unmatched. When this mapping contains at least one usable prefix, the generator reads each capability's body and finds the first line that, after an optional list marker is stripped, begins with the bold `**Allowed edit surfaces:**` marker. The marker accepts its colon inside or immediately after the closing bold marker. Only backticked spans on that line are paths; prose is ignored. Each path maps to the surface with the longest matching prefix, and the resulting unique surfaces use the schema's canonical order. A capability without that line keeps `surfaces: []`; the generator never guesses. An unmatched path is reported once per capability with every unmatched path. Every unsupported `project_map.surfaces.*` key the reader recognises is reported whether it has a value or is bare, and every known lowercase surface with no usable value — a bare key or an empty quoted value — is reported as blank; a camel-cased name such as `productUx` must carry a value to be seen at all, because a bare key is a nesting level to the configuration reader. A fully matched declaration produces no surface-specific omission. Without a usable mapping, derivation is off and surfaces remain empty.
+
 Two rules keep a generated draft honest:
 
 - A foundation is `done` only when its named structured source carries a well-formed declaration of it, so `done` means declared, never verified. A declared script must be a usable command string, not merely a key.
@@ -58,7 +72,7 @@ Two rules keep a generated draft honest:
 
 When ODD task documents are supplied, every top-level, unindented line of the form `- [ ] **ID — Title**`, `- [x] **ID — Title**`, `- [X] **ID — Title**`, or `- [~] **ID — Title**` becomes a capability. Text after the closing `**` is read as part of the same work unit. The markers mean `planned`, `done`, `done`, and `active` respectively; the checkbox is a declaration of completion, not verified progress. `outcome` keeps the complete bold label as the document wrote it, with whitespace collapsed, while `id` normalizes the title after the first `—` (or the whole label when there is no separator). A normalized title longer than 64 characters is truncated at a word boundary when at least two words fit; otherwise it falls back to at most its first 64 characters, trimming a trailing separator so the result remains a valid identifier rather than being dropped. The declaring document becomes the feature document. Documents are processed in path order, so a repeated capability identifier keeps its first declaration and reports the collision. A document that declares no readable work unit, a title that cannot become an identifier, and a top-level checkbox with a bold label the generator cannot read are all reported as omissions. Indented checkboxes are not work units and are not read.
 
-A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches; the draft therefore relies on the approval contract allowing an empty list before approval.
+Without a usable `project_map.surfaces` mapping, a generated capability leaves its surface list empty and the draft relies on the approval contract allowing that absence before approval. With a mapping, the body declaration above supplies the list instead.
 
 Every generated map is a draft. The generator never marks a map approved, and it returns a canonicalized draft, so the map it hands a caller is exactly what `validateProjectMap` returns for it.
 
@@ -89,7 +103,7 @@ An approval without an actor is refused, because an approval nobody can attribut
 
 The Project Map card is a read-only rendering of the artifact. It distinguishes an empty artifact, an invalid artifact, a draft map, and an approved map; draft and approved are visible in the subtitle so a draft never reads as approved. A missing or unreadable artifact renders empty, while a malformed JSON artifact renders invalid with its diagnostic: the card shows the first three diagnostics and then points at `/gentle:project-map status` for the full report, so a long list cannot crowd out the map. Ready maps group Foundations (when declared) and Product capabilities. Each group header shows its done/total indicator and state: `▾ Foundations 2/3` is expanded and `▸ Product capabilities 6/12` is collapsed. Each capability row paints the label the document wrote (`outcome`), carries its lifecycle glyph and declared surfaces, and shows `—` when it declares none — the same absence vocabulary Coverage uses, because undeclared is never a zero. It also carries a **`?` marker left of that glyph**, which explains the capability (below), and — when the capability can be opened right now — a **`✿` between the `?` and the glyph**, which opens it (below). The identifier (`id`) remains the key for selection and the launchable set.
 
-Coverage counts every capability that declares a surface in its denominator, and only the `done` ones in its numerator. Each declared value explains the contributing capabilities and their glyphs by identifier, for example `Web 67% (2/3): auth ✓, search ✓, billing ✕`. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
+Coverage counts every capability that declares a surface in its denominator, and only the `done` ones in its numerator. Each declared value explains the contributing capabilities and their glyphs by identifier, for example `Web 67% (2/3): auth ✓, search ✓, billing ✕`. With `project_map.surfaces`, Coverage therefore shows a share for every surface the roadmap declares. A surface that no capability declares renders as unknown (`—`), never `0%`: undeclared is an absence of evidence, not evidence of absence.
 
 In fullscreen, clicking a group header toggles that group alone. Clicking a capability selects it; clicking the selected row clears it. **A capability row is built as one truncated line and is never wrapped by choice**; below the markers' own floor it can still exceed the available width, and its measurement is characters rather than terminal cells. The identifier remains in the row's click metadata and the `?` explanation prints it in full. The selected row replaces its two-space indent with `▸ ` while preserving its lifecycle glyph. `alt+m` folds both groups when either is expanded and unfolds both when they are already folded. Set `GENTLE_PI_PROJECT_MAP_KEY` to bind a different shortcut; an empty value uses `alt+m` and `off` disables the shortcut. `alt+j` and `alt+k` move the capability selection forward and backward without wrapping, expanding a collapsed capabilities group when the selection moves onto a row it would hide; set `GENTLE_PI_PROJECT_MAP_NEXT_KEY` or `GENTLE_PI_PROJECT_MAP_PREV_KEY` to rebind them, with the same empty-value and `off` behavior. The collapse key is shown in the card top rule when it fits.
 
@@ -117,7 +131,7 @@ A capability row carries a `✿` between the `?` and its lifecycle glyph **exact
 
 ### Surface declaration loop
 
-A generated draft always declares no surfaces, because the generator never infers them, and the approval gate requires them. Complete the draft before approval by declaring each capability through the command:
+Without a usable `project_map.surfaces` mapping, a generated draft declares no surfaces and the approval gate requires them. A declared mapping derives the roadmap's surfaces before this manual loop. Complete any remaining draft gap before approval through the command:
 
 1. Run `/gentle:project-map` (or `/gentle:project-map draft`) and accept the confirmation.
 2. Run `/gentle:project-map declare <capability-id> <surface>...` for every capability, confirm each resulting replacement, and use only the frozen surface vocabulary.

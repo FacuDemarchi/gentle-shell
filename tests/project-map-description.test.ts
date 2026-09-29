@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readProjectMapWorkUnit } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription } from "../lib/project-map-description.ts";
 
 const DOCUMENT = [
@@ -126,4 +127,13 @@ test("does not match a work unit whose title normalizes to a different id", () =
 test("an empty document and an empty id answer nothing rather than throwing", () => {
 	assert.equal(readCapabilityDescription("", "catalog"), null);
 	assert.equal(readCapabilityDescription(DOCUMENT, ""), null);
+});
+
+test("the shared work-unit reader preserves the description reader's title and body contract", () => {
+	const expected = readCapabilityDescription(DOCUMENT, "supabase-project-database-and-identity");
+	assert.deepEqual(readProjectMapWorkUnit(DOCUMENT, "supabase-project-database-and-identity"), expected);
+});
+
+test("the shared work-unit reader returns null for an id its document does not declare", () => {
+	assert.equal(readProjectMapWorkUnit(DOCUMENT, "not-a-work-unit"), null);
 });

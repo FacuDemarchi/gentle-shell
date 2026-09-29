@@ -8,7 +8,15 @@ import {
 	serializeProjectMap,
 	validateProjectMap,
 } from "../lib/shell-project-map-schema.ts";
-import { generateProjectMapDraft, normalizeIdentifier, readConfigTestCommand, readProjectMapRoadmapPath, readSimpleConfigEntries } from "../lib/shell-project-map-draft.ts";
+import {
+	generateProjectMapDraft,
+	normalizeIdentifier,
+	readConfigTestCommand,
+	readProjectMapRoadmapPath,
+	readProjectMapSurfaceMap,
+	readSimpleConfigDeclarations,
+	readSimpleConfigEntries,
+} from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription } from "../lib/project-map-description.ts";
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -594,4 +602,203 @@ test("treats a blank roadmap declaration as no declaration", () => {
 	});
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
 	assert.ok(joined(result.assumptions).toLowerCase().includes("no project_map.roadmap is declared"));
+});
+
+test("reads declared surface prefixes and reports only blank and unsupported declarations", () => {
+	const parsed = readProjectMapSurfaceMap([
+		"project_map:",
+		"  surfaces:",
+		"    web: apps/web/, packages/web/",
+		"    api: apps/api/",
+		"    data: , ,",
+		"    mobile: apps/mobile/",
+		"",
+	].join("\n"));
+	assert.deepEqual([...parsed.surfaces], [
+		["web", ["apps/web/", "packages/web/"]],
+		["api", ["apps/api/"]],
+	]);
+	assert.deepEqual(parsed.blankSurfaces, ["data"]);
+	assert.deepEqual(parsed.unusableKeys, ["project_map.surfaces.mobile"]);
+	assert.deepEqual(readProjectMapSurfaceMap(undefined), { surfaces: new Map(), unusableKeys: [], blankSurfaces: [] });
+});
+
+test("derives surfaces from only backticked declared paths using the longest matching prefix", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: [
+			"project_map:",
+			"  surfaces:",
+			"    api: packages/",
+			"    data: packages/database/",
+			"    web: apps/web/",
+			"",
+		].join("\n"),
+		oddTaskDocuments: [{
+			path: "odd/tasks/roadmap.md",
+			text: [
+				"- [ ] **FP-1 — Catalog**",
+				"  **Allowed edit surfaces:** prose packages/ignored and `packages/database/query.ts` plus `apps/web/page.ts`.",
+				"",
+			].join("\n"),
+		}],
+	});
+	assert.deepEqual(result.map?.capabilities[0]?.surfaces, ["web", "data"]);
+	assert.equal(result.omissions.some((omission) => omission.includes("packages/ignored")), false);
+});
+
+test("reports all unmatched declared paths in one omission per capability", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n",
+		oddTaskDocuments: [{
+			path: "odd/tasks/roadmap.md",
+			text: [
+				"- [ ] **FP-1 — Catalog**",
+				"  **Allowed edit surfaces:** `packages/catalog/` and `docs/catalog.md`.",
+				"",
+			].join("\n"),
+		}],
+	});
+	const unmatched = result.omissions.filter((omission) => omission.includes("matched no project_map.surfaces prefix"));
+	assert.deepEqual(unmatched, [
+		"The capability \"catalog\" declared by odd/tasks/roadmap.md has paths that matched no project_map.surfaces prefix: packages/catalog/, docs/catalog.md.",
+	]);
+});
+
+test("keeps surfaces empty when a capability or its document declares no allowed-edit-surfaces line", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n",
+		oddTaskDocuments: [
+			{ path: "odd/tasks/one.md", text: "- [ ] **FP-1 — No line**\n  Body only.\n" },
+			{ path: "odd/tasks/two.md", text: "- [ ] **FP-2 — Another no line**\n" },
+		],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.surfaces), [[], []]);
+	assert.equal(result.omissions.some((omission) => omission.includes("matched no project_map.surfaces prefix")), false);
+});
+
+test("switches the surface assumption and reports unusable surface declarations when a mapping is declared", () => {
+	const mapped = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n    api: ,\n    mobile: apps/mobile/\n",
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n" }],
+	});
+	assert.deepEqual(mapped.map?.capabilities[0]?.surfaces, ["web"]);
+	assert.ok(joined(mapped.assumptions).includes("capability's own declared edit surfaces through project_map.surfaces"));
+	assert.equal(joined(mapped.assumptions).includes("leaves its surface list empty"), false);
+	assert.ok(joined(mapped.omissions).includes("project_map.surfaces.api"));
+	assert.ok(joined(mapped.omissions).includes("project_map.surfaces.mobile"));
+
+	const unmapped = generateProjectMapDraft(sources("- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n"));
+	assert.deepEqual(unmapped.map?.capabilities[0]?.surfaces, []);
+	assert.ok(joined(unmapped.assumptions).includes("leaves its surface list empty"));
+	assert.equal(joined(unmapped.omissions).includes("matched no project_map.surfaces prefix"), false);
+});
+
+test("reads camel-cased productUx surface declarations in nested and dotted forms", () => {
+	for (const configText of [
+		"project_map:\n  surfaces:\n    productUx: apps/web/ux/\n",
+		"project_map.surfaces.productUx: apps/web/ux/\n",
+	]) {
+		assert.deepEqual(readProjectMapSurfaceMap(configText), {
+			surfaces: new Map([["productUx", ["apps/web/ux/"]]]),
+			unusableKeys: [],
+			blankSurfaces: [],
+		});
+		const result = generateProjectMapDraft({
+			packageJson: manifest(),
+			openspecConfig: configText,
+			oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/ux/menu.ts`\n" }],
+		});
+		assert.deepEqual(result.map?.capabilities[0]?.surfaces, ["productUx"]);
+		assert.equal(result.omissions.some((omission) => omission.includes("project_map.surfaces")), false);
+	}
+});
+
+test("reports blank and unsupported surface declarations with or without values", () => {
+	const nested = "project_map:\n  surfaces:\n    web:\n    api: \"\"\n    alien:\n    mobile: apps/mobile/\n";
+	assert.deepEqual(readProjectMapSurfaceMap(nested), {
+		surfaces: new Map(),
+		unusableKeys: ["project_map.surfaces.alien", "project_map.surfaces.mobile"],
+		blankSurfaces: ["web", "api"],
+	});
+
+	const shadowedBlank = readProjectMapSurfaceMap("project_map:\n  surfaces:\n    api: apps/api/\n    web:\n");
+	assert.deepEqual([...shadowedBlank.surfaces], [["api", ["apps/api/"]]]);
+	assert.deepEqual(shadowedBlank.blankSurfaces, ["web"]);
+	assert.equal(readSimpleConfigDeclarations("project_map:\n  surfaces:\n    web:\n").get("project_map.surfaces.web"), null);
+
+	const generated = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  surfaces:\n    api: apps/api/\n    web:\n    alien:\n",
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/api/catalog.ts`\n" }],
+	});
+	assert.deepEqual(generated.map?.capabilities[0]?.surfaces, ["api"]);
+	assert.ok(joined(generated.omissions).includes("project_map.surfaces.web"));
+	assert.ok(joined(generated.omissions).includes("project_map.surfaces.alien"));
+	assert.equal(generated.omissions.some((omission) => omission.includes("matched no project_map.surfaces prefix")), false);
+});
+
+test("requires a value for a camel-cased surface name but still reports its empty value", () => {
+	// A bare `productUx` is a parent to the shared configuration reader, not a surface declaration.
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    productUx:\n"), {
+		surfaces: new Map(),
+		unusableKeys: [],
+		blankSurfaces: [],
+	});
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    productUx: \"\"\n"), {
+		surfaces: new Map(),
+		unusableKeys: [],
+		blankSurfaces: ["productUx"],
+	});
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    web: \"\"\n"), {
+		surfaces: new Map(),
+		unusableKeys: [],
+		blankSurfaces: ["web"],
+	});
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    alien:\n"), {
+		surfaces: new Map(),
+		unusableKeys: ["project_map.surfaces.alien"],
+		blankSurfaces: [],
+	});
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    alien: x\n"), {
+		surfaces: new Map(),
+		unusableKeys: ["project_map.surfaces.alien"],
+		blankSurfaces: [],
+	});
+});
+
+test("keeps uppercase bare parents from reparenting a shared test command", () => {
+	const configText = "rules:\n  apply:\n    Upper:\n      test_command: npm test\n";
+	// HEAD output: [["rules.apply.test_command", "npm test"]].
+	assert.deepEqual([...readSimpleConfigEntries(configText)], [["rules.apply.test_command", "npm test"]]);
+	assert.equal(readConfigTestCommand(readSimpleConfigEntries(configText)), "npm test");
+});
+
+test("keeps dotted bare parents from becoming a shared test-command path", () => {
+	const configText = "rules.apply:\n  test_command: npm test\n";
+	// HEAD output: [["test_command", "npm test"]].
+	assert.deepEqual([...readSimpleConfigEntries(configText)], [["test_command", "npm test"]]);
+	assert.equal(readConfigTestCommand(readSimpleConfigEntries(configText)), null);
+});
+
+test("uses the last usable surface value without also reporting it blank", () => {
+	for (const configText of [
+		"project_map.surfaces.web: apps/web/\nproject_map.surfaces.web:\n",
+		"project_map:\n  surfaces:\n    web: apps/web/\n    web:\n",
+		"project_map:\n  surfaces:\n    web:\n    web: apps/web/\n",
+	]) {
+		assert.deepEqual(readProjectMapSurfaceMap(configText), {
+			surfaces: new Map([["web", ["apps/web/"]]]),
+			unusableKeys: [],
+			blankSurfaces: [],
+		});
+	}
+	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    web:\n    web: \"\"\n"), {
+		surfaces: new Map(),
+		unusableKeys: [],
+		blankSurfaces: ["web"],
+	});
 });
