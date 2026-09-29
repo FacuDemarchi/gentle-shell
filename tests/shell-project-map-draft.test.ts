@@ -12,6 +12,7 @@ import {
 	generateProjectMapDraft,
 	normalizeIdentifier,
 	readConfigTestCommand,
+	readProjectMapDelegablePrefix,
 	readProjectMapRoadmapPath,
 	readProjectMapSurfaceMap,
 	readSimpleConfigDeclarations,
@@ -801,4 +802,250 @@ test("uses the last usable surface value without also reporting it blank", () =>
 		unusableKeys: [],
 		blankSurfaces: ["web"],
 	});
+});
+
+const delegableUnits = [
+	"- [ ] **FP-0 — Foundation**",
+	"- [ ] **FP-1b — Provisioning**",
+	"- [ ] **FP-2 — Catalogue**",
+	"- [ ] **FP-1b.0 — Provisioning preparation**",
+	"- [ ] **FP-1b.8 — Provisioning close**",
+	"- [ ] **DEL-1 — Delivery step**",
+	"- [ ] **OF-2 — Operations step**",
+	"- [ ] **ODD-3 — ODD step**",
+	"- [ ] **T1 — Test step**",
+	"- [ ] **A plain label with no code**",
+	"",
+].join("\n");
+
+function delegableSources(openspecConfig: string) {
+	return {
+		packageJson: manifest(),
+		openspecConfig,
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: delegableUnits }],
+	};
+}
+
+test("reads a delegable prefix from nested and dotted declarations", () => {
+	assert.equal(readProjectMapDelegablePrefix("project_map:\n  delegable: FP-\n"), "FP-");
+	assert.equal(readProjectMapDelegablePrefix("project_map.delegable: FP-\n"), "FP-");
+	for (const configText of [undefined, "project_map:\n  other: value\n", "project_map:\n  delegable: \"\"\n"]) {
+		assert.equal(readProjectMapDelegablePrefix(configText), null);
+	}
+	assert.equal(readProjectMapDelegablePrefix(42 as unknown as string), null);
+});
+
+test("keeps only undotted convention codes as capability sources with or without a roadmap", () => {
+	const noRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  delegable: FP-\n"));
+	const withRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  roadmap: odd/tasks/roadmap.md\n  delegable: FP-\n"));
+	for (const result of [noRoadmap, withRoadmap]) {
+		assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), [
+			"FP-2 — Catalogue",
+			"FP-0 — Foundation",
+			"FP-1b — Provisioning",
+		]);
+		assert.equal(result.omissions.some((omission) => omission.includes("FP-1b.0") || omission.includes("FP-1b.8") || omission.includes("DEL-1") || omission.includes("OF-2") || omission.includes("ODD-3") || omission.includes("T1") || omission.includes("plain label")), false);
+		assert.equal(result.assumptions.filter((assumption) => assumption.includes("read as steps instead of capabilities")).length, 1);
+		assert.ok(joined(result.assumptions).includes("7 work units were read as steps instead of capabilities"));
+	}
+});
+
+test("switches the no-roadmap assumption only when a delegable convention is declared", () => {
+	const declared = generateProjectMapDraft(delegableSources("project_map:\n  delegable: FP-\n"));
+	assert.ok(joined(declared.assumptions).includes("codes do not match the declared \"FP-\" convention were read as steps"));
+	assert.equal(joined(declared.assumptions).includes("granularity may be mixed"), false);
+
+	const fallback = generateProjectMapDraft(delegableSources("project_map:\n  other: value\n"));
+	assert.ok(joined(fallback.assumptions).includes("every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed"));
+	assert.equal(joined(fallback.assumptions).includes("read as steps instead of capabilities"), false);
+});
+
+test("keeps the generated map, omissions, and assumptions unchanged without a delegable declaration", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  other: value\n",
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n" }],
+	});
+	assert.equal(serializeProjectMap(result.map!), [
+		"{",
+		'  "version": "gentle-shell.project-map/v1",',
+		'  "project": {',
+		'    "id": "example-shop",',
+		'    "name": "example-shop"',
+		"  },",
+		'  "approval": {',
+		'    "state": "draft"',
+		"  },",
+		'  "foundations": [',
+		"    {",
+		'      "id": "quality-gates",',
+		'      "outcome": "The project declares the automated gates that guard a change.",',
+		'      "state": "planned"',
+		"    },",
+		"    {",
+		'      "id": "repository-tooling",',
+		'      "outcome": "The repository and its declared tooling are present and consistent.",',
+		'      "state": "done",',
+		'      "evidence": [',
+		'        "package.json"',
+		"      ]",
+		"    }",
+		"  ],",
+		'  "capabilities": [',
+		"    {",
+		'      "id": "catalog",',
+		'      "outcome": "FP-1 — Catalog",',
+		'      "foundationRefs": [],',
+		'      "dependsOn": [],',
+		'      "contracts": [],',
+		'      "featureDocs": [',
+		'        "odd/tasks/roadmap.md"',
+		"      ],",
+		'      "surfaces": [],',
+		'      "state": "planned"',
+		"    }",
+		"  ]",
+		"}",
+		"",
+	].join("\n"));
+	assert.deepEqual(result.assumptions, [
+		"No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.",
+		"Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.",
+		"A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.",
+		"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
+		"Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.",
+		"An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.",
+		"A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.",
+	]);
+	assert.deepEqual(result.omissions, [
+		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
+		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
+	]);
+});
+
+test("keeps HEAD's no-capability omission unless a convention read the unit as a step", () => {
+	const document = "- [ ] **!!!**\n";
+	const withoutConvention = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [{ path: "odd/tasks/invalid.md", text: document }],
+	});
+	assert.ok(joined(withoutConvention.omissions).includes("cannot be normalized into a capability identifier"));
+	assert.ok(joined(withoutConvention.omissions).includes("odd/tasks/invalid.md declares no work unit this generator can read"));
+
+	const withConvention = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n",
+		oddTaskDocuments: [{ path: "odd/tasks/invalid.md", text: document }],
+	});
+	assert.ok(joined(withConvention.omissions).includes("cannot be normalized into a capability identifier"));
+	assert.equal(joined(withConvention.omissions).includes("odd/tasks/invalid.md declares no work unit this generator can read"), false);
+	assert.ok(joined(withConvention.assumptions).includes("1 work unit was read as steps instead of capabilities"));
+});
+
+test("uses the whole separator-free label as the code under a delegable convention", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n",
+		oddTaskDocuments: [{
+			path: "odd/tasks/codes.md",
+			text: ["- [ ] **FP-1**", "- [ ] **FP-1b.0**", "- [ ] **F5-1**", "- [ ] **Do the thing**", ""].join("\n"),
+		}],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-1"]);
+	assert.ok(joined(result.assumptions).includes("3 work units were read as steps instead of capabilities"));
+	assert.equal(result.omissions.some((omission) => omission.includes("FP-1b.0") || omission.includes("F5-1") || omission.includes("Do the thing")), false);
+});
+
+function expectedHeadCapability(path: string, id: string, outcome: string) {
+	return {
+		id,
+		outcome,
+		foundationRefs: [],
+		dependsOn: [],
+		contracts: [],
+		featureDocs: [path],
+		surfaces: [],
+		state: "planned" as const,
+	};
+}
+
+const headFallbackAssumptions = [
+	"No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.",
+	"Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.",
+	"A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.",
+	"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
+	"Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.",
+	"An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.",
+	"A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.",
+];
+
+function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadCapability>[]) {
+	return serializeProjectMap({
+		version: PROJECT_MAP_SCHEMA_V1,
+		project: { id: "example-shop", name: "example-shop" },
+		approval: { state: "draft" },
+		foundations: [
+			{ id: "quality-gates", outcome: "The project declares the automated gates that guard a change.", state: "planned" },
+			{ id: "repository-tooling", outcome: "The repository and its declared tooling are present and consistent.", state: "done", evidence: ["package.json"] },
+		],
+		capabilities,
+	});
+}
+
+test("matches HEAD's complete output for synthetic no-convention corpora", () => {
+	const commonOmissions = [
+		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
+		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
+	];
+	const cases = [
+		{
+			name: "an invalid title",
+			documents: [{ path: "odd/tasks/invalid.md", text: "- [ ] **!!!**\n" }],
+			capabilities: [],
+			omissions: [
+				...commonOmissions,
+				'The work unit line "- [ ] **!!!**" in odd/tasks/invalid.md cannot be normalized into a capability identifier.',
+				"odd/tasks/invalid.md declares no work unit this generator can read, so it contributed no capability.",
+				"No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.",
+			],
+		},
+		{
+			name: "a document containing only steps",
+			documents: [{ path: "odd/tasks/steps.md", text: "- [ ] **DEL-1 — Delivery step**\n" }],
+			capabilities: [expectedHeadCapability("odd/tasks/steps.md", "delivery-step", "DEL-1 — Delivery step")],
+			omissions: commonOmissions,
+		},
+		{
+			name: "a collision",
+			documents: [
+				{ path: "odd/tasks/a.md", text: "- [ ] **FP-1 — Shared**\n" },
+				{ path: "odd/tasks/b.md", text: "- [ ] **FP-2 — Shared**\n" },
+			],
+			capabilities: [expectedHeadCapability("odd/tasks/a.md", "shared", "FP-1 — Shared")],
+			omissions: [
+				...commonOmissions,
+				'The capability "shared" is declared by both odd/tasks/a.md, line "- [ ] **FP-1 — Shared**", and odd/tasks/b.md, line "- [ ] **FP-2 — Shared**"; the first document in sorted order wins.',
+			],
+		},
+		{
+			name: "only delegable units",
+			documents: [{ path: "odd/tasks/delegable.md", text: "- [ ] **FP-1**\n- [ ] **FP-2 — Two**\n" }],
+			capabilities: [
+				expectedHeadCapability("odd/tasks/delegable.md", "fp-1", "FP-1"),
+				expectedHeadCapability("odd/tasks/delegable.md", "two", "FP-2 — Two"),
+			],
+			omissions: commonOmissions,
+		},
+	];
+	for (const fixture of cases) {
+		const result = generateProjectMapDraft({
+			packageJson: manifest(),
+			openspecConfig: "project_map:\n  other: value\n",
+			oddTaskDocuments: fixture.documents,
+		});
+		assert.deepEqual(result.map?.capabilities, fixture.capabilities, fixture.name);
+		assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization(fixture.capabilities), fixture.name);
+		assert.deepEqual(result.omissions, fixture.omissions, fixture.name);
+		assert.deepEqual(result.assumptions, headFallbackAssumptions, fixture.name);
+	}
 });

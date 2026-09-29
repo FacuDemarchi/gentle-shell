@@ -238,6 +238,12 @@ export function readProjectMapRoadmapPath(configText: string | undefined): strin
 	return value === undefined || value.trim().length === 0 ? null : normalizeProjectMapRoadmapPath(value.trim());
 }
 
+export function readProjectMapDelegablePrefix(configText: string | undefined): string | null {
+	if (typeof configText !== "string") return null;
+	const value = readSimpleConfigEntries(configText).get("project_map.delegable");
+	return value === undefined || value.trim().length === 0 ? null : value.trim();
+}
+
 /** The path-prefix mapping a project declares for deriving capability surfaces. */
 export function readProjectMapSurfaceMap(configText: string | undefined): {
 	surfaces: Map<ProjectMapSurface, string[]>;
@@ -293,8 +299,20 @@ function comparePaths(left: string, right: string): number {
 	return left < right ? -1 : 1;
 }
 
-function extractWorkUnits(path: string, text: string, omissions: string[]): { capability: ProjectMapCapabilityV1; line: string }[] {
+function isDelegableWorkUnitLabel(label: string, prefix: string): boolean {
+	const { head } = splitWorkUnitLabel(label);
+	const code = head.length === 0 ? label.trim() : head.replace(/—\s*$/, "").trim();
+	return code.startsWith(prefix) && !code.includes(".");
+}
+
+interface ExtractedWorkUnits {
+	capabilities: { capability: ProjectMapCapabilityV1; line: string }[];
+	stepCount: number;
+}
+
+function extractWorkUnits(path: string, text: string, omissions: string[], delegablePrefix: string | null): ExtractedWorkUnits {
 	const capabilities: { capability: ProjectMapCapabilityV1; line: string }[] = [];
+	let stepCount = 0;
 	for (const rawLine of text.split("\n")) {
 		const line = rawLine.replace(/\r$/, "");
 		const match = WORK_UNIT.exec(line);
@@ -308,8 +326,12 @@ function extractWorkUnits(path: string, text: string, omissions: string[]): { ca
 		const id = normalizeIdentifier(splitWorkUnitLabel(label).title);
 		if (id === null) {
 			omissions.push(`The work unit line "${line}" in ${path} cannot be normalized into a capability identifier.`);
+		}
+		if (delegablePrefix !== null && !isDelegableWorkUnitLabel(label, delegablePrefix)) {
+			stepCount += 1;
 			continue;
 		}
+		if (id === null) continue;
 		capabilities.push({
 			capability: {
 				id,
@@ -324,7 +346,7 @@ function extractWorkUnits(path: string, text: string, omissions: string[]): { ca
 			line,
 		});
 	}
-	return capabilities;
+	return { capabilities, stepCount };
 }
 
 function declaredEditSurfacePaths(documentText: string, capabilityId: string): string[] {
@@ -432,6 +454,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	const capabilities: ProjectMapCapabilityV1[] = [];
 	const declaredBy = new Map<string, { path: string; line: string }>();
 	const declaredRoadmapPath = readProjectMapRoadmapPath(openspecConfig ?? undefined);
+	const declaredDelegablePrefix = readProjectMapDelegablePrefix(openspecConfig ?? undefined);
 	const documents = Array.isArray(sources.oddTaskDocuments)
 		? sources.oddTaskDocuments
 			.filter(
@@ -453,7 +476,11 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 
 	let capabilityDocuments = documents;
 	if (declaredRoadmapPath === null) {
-		assumptions.push("No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.");
+		assumptions.push(
+			declaredDelegablePrefix === null
+				? "No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed."
+				: `No project_map.roadmap is declared, so units whose codes do not match the declared "${declaredDelegablePrefix}" convention were read as steps rather than capabilities.`,
+		);
 	} else if (!isSafeFeatureDocumentPath(declaredRoadmapPath)) {
 		omissions.push(`openspec/config.yaml declares the roadmap "${declaredRoadmapPath}", but it is not a safe repository-relative path, so no capability could be extracted from it.`);
 		capabilityDocuments = [];
@@ -468,12 +495,14 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 		}
 	}
 
+	let stepCount = 0;
 	for (const document of capabilityDocuments) {
-		const extracted = extractWorkUnits(document.path, document.text, omissions);
-		if (extracted.length === 0) {
+		const extracted = extractWorkUnits(document.path, document.text, omissions, declaredDelegablePrefix);
+		stepCount += extracted.stepCount;
+		if (extracted.capabilities.length === 0 && extracted.stepCount === 0) {
 			omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
 		}
-		for (const extractedWorkUnit of extracted) {
+		for (const extractedWorkUnit of extracted.capabilities) {
 			const { capability, line } = extractedWorkUnit;
 			const existing = declaredBy.get(capability.id);
 			if (existing !== undefined) {
@@ -494,6 +523,11 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			}
 			capabilities.push(capability);
 		}
+	}
+	if (declaredDelegablePrefix !== null) {
+		assumptions.push(
+			`${stepCount} work unit${stepCount === 1 ? " was" : "s were"} read as steps instead of capabilities because their codes do not match the declared "${declaredDelegablePrefix}" convention.`,
+		);
 	}
 	if (capabilities.length === 0) {
 		omissions.push("No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.");
