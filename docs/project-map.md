@@ -41,6 +41,16 @@ The artifact path is exported as `PROJECT_MAP_ARTIFACT_PATH` (`"openspec/project
 `generateProjectMapDraft` (`lib/shell-project-map-draft.ts`) builds a draft from structured repository sources. It is deterministic: identical input produces byte-identical serialization, and it performs no filesystem access and no model call. It returns `{ map, assumptions, omissions }`, where `map` is `null` only when the project identity cannot be derived at all.
 
 The generator reads the package manifest for project identity and the repository tooling foundation, and `openspec/config.yaml` for the quality gates foundation. Only the simple `key: value` shape of the configuration is interpreted, including one level of nesting. A block scalar body is skipped by indentation, so a `key: value` line inside it is never read as configuration; lists, comments, and multi-line values are not interpreted either, and a configuration the generator cannot interpret is reported as an omission.
+
+A project declares its roadmap in `openspec/config.yaml` with the canonical nested form:
+
+```yaml
+project_map:
+  roadmap: <repository-relative .md path>
+```
+
+The dotted `project_map.roadmap: <path>` spelling is also accepted. When a declaration is repeated, the last usable declaration wins, and a blank value leaves an earlier declaration standing. The declared document is the only capability source and may live outside `odd/tasks/`; the other task documents are still read for reference but contribute no capability. Without the key, every top-level work unit of every `odd/tasks/*.md` remains a capability source, and the generated map records that fallback and its potentially mixed granularity in its assumptions.
+
 Two rules keep a generated draft honest:
 
 - A foundation is `done` only when its named structured source carries a well-formed declaration of it, so `done` means declared, never verified. A declared script must be a usable command string, not merely a key.

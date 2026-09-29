@@ -23,7 +23,7 @@ export interface ProjectMapDraftResult {
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER_MAX_LENGTH = 64;
 const CONFIG_BARE_KEY = /^([a-z][a-z0-9_]*):\s*$/;
-const CONFIG_VALUED_ENTRY = /^([a-z][a-z0-9_]*):\s*(\S.*)$/;
+const CONFIG_VALUED_ENTRY = /^([a-z][a-z0-9_.]*):\s*(\S.*)$/;
 const WORK_UNIT = /^-\s+\[([ xX~])\]\s*\*\*(.+?)\*\*(.*)$/;
 const UNREADABLE_WORK_UNIT = /^-\s+\[([^\]]*)\]\s*\*\*(.+)/;
 
@@ -137,6 +137,19 @@ export function readSimpleConfigEntries(text: string): Map<string, string> {
 		entries.set(path.join("."), value);
 	}
 	return entries;
+}
+
+function normalizeProjectMapRoadmapPath(path: string): string {
+	const leadingSlash = path.startsWith("/");
+	const normalized = path.split("/").filter((segment) => segment.length > 0 && segment !== ".").join("/");
+	return normalized.length === 0 ? path : leadingSlash ? `/${normalized}` : normalized;
+}
+
+/** The roadmap document a project declares with `project_map.roadmap`, or `null` when it declares none. */
+export function readProjectMapRoadmapPath(configText: string | undefined): string | null {
+	if (typeof configText !== "string") return null;
+	const value = readSimpleConfigEntries(configText).get("project_map.roadmap");
+	return value === undefined || value.trim().length === 0 ? null : normalizeProjectMapRoadmapPath(value.trim());
 }
 
 /**
@@ -256,39 +269,61 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	omissions.push("No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.");
 	const capabilities: ProjectMapCapabilityV1[] = [];
 	const declaredBy = new Map<string, { path: string; line: string }>();
-	if (!Array.isArray(sources.oddTaskDocuments)) {
-		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
-	} else {
-		const documents = sources.oddTaskDocuments
+	const declaredRoadmapPath = readProjectMapRoadmapPath(openspecConfig ?? undefined);
+	const documents = Array.isArray(sources.oddTaskDocuments)
+		? sources.oddTaskDocuments
 			.filter(
 				(document): document is { path: string; text: string } =>
 					isRecord(document) && typeof document.path === "string" && document.path.length > 0 && typeof document.text === "string",
 			)
 			.filter((document) => {
 				if (isSafeFeatureDocumentPath(document.path)) return true;
-				omissions.push(`${document.path} is not a safe repository-relative path, so it was skipped rather than recorded as a feature document.`);
+				if (document.path !== declaredRoadmapPath) {
+					omissions.push(`${document.path} is not a safe repository-relative path, so it was skipped rather than recorded as a feature document.`);
+				}
 				return false;
 			})
-			.sort((left, right) => comparePaths(left.path, right.path));
-		for (const document of documents) {
-			const extracted = extractWorkUnits(document.path, document.text, omissions);
-			if (extracted.length === 0) {
-				omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
-			}
-			for (const extractedWorkUnit of extracted) {
-				const { capability, line } = extractedWorkUnit;
-				const existing = declaredBy.get(capability.id);
-				if (existing !== undefined) {
-					if (existing.path === document.path) {
-						omissions.push(`The capability "${capability.id}" is declared twice in ${document.path}: "${existing.line}" and "${line}"; the first declaration wins.`);
-					} else {
-						omissions.push(`The capability "${capability.id}" is declared by both ${existing.path}, line "${existing.line}", and ${document.path}, line "${line}"; the first document in sorted order wins.`);
-					}
-					continue;
+			.sort((left, right) => comparePaths(left.path, right.path))
+		: [];
+	if (!Array.isArray(sources.oddTaskDocuments)) {
+		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
+	}
+
+	let capabilityDocuments = documents;
+	if (declaredRoadmapPath === null) {
+		assumptions.push("No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.");
+	} else if (!isSafeFeatureDocumentPath(declaredRoadmapPath)) {
+		omissions.push(`openspec/config.yaml declares the roadmap "${declaredRoadmapPath}", but it is not a safe repository-relative path, so no capability could be extracted from it.`);
+		capabilityDocuments = [];
+	} else {
+		const roadmap = documents.find((document) => document.path === declaredRoadmapPath);
+		if (roadmap === undefined) {
+			omissions.push(`openspec/config.yaml declares the roadmap "${declaredRoadmapPath}", but no document with that path could be read, so no capability could be extracted from it.`);
+			capabilityDocuments = [];
+		} else {
+			capabilityDocuments = [roadmap];
+			assumptions.push(`openspec/config.yaml declares "${declaredRoadmapPath}" as the roadmap, so only it contributes capabilities; ${documents.length - 1} other supplied document${documents.length === 2 ? "" : "s"} contributed none.`);
+		}
+	}
+
+	for (const document of capabilityDocuments) {
+		const extracted = extractWorkUnits(document.path, document.text, omissions);
+		if (extracted.length === 0) {
+			omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
+		}
+		for (const extractedWorkUnit of extracted) {
+			const { capability, line } = extractedWorkUnit;
+			const existing = declaredBy.get(capability.id);
+			if (existing !== undefined) {
+				if (existing.path === document.path) {
+					omissions.push(`The capability "${capability.id}" is declared twice in ${document.path}: "${existing.line}" and "${line}"; the first declaration wins.`);
+				} else {
+					omissions.push(`The capability "${capability.id}" is declared by both ${existing.path}, line "${existing.line}", and ${document.path}, line "${line}"; the first document in sorted order wins.`);
 				}
-				declaredBy.set(capability.id, { path: document.path, line });
-				capabilities.push(capability);
+				continue;
 			}
+			declaredBy.set(capability.id, { path: document.path, line });
+			capabilities.push(capability);
 		}
 	}
 	if (capabilities.length === 0) {

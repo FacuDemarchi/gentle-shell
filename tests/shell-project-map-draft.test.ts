@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
@@ -6,7 +8,7 @@ import {
 	serializeProjectMap,
 	validateProjectMap,
 } from "../lib/shell-project-map-schema.ts";
-import { generateProjectMapDraft, normalizeIdentifier } from "../lib/shell-project-map-draft.ts";
+import { generateProjectMapDraft, normalizeIdentifier, readConfigTestCommand, readProjectMapRoadmapPath, readSimpleConfigEntries } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription } from "../lib/project-map-description.ts";
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -495,4 +497,101 @@ test("documents that bold text inside a label stops at the first closing emphasi
 	const result = generateProjectMapDraft(sources("- [ ] **Add **dual** support**\n"));
 	assert.equal(result.map?.capabilities[0]?.outcome, "Add");
 	assert.equal(result.map?.capabilities[0]?.id, "add");
+});
+
+test("reads nested and dotted declared roadmap paths from simple config entries", () => {
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: roadmaps/launch.md\n"), "roadmaps/launch.md");
+	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/a.md\n"), "odd/tasks/a.md");
+	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/first.md\nproject_map:\n  roadmap: odd/tasks/later.md\n"), "odd/tasks/later.md");
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: odd/tasks/first.md\nproject_map.roadmap: odd/tasks/later.md\n"), "odd/tasks/later.md");
+	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/first.md\nproject_map.roadmap: \"\"\n"), "odd/tasks/first.md");
+	assert.equal(readConfigTestCommand(readSimpleConfigEntries("apply.test_command: pnpm test\n")), "pnpm test");
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  other: value\n"), null);
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap:    \n"), null);
+	assert.equal(readProjectMapRoadmapPath(42 as unknown as string), null);
+});
+
+test("documents that blank repetitions leave the earlier usable roadmap declaration standing", () => {
+	const documentation = readFileSync(join(import.meta.dirname, "..", "docs", "project-map.md"), "utf8");
+	assert.ok(documentation.includes("the last usable declaration wins, and a blank value leaves an earlier declaration standing"));
+});
+
+test("normalizes declared roadmap aliases without correcting unsafe parent paths", () => {
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: odd//./tasks/a.md\n"), "odd/tasks/a.md");
+	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: ../odd/./tasks/a.md\n"), "../odd/tasks/a.md");
+});
+
+test("uses a dotted roadmap declaration as the sole capability source", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map.roadmap: odd/tasks/declared.md\n",
+		oddTaskDocuments: [
+			{ path: "odd/tasks/declared.md", text: "- [ ] **Declared — Shipped capability**\n" },
+			{ path: "odd/tasks/reference.md", text: "- [ ] **Reference — Must not contribute**\n" },
+		],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["shipped-capability"]);
+});
+
+test("uses only the declared roadmap as a capability source", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  roadmap: odd/tasks/declared.md\n",
+		oddTaskDocuments: [
+			{ path: "odd/tasks/declared.md", text: "- [ ] **Declared — Shipped capability**\n" },
+			{ path: "odd/tasks/reference.md", text: "# Reference only\n" },
+		],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["shipped-capability"]);
+	assert.ok(joined(result.assumptions).includes("odd/tasks/declared.md"));
+	assert.equal(joined(result.omissions).includes("odd/tasks/reference.md declares no work unit"), false);
+});
+
+test("keeps every supplied document as a source when no roadmap is declared", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		oddTaskDocuments: [
+			{ path: "odd/tasks/one.md", text: "- [ ] **One — First capability**\n" },
+			{ path: "odd/tasks/two.md", text: "- [ ] **Two — Second capability**\n" },
+		],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
+	assert.ok(joined(result.assumptions).toLowerCase().includes("no project_map.roadmap is declared"));
+});
+
+test("reports a declared roadmap whose document could not be read", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  roadmap: roadmaps/missing.md\n",
+		oddTaskDocuments: [{ path: "odd/tasks/other.md", text: "- [ ] **Other — Not selected**\n" }],
+	});
+	assert.deepEqual(result.map?.capabilities, []);
+	assert.deepEqual(
+		result.omissions.filter((omission) => omission.includes("roadmaps/missing.md")),
+		["openspec/config.yaml declares the roadmap \"roadmaps/missing.md\", but no document with that path could be read, so no capability could be extracted from it."],
+	);
+});
+
+test("reports an unsafe declared roadmap without reading it", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  roadmap: ../outside.md\n",
+		oddTaskDocuments: [{ path: "odd/tasks/other.md", text: "- [ ] **Other — Not selected**\n" }],
+	});
+	assert.deepEqual(result.map?.capabilities, []);
+	assert.ok(joined(result.omissions).includes("../outside.md"));
+	assert.ok(joined(result.omissions).includes("not a safe repository-relative path"));
+});
+
+test("treats a blank roadmap declaration as no declaration", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  roadmap:    \n",
+		oddTaskDocuments: [
+			{ path: "odd/tasks/one.md", text: "- [ ] **One — First capability**\n" },
+			{ path: "odd/tasks/two.md", text: "- [ ] **Two — Second capability**\n" },
+		],
+	});
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
+	assert.ok(joined(result.assumptions).toLowerCase().includes("no project_map.roadmap is declared"));
 });

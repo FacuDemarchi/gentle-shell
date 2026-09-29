@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import test from "node:test";
+import test, { mock } from "node:test";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,11 +31,13 @@ import gentleProjectMap, {
 	parseProjectMapHelpKey,
 	PROJECT_MAP_HELP_KEY_DEFAULT,
 	projectMapOpenPiDecision,
+	readRepositorySources,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
 } from "../extensions/gentle-project-map.ts";
 
 const NOW = new Date("2026-09-23T12:00:00Z");
+const mutableFs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
 
 interface Harness {
 	ctx: ProjectMapCommandContext;
@@ -1350,4 +1353,88 @@ test("the Open Pi offer is withdrawn while the gate is off, and the switch is na
 	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/executable-disabled"));
 	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/prior"), "the original diagnostics survive");
 	assert.equal(projectMapOpenPiDecision(readiness, GATE_ON), readiness, "an enabled gate changes nothing");
+});
+
+test("draft reads a declared roadmap outside odd/tasks", async () => {
+	await withRepository(async (directory) => {
+		mkdirSync(join(directory, "roadmaps"), { recursive: true });
+		writeFileSync(join(directory, "roadmaps", "launch.md"), "- [ ] **Launch — External roadmap capability**\n", "utf8");
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/launch.md\n", "utf8");
+		const report = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		assert.deepEqual(report.map?.capabilities.map((capability) => capability.id), ["external-roadmap-capability"]);
+		assert.equal(report.map?.capabilities.some((capability) => capability.id === "add-draft-generation-and-human-plan-approval"), false);
+	});
+});
+
+test("draft does not read a declared odd task roadmap twice", async () => {
+	await withRepository(async (directory) => {
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: odd/tasks/roadmap.md\n", "utf8");
+		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), "- [ ] **One — First capability**\n- [ ] **Two — Second capability**\n", "utf8");
+		const report = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		assert.deepEqual(report.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
+		assert.equal(report.omissions.some((omission) => omission.includes("declared twice in odd/tasks/roadmap.md")), false);
+	});
+});
+
+test("repository sources normalize roadmap aliases without duplicate entries", async () => {
+	for (const config of ["project_map:\n  roadmap: odd/./tasks/a.md\n", "project_map.roadmap: odd/./tasks/a.md\n"]) {
+		await withRepository(async (directory) => {
+			writeFileSync(join(directory, "openspec", "config.yaml"), config, "utf8");
+			writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), "- [ ] **A — Canonical capability**\n", "utf8");
+			const result = readRepositorySources(directory);
+			assert.deepEqual(result.sources.oddTaskDocuments, [{ path: "odd/tasks/roadmap.md", text: "- [ ] **A — Canonical capability**\n" }]);
+		});
+	}
+	await withRepository(async (directory) => {
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: ../outside.md\n", "utf8");
+		const result = readRepositorySources(directory);
+		assert.equal(result.sources.oddTaskDocuments?.some((document) => document.path === "../outside.md"), false);
+	});
+});
+
+async function recordReads<T>(path: string, run: () => Promise<T>): Promise<{ result: T; reads: string[] }> {
+	const original = mutableFs.readFileSync;
+	const reads: string[] = [];
+	const patched = mock.method(mutableFs, "readFileSync", ((...args: any[]) => {
+		if (String(args[0]) === path) reads.push(path);
+		return Reflect.apply(original, mutableFs, args);
+	}) as never);
+	syncBuiltinESMExports();
+	try {
+		return { result: await run(), reads };
+	} finally {
+		patched.mock.restore();
+		syncBuiltinESMExports();
+	}
+}
+
+test("draft reports absent and unreadable declared roadmaps with one read per path", async () => {
+	await withRepository(async (directory) => {
+		mkdirSync(join(directory, "roadmaps", "unreadable.md"), { recursive: true });
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/missing.md\n", "utf8");
+		const absent = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
+		assert.deepEqual(absent.omissions.filter((omission) => omission.includes("roadmaps/missing.md")), ["openspec/config.yaml declares the roadmap \"roadmaps/missing.md\", but no document with that path could be read, so no capability could be extracted from it."]);
+
+		const externalPath = join(directory, "roadmaps", "unreadable.md");
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/unreadable.md\n", "utf8");
+		const external = await recordReads(externalPath, () => runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW }));
+		assert.deepEqual(external.reads, [externalPath]);
+		assert.deepEqual(external.result.omissions.filter((omission) => omission.includes("roadmaps/unreadable.md")), [
+			"roadmaps/unreadable.md exists but could not be read, so it contributed no capability.",
+			"openspec/config.yaml declares the roadmap \"roadmaps/unreadable.md\", but no document with that path could be read, so no capability could be extracted from it.",
+		]);
+	});
+
+	await withRepository(async (directory) => {
+		const internalPath = join(directory, "odd", "tasks", "roadmap.md");
+		rmSync(internalPath);
+		mkdirSync(internalPath);
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: odd/tasks/roadmap.md\n", "utf8");
+		const internal = await recordReads(internalPath, () => runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW }));
+		assert.deepEqual(internal.reads, [internalPath]);
+		assert.deepEqual(internal.result.omissions.filter((omission) => omission.includes("odd/tasks/roadmap.md")), [
+			"odd/tasks/roadmap.md exists but could not be read, so it contributed no capability.",
+			"openspec/config.yaml declares the roadmap \"odd/tasks/roadmap.md\", but no document with that path could be read, so no capability could be extracted from it.",
+		]);
+	});
 });

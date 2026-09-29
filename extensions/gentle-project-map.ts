@@ -16,7 +16,7 @@ import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
-import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
+import { generateProjectMapDraft, readProjectMapRoadmapPath } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription, splitWorkUnitLabel, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import {
@@ -42,6 +42,7 @@ import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar, RAIL_WIDTH } from "../lib/shell-sidebar-layout.ts";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
+	isSafeFeatureDocumentPath,
 	readProjectMapFile,
 	type ProjectMapCapabilityV1,
 	type ProjectMapDiagnostic,
@@ -502,7 +503,7 @@ function unreadableArtifactRefusal(path: string): ProjectMapDiagnostic | null {
 	return refusal(`The artifact at ${path} exists but could not be read, so nothing was written; writing blind would replace a file this command cannot inspect.`, "$");
 }
 
-function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
+export function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
 	const omissions: string[] = [];
 	const sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] } = {};
 	const manifest = readSource(join(cwd, "package.json"));
@@ -519,16 +520,27 @@ function readRepositorySources(cwd: string): { sources: { packageJson?: unknown;
 	if (config.ok) sources.openspecConfig = config.text;
 	else if (config.reason === "unreadable") omissions.push("openspec/config.yaml exists but could not be read, so no quality gate could be derived from it.");
 	const tasksRoot = join(cwd, "odd", "tasks");
-	if (existsSync(tasksRoot)) {
-		const documents: { path: string; text: string }[] = [];
+	const documents: { path: string; text: string }[] = [];
+	const attemptedDocuments = new Set<string>();
+	const hasTasksRoot = existsSync(tasksRoot);
+	if (hasTasksRoot) {
 		for (const name of readdirSync(tasksRoot).sort()) {
 			if (!name.endsWith(".md")) continue;
+			const path = `odd/tasks/${name}`;
+			attemptedDocuments.add(path);
 			const document = readSource(join(tasksRoot, name));
-			if (document.ok) documents.push({ path: `odd/tasks/${name}`, text: document.text });
-			else if (document.reason === "unreadable") omissions.push(`odd/tasks/${name} exists but could not be read, so it contributed no capability.`);
+			if (document.ok) documents.push({ path, text: document.text });
+			else if (document.reason === "unreadable") omissions.push(`${path} exists but could not be read, so it contributed no capability.`);
 		}
-		sources.oddTaskDocuments = documents;
 	}
+	const declaredRoadmapPath = readProjectMapRoadmapPath(sources.openspecConfig);
+	if (declaredRoadmapPath !== null && !attemptedDocuments.has(declaredRoadmapPath) && isSafeFeatureDocumentPath(declaredRoadmapPath)) {
+		attemptedDocuments.add(declaredRoadmapPath);
+		const roadmap = readSource(join(cwd, declaredRoadmapPath));
+		if (roadmap.ok) documents.push({ path: declaredRoadmapPath, text: roadmap.text });
+		else if (roadmap.reason === "unreadable") omissions.push(`${declaredRoadmapPath} exists but could not be read, so it contributed no capability.`);
+	}
+	if (hasTasksRoot || documents.length > 0) sources.oddTaskDocuments = documents;
 	return { sources, omissions };
 }
 
