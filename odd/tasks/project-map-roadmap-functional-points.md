@@ -75,13 +75,14 @@ The map's whole purpose is to be the plan of record for parallel work: a capabil
 - `tests/shell-project-map-draft.test.ts`
 - `tests/project-map-description.test.ts`
 - `tests/shell-project-map-view.test.ts`
+- `tests/shell-project-map-card.test.ts`
 - `tests/project-map-help-modal.test.ts`
 - `tests/gentle-project-map.test.ts`
 - `tests/project-map-rollout.test.ts`
 - `docs/project-map.md`
 - `odd/tasks/project-map-roadmap-functional-points.md`
 
-`lib/project-map-description.ts` and its test were added on 2026-09-29 by the first correction round: the reader is where the `[~]` asymmetry lived, and a slice cannot fix a contract in one half only. `lib/project-map-help-modal.ts` was added by the follow-up to the second round: its two module comments still asserted the pre-slice semantics (`outcome` is the work unit's title, so it repeats the id). Comments only; the component's behaviour is unchanged.
+`lib/project-map-description.ts` and its test were added on 2026-09-29 by the first correction round: the reader is where the `[~]` asymmetry lived, and a slice cannot fix a contract in one half only. `lib/project-map-help-modal.ts` was added by the follow-up to the second round: its two module comments still asserted the pre-slice semantics (`outcome` is the work unit's title, so it repeats the id). Comments only; the component's behaviour is unchanged. `tests/shell-project-map-card.test.ts` was added for PMFP-3: the card composes the same rows the view renders, so a row whose text changes can move an assertion there even though no line of that test is about the map's data.
 
 Any other path, including `lib/shell-project-map-schema.ts` and `scripts/verify-package-files.mjs`, is out of scope: a change there means the design drifted and the slice stops.
 
@@ -153,6 +154,36 @@ Two findings stay open by decision, both in the translation unit and both with t
 - **Freshness hashes the body only**, so a title-only edit keeps a stored translation “fresh” while its title no longer matches the label the map shows. Fixing it means hashing the label too, which would invalidate all 49 stored entries of this repository's own sidecar and force a full re-run of the translation pass. That number is the reason it is not folded in here.
 
 The second verification's remaining refutation is the universal no-loss claim's scope: it holds for both repositories' real documents (225 lines scanned, none silent) and for every boundary shape the verifier constructed except the dash-plus-two-spaces line, which the third round fixed.
+
+## PMFP-2 delivery (2026-09-29)
+
+Committed as `d9a63596`, five files, 309 changed lines. The key is `project_map.roadmap` in `openspec/config.yaml`, canonically nested; the dotted `project_map.roadmap: <path>` spelling is accepted too, which is why the shared config reader's valued-key class gained a dot — that also makes `readConfigTestCommand`'s documented flat `apply.test_command` spelling real instead of dead. A repeated declaration is resolved by its last usable value; a blank value declares nothing and leaves an earlier one standing. The declared document may live outside `odd/tasks/`; the declared path is normalized where it is interpreted, so an alias cannot make the same document be read twice, while `..` and absolute paths stay refused rather than normalized into something safe. With no declaration the sources are unchanged and one added assumption says so.
+
+Two verification rounds returned `refuted` on this slice, and both sets of findings were corrected:
+
+| Finding | Disposition |
+| --- | --- |
+| The dotted spelling the documentation showed was not parsed at all, so a project could write the declaration and get the fallback with nothing but an assumption to show for it | **Fixed** in the shared reader, which is additive and also revives the flat `apply.test_command`
+| An alias such as `odd/./tasks/a.md` made the extension read the same document twice and carry two document entries | **Fixed** by normalizing the declared path where it is interpreted, not in each caller
+| The generator claimed a declared document was “not supplied” when it existed and could not be read | **Fixed** by rewording the omission to claim neither absence nor readability; the command-level message filtering that had hidden it was removed, because production logic must not exist to deduplicate text
+| A declared roadmap inside `odd/tasks/` that failed to read was attempted twice, yielding two identical extension omissions and three in total | **Fixed** by remembering attempted paths instead of successfully collected documents: one read, two omissions
+| `docs/project-map.md` stated the last declaration wins, unqualified, while a blank value leaves an earlier one standing | **Fixed** in the sentence
+| The injectable filesystem seam added for the earlier tests was judged a production API expansion that existed only for tests | **Removed**, and the tests now observe the returned document list and omission counts instead; the verifier judged that containment acceptable, with the honest caveat that it depends on serial test execution
+
+What the verifier confirmed and what the slice rests on: with no declaration the capability list, the **serialized map** and the omissions are byte-identical to the previous slice on both this repository and junglex, the only difference being the added assumption; declaring the roadmap yields junglex's thirteen functional points and this repository's nine PM units with no capability from any other document and no line omitted; and every benign alias normalizes to one read while every unsafe path stays refused, including the four shapes the verifier chose.
+
+## Recorded, not fixed
+
+- **A malformed sequence under `project_map:` is still read as a mapping.** Under
+  ```yaml
+  project_map:
+    - other: x
+      roadmap: x.md
+  ```
+  the simple reader skips the list marker and resolves `roadmap: x.md` as `project_map.roadmap`. That is the documented leniency for shapes it does not interpret, and it is recorded rather than fixed: tightening it is the parser's subject, not this unit's.
+- **The test instrumentation patches `node:fs` process-wide for the duration of one helper.** It restores in `finally` and resynchronizes ESM exports, and the verifier found no order dependence under serial execution, but enabling the test runner's concurrency would require reconsidering it.
+- **The third correction round's RED transcript was lost to context compaction** and is not reproducible. Its behaviour is pinned by tests and was verified independently by behaviour instead; it is recorded here because a claim of strict-TDD evidence that cannot be produced is not evidence.
+- **A process error of the orchestrator's, recorded so it is not repeated:** a correction order was once sent to the read-only verifier instead of to the writer. The task was cancelled immediately and the working tree was confirmed unchanged before anything else happened. Verifier and writer sessions are not interchangeable, and the write authority that accompanies a correction belongs only to a writer.
 
 ## Not done, and why
 
