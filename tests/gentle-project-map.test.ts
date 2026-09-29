@@ -173,10 +173,10 @@ test("the explanation shows a current translation, and says why it is not transl
 		const id = drafted.map?.capabilities[0]?.id;
 		assert.ok(id, "the fixture drafted a capability");
 		const target = join(directory, "openspec", "project-map.es.json");
-		const write = (sourceHash: string) => writeFileSync(target, JSON.stringify({
+		const write = (sourceHash: string, title = "Agregar generación de borrador y aprobación humana del plan") => writeFileSync(target, JSON.stringify({
 			version: "gentle-pi.project-map-translations/v1",
 			language: "es",
-			capabilities: { [id]: { source: "odd/tasks/roadmap.md", sourceHash, title: "Agregar generación de borrador y aprobación humana del plan", lines: ["La línea de cuerpo que el documento trae."] } },
+			capabilities: { [id]: { source: "odd/tasks/roadmap.md", sourceHash, title, lines: ["La línea de cuerpo que el documento trae."] } },
 		}), "utf8");
 
 		// No target yet: the document's own words, and the note says why.
@@ -191,9 +191,17 @@ test("the explanation shows a current translation, and says why it is not transl
 		await explainProjectMapCapability(probe.ctx, id);
 		const translated = opened.join("\n");
 		assert.ok(translated.includes("La línea de cuerpo que el documento trae."));
-		assert.ok(translated.includes("Resultado: Agregar generación de borrador"), "the translated title replaces the outcome");
+		assert.ok(translated.includes("Resultado: PM-2 — Agregar generación de borrador"), "the translated title preserves the functional-point prefix");
 		assert.equal(translated.includes("Traducción:"), false, "and no note is shown");
 		assert.equal(translated.includes("The body line the document carries."), false, "the original body is not shown next to it");
+
+		// A translated title that already has the functional-point head must not receive it twice.
+		opened.length = 0;
+		write(hashProjectMapDescription(["The body line the document carries."]), "PM-2 — Agregar generación de borrador y aprobación humana del plan");
+		await explainProjectMapCapability(probe.ctx, id);
+		const alreadyPrefixed = opened.join("\n");
+		assert.equal((alreadyPrefixed.match(/Resultado: PM-2 — Agregar generación de borrador/g) ?? []).length, 1);
+		assert.equal(alreadyPrefixed.includes("PM-2 — PM-2 —"), false);
 
 		// A body that moved invalidates its translation instead of showing a stale one.
 		opened.length = 0;
@@ -203,6 +211,54 @@ test("the explanation shows a current translation, and says why it is not transl
 		assert.ok(stale.includes("Traducción: desactualizada"), "staleness is named");
 		assert.ok(stale.includes("The body line the document carries."), "and the current words are shown");
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+});
+
+test("the explanation preserves an unspaced functional-point prefix in a translated title", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(90));
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.equal(id, "provisioning");
+		writeFileSync(join(directory, "openspec", "project-map.es.json"), JSON.stringify({
+			version: "gentle-pi.project-map-translations/v1",
+			language: "es",
+			capabilities: { [id]: { source: "odd/tasks/roadmap.md", sourceHash: hashProjectMapDescription(["The body line the document carries."]), title: "Traducido", lines: ["La línea de cuerpo que el documento trae."] } },
+		}), "utf8");
+		await explainProjectMapCapability(probe.ctx, id);
+		assert.ok(opened.join("\n").includes("Resultado: FP-1—Traducido"));
+	}, { task: "- [ ] **FP-1—Provisioning**\n  - The body line the document carries.\n" });
+});
+
+test("does not double a stored title that already carries the code with other spacing", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(90));
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.equal(id, "provisioning");
+		// The label separates with no spaces while the stored title separates with them, so the
+		// exact head does not match and only the code decides that it is already there.
+		writeFileSync(join(directory, "openspec", "project-map.es.json"), JSON.stringify({
+			version: "gentle-pi.project-map-translations/v1",
+			language: "es",
+			capabilities: { [id]: { source: "odd/tasks/roadmap.md", sourceHash: hashProjectMapDescription(["The body line the document carries."]), title: "FP-1 — Traducido", lines: ["La línea de cuerpo que el documento trae."] } },
+		}), "utf8");
+		await explainProjectMapCapability(probe.ctx, id);
+		const rendered = opened.join("\n");
+		assert.ok(rendered.includes("Resultado: FP-1 — Traducido"), "the translated title keeps its own spacing");
+		assert.equal(rendered.includes("FP-1—FP-1"), false, "the code is not written twice");
+	}, { task: "- [ ] **FP-1—Provisioning**\n  - The body line the document carries.\n" });
 });
 
 test("the translate command lists what needs a pass, with the hash to copy and the shape", async () => {

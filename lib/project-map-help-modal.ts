@@ -5,10 +5,10 @@ import type { ProjectMapDescription } from "./project-map-description.ts";
 
 // What a capability IS, as an overlay.
 //
-// The card cannot answer that on its own: the map's `outcome` is the work unit's title, so a
-// capability's id and its outcome are two renderings of one string. The answer comes from the
-// document the capability points at, read by `project-map-description.ts`, and this component
-// presents it next to the facts the map does declare.
+// The card cannot answer that on its own: the map's `outcome` is the label the document wrote,
+// which for a roadmap carries the functional point's code in front of its title. The answer
+// comes from the document the capability points at, read by `project-map-description.ts`, and
+// this component presents it next to the facts the map does declare.
 //
 // The surface speaks Spanish because the documents it quotes are written in Spanish: the user
 // asked for it in so many words, and an English frame around a Spanish paragraph was the
@@ -64,8 +64,10 @@ export type ProjectMapHelpResult = { type: "close" };
  * `null` when the document declares no such work unit, which is a different answer from a work
  * unit that carries no body, and the component says which one it is.
  *
- * An outcome that normalizes to the capability's own id is left out: the generator copies the
- * work unit's title into it, so printing it would repeat the id in different words.
+ * An outcome that normalizes to the capability's own id is left out: a plain label repeats it
+ * in different words. A prefixed label normally stays, but the test is normalization and not
+ * the prefix: `normalizeIdentifier` drops a scope before a `/`, so a label such as
+ * `Title/Provisioning` still normalizes to the id and is suppressed.
  */
 export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string): ProjectMapHelpContent {
 	const list = (values: readonly string[]): string => (values.length === 0 ? "ninguno" : values.join(", "));

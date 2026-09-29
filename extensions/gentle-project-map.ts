@@ -17,7 +17,7 @@ import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
-import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
+import { readCapabilityDescription, splitWorkUnitLabel, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import {
 	PROJECT_MAP_TRANSLATIONS_LANGUAGE,
@@ -449,8 +449,20 @@ function translatedExplanation(cwd: string, capability: ProjectMapCapabilityV1, 
 		return { capability, description, note: lookup.state === "stale" ? `Traducción: desactualizada, el documento cambió${hint}` : `Traducción: no generada${hint}` };
 	}
 	const translation = lookup.translation;
+	const { head } = splitWorkUnitLabel(capability.outcome);
+	// A stored title may already carry the code with its own spacing, so the comparison ignores
+	// whitespace: the code is what decides, not the exact bytes of the head.
+	const flattened = (value: string): string => value.replace(/\s+/g, "");
+	const translatedTitle = translation.title;
+	const carriesHead =
+		translatedTitle !== undefined && head.length > 0 && flattened(splitWorkUnitLabel(translatedTitle).head) === flattened(head);
+	const outcome = translatedTitle === undefined
+		? capability.outcome
+		: head.length === 0 || carriesHead
+			? translatedTitle
+			: `${head}${translatedTitle}`;
 	return {
-		capability: translation.title === undefined ? capability : { ...capability, outcome: translation.title },
+		capability: translation.title === undefined ? capability : { ...capability, outcome },
 		description: { title: description.title, lines: translation.lines },
 		note: undefined,
 	};

@@ -38,13 +38,13 @@ test("frames the answer and names the capability", () => {
 	assert.ok(body.includes("One line."), "the description is shown");
 });
 
-// The generator copies the work unit's title into `outcome`, so printing it would repeat the id
-// in different words — exactly the noise this overlay exists to replace.
-test("leaves out an outcome that only repeats the id, and keeps one that does not", () => {
+// A plain label still repeats its normalized id and stays suppressed, but a generated prefixed
+// label carries the document's functional-point code and must remain visible.
+test("leaves out a repeated plain outcome and renders a prefixed generated outcome once", () => {
 	const repeated = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, null), () => {}, theme).render(60).join("\n");
-	assert.ok(!repeated.includes("Resultado:"), "a repeated outcome is left out");
-	const distinct = new ProjectMapHelpModal(buildProjectMapHelpContent({ ...capability, outcome: "Whatever closes the pilot" }, null), () => {}, theme).render(60).join("\n");
-	assert.ok(distinct.includes("Resultado: Whatever closes the pilot"), "an outcome that says something is kept");
+	assert.ok(!repeated.includes("Resultado:"), "a repeated plain outcome is left out");
+	const prefixed = new ProjectMapHelpModal(buildProjectMapHelpContent({ ...capability, id: "title", outcome: "FP — Title" }, null), () => {}, theme).render(60).join("\n");
+	assert.equal((prefixed.match(/Resultado: FP — Title/g) ?? []).length, 1, "the prefixed outcome is rendered exactly once");
 });
 
 test("wraps a long description line instead of truncating it", () => {
