@@ -140,24 +140,33 @@ test("explaining a capability opens the overlay with what its document says", as
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
-test("the explanation lists sub-elements declared by another document", async () => {
+test("the explanation renders every lettered cut and dotted step inside its functional-point row", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory, [true]);
 		const opened: string[] = [];
 		probe.ctx.ui.custom = async (factory) => {
-			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			const component = factory({ terminal: { rows: 100 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
 			opened.push(...component.render(120));
 			return {} as never;
 		};
 		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
-		const id = drafted.map?.capabilities[0]?.id;
+		const id = drafted.map?.capabilities.find((capability) => capability.outcome === "FP-1 — Provisioning")?.id;
 		assert.equal(id, "provisioning");
-		writeFileSync(join(directory, "odd", "tasks", "provisioning-steps.md"), "- [x] **FP-1b.0 — Prepare provisioning**\n", "utf8");
+		const steps = [
+			["~", "FP-1a", "First cut"], ["x", "FP-1a.1", "First cut one"], [" ", "FP-1a.2", "First cut two"], ["x", "FP-1a.3", "First cut three"], [" ", "FP-1a.4", "First cut four"], ["~", "FP-1a.5", "First cut five"], ["x", "FP-1a.6", "First cut six"],
+			[" ", "FP-1b", "Second cut"], ["x", "FP-1b.0", "Second cut zero"], ["~", "FP-1b.1a", "Second cut one-a"], [" ", "FP-1b.1", "Second cut one"], ["x", "FP-1b.2", "Second cut two"], [" ", "FP-1b.3", "Second cut three"], ["x", "FP-1b.3a", "Second cut three-a"], ["x", "FP-1b.3a-b", "Second cut three-a-b"], ["~", "FP-1b.3b", "Second cut three-b"], ["x", "FP-1b.4", "Second cut four"], [" ", "FP-1b.5", "Second cut five"], ["x", "FP-1b.6", "Second cut six"], ["~", "FP-1b.7", "Second cut seven"], ["x", "FP-1b.8", "Second cut eight"],
+		] as const;
+		writeFileSync(join(directory, "odd", "tasks", "provisioning-steps.md"), `${steps.map(([checkbox, code, title]) => `- [${checkbox}] **${code} — ${title}**`).join("\n")}\n`, "utf8");
 		await explainProjectMapCapability(probe.ctx, id);
 		const body = opened.join("\n");
-		assert.ok(body.includes("Subelementos: 1"));
-		assert.ok(body.includes(`FP-1b.0 — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`));
-	}, { task: "- [ ] **FP-1b — Provisioning**\n  The body line the document carries.\n" });
+		assert.ok(body.includes("Subelementos: 21"));
+		for (const [checkbox, code, title] of steps) {
+			const state = checkbox === "x" ? "done" : checkbox === "~" ? "active" : "planned";
+			const indentation = "  ".repeat((code.match(/\./g) ?? []).length + 1);
+			assert.ok(body.includes(`${indentation}· ${code} — ${title} · ${PROJECT_MAP_STATE_GLYPH[state]}`), code);
+		}
+		assert.ok(body.includes("The body line the document carries."), "the original description remains present");
+	}, { task: "- [ ] **FP-1 — Provisioning**\n  The body line the document carries.\n" });
 });
 
 test("the help overlay reserves the rail when the fullscreen sidebar owns it", async () => {

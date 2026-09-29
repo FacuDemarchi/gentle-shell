@@ -836,19 +836,47 @@ test("reads a delegable prefix from nested and dotted declarations", () => {
 	assert.equal(readProjectMapDelegablePrefix(42 as unknown as string), null);
 });
 
-test("keeps only undotted convention codes as capability sources with or without a roadmap", () => {
+test("keeps only numbered, undotted convention codes as capability sources with or without a roadmap", () => {
 	const noRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  delegable: FP-\n"));
 	const withRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  roadmap: odd/tasks/roadmap.md\n  delegable: FP-\n"));
 	for (const result of [noRoadmap, withRoadmap]) {
 		assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), [
 			"FP-2 — Catalogue",
 			"FP-0 — Foundation",
-			"FP-1b — Provisioning",
 		]);
-		assert.equal(result.omissions.some((omission) => omission.includes("FP-1b.0") || omission.includes("FP-1b.8") || omission.includes("DEL-1") || omission.includes("OF-2") || omission.includes("ODD-3") || omission.includes("T1") || omission.includes("plain label")), false);
+		assert.equal(result.omissions.some((omission) => omission.includes("FP-1b") || omission.includes("FP-1b.0") || omission.includes("FP-1b.8") || omission.includes("DEL-1") || omission.includes("OF-2") || omission.includes("ODD-3") || omission.includes("T1") || omission.includes("plain label")), false);
 		assert.equal(result.assumptions.filter((assumption) => assumption.includes("read as steps instead of capabilities")).length, 1);
-		assert.ok(joined(result.assumptions).includes("7 work units were read as steps instead of capabilities"));
+		assert.ok(joined(result.assumptions).includes("8 work units were read as steps instead of capabilities"));
 	}
+});
+
+test("makes row and sub-element rules disjoint", () => {
+	const documents = [{
+		path: "odd/tasks/disjoint.md",
+		text: [
+			"- [ ] **FP-1 — Root**",
+			"- [~] **FP-1a2 — Lettered cut with a digit**",
+			"- [x] **FP-1-2 — Hyphenated root**",
+		].join("\n"),
+	}];
+	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-1-2 — Hyphenated root", "FP-1 — Root"]);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-1"), [
+		{ code: "FP-1a2", title: "Lettered cut with a digit", state: "active", path: "odd/tasks/disjoint.md" },
+	]);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-1-2"), []);
+});
+
+test("treats an accented continuation as a continuation, because D2 says a letter", () => {
+	// The guard is a unicode letter class, not an ASCII one: D2 says "a letter", and it means any.
+	const documents = [{
+		path: "odd/tasks/accented.md",
+		text: ["- [ ] **FP-1 — Root**", "- [ ] **FP-1é — Accented continuation**"].join("\n"),
+	}];
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-1").map((step) => step.code), ["FP-1é"]);
+	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-1 — Root"]);
 });
 
 test("switches the no-roadmap assumption only when a delegable convention is declared", () => {
@@ -993,7 +1021,73 @@ function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadC
 	});
 }
 
-test("collects all thirteen coded sub-elements from every document in deterministic order", () => {
+test("makes numbered roots rows and collects each continuing code under its root", () => {
+	const fp1Steps = [
+		{ code: "FP-1a", title: "First cut", state: "active" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.1", title: "First cut one", state: "done" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.2", title: "First cut two", state: "planned" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.3", title: "First cut three", state: "done" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.4", title: "First cut four", state: "planned" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.5", title: "First cut five", state: "active" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1a.6", title: "First cut six", state: "done" as const, path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b", title: "Second cut", state: "planned" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.0", title: "Second cut zero", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.1a", title: "Second cut one-a", state: "active" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.1", title: "Second cut one", state: "planned" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.2", title: "Second cut two", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.3", title: "Second cut three", state: "planned" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.3a", title: "Second cut three-a", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.3a-b", title: "Second cut three-a-b", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.3b", title: "Second cut three-b", state: "active" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.4", title: "Second cut four", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.5", title: "Second cut five", state: "planned" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.6", title: "Second cut six", state: "done" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.7", title: "Second cut seven", state: "active" as const, path: "odd/tasks/bravo.md" },
+		{ code: "FP-1b.8", title: "Second cut eight", state: "done" as const, path: "odd/tasks/bravo.md" },
+	];
+	const documents = [
+		{ path: "odd/tasks/alpha.md", text: [
+			...Array.from({ length: 10 }, (_, number) => `- [ ] **FP-${number} — Root ${number}**`),
+			"- [x] **FP-0b — Foundation cut**",
+			"- [~] **FP-1a — First cut**",
+			"- [x] **FP-1a.1 — First cut one**",
+			"- [ ] **FP-1a.2 — First cut two**",
+			"- [x] **FP-1a.3 — First cut three**",
+			"- [ ] **FP-1a.4 — First cut four**",
+			"- [~] **FP-1a.5 — First cut five**",
+			"- [x] **FP-1a.6 — First cut six**",
+			"- [ ] **FP-word — Unowned word-shaped step**",
+		].join("\n") },
+		{ path: "odd/tasks/bravo.md", text: [
+			"- [ ] **FP-1b — Second cut**",
+			"- [x] **FP-1b.0 — Second cut zero**",
+			"- [~] **FP-1b.1a — Second cut one-a**",
+			"- [ ] **FP-1b.1 — Second cut one**",
+			"- [x] **FP-1b.2 — Second cut two**",
+			"- [ ] **FP-1b.3 — Second cut three**",
+			"- [x] **FP-1b.3a — Second cut three-a**",
+			"- [x] **FP-1b.3a-b — Second cut three-a-b**",
+			"- [~] **FP-1b.3b — Second cut three-b**",
+			"- [x] **FP-1b.4 — Second cut four**",
+			"- [ ] **FP-1b.5 — Second cut five**",
+			"- [x] **FP-1b.6 — Second cut six**",
+			"- [~] **FP-1b.7 — Second cut seven**",
+			"- [x] **FP-1b.8 — Second cut eight**",
+		].join("\n") },
+	];
+	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), Array.from({ length: 10 }, (_, number) => `FP-${number} — Root ${number}`));
+	assert.equal(result.map?.capabilities.some((capability) => ["FP-0b", "FP-1a", "FP-1b", "FP-1b.0"].includes(capability.outcome.split(" — ")[0]!)), false, "letters and dots keep cuts out of rows");
+	assert.ok(joined(result.assumptions).includes("23 work units were read as steps instead of capabilities"), "unowned word-shaped units remain accounted for as steps");
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-1"), fp1Steps);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-0"), [{ code: "FP-0b", title: "Foundation cut", state: "done", path: "odd/tasks/alpha.md" }]);
+	assert.equal(collectProjectMapSteps([{ path: "odd/tasks/guard.md", text: "- [ ] **FP-10 — Ten**\n- [ ] **FP-1b — Cut**\n" }], "FP-1").some((step) => step.code === "FP-10"), false, "a digit cannot continue FP-1");
+	assert.equal(collectProjectMapSteps([{ path: "odd/tasks/guard.md", text: "- [ ] **FP-1b — Cut**\n" }], "FP-1a").length, 0, "a sibling cut cannot continue FP-1a");
+	assert.equal(collectProjectMapSteps(documents, "FP-word").length, 0, "a word-shaped code extends no row");
+});
+
+test("collects only letter- or dot-continuing codes from every document in deterministic order", () => {
 	const documents = [
 		{
 			path: "odd/tasks/zulu.md",
@@ -1045,7 +1139,9 @@ test("collects all thirteen coded sub-elements from every document in determinis
 		{ code: "FP-1b.7", title: "Active seventh step", state: "active", path: "odd/tasks/alpha.md" },
 		{ code: "FP-1b.8", title: "Final top-level step", state: "done", path: "odd/tasks/zulu.md" },
 	]);
-	assert.deepEqual(collectProjectMapSteps(documents, "FP-4"), []);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-4"), [
+		{ code: "FP-4a1", title: "Continues with a letter rather than a dot", state: "done", path: "odd/tasks/alpha.md" },
+	]);
 	assert.deepEqual(collectProjectMapSteps([{ path: "odd/tasks/alpha.md", text: "- [ ] **FP-1b.0 — Setup**\n" }], "FP-9"), []);
 });
 

@@ -138,7 +138,7 @@ export class ProjectMapHelpModal {
 		if (this.content.steps.length === 0) lines.push("Subelementos: ninguno.");
 		else {
 			lines.push(`Subelementos: ${this.content.steps.length}`);
-			lines.push(...this.content.steps.map((step) => `· ${step.code} — ${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`));
+			lines.push(...this.content.steps.map((step) => `${"  ".repeat((step.code.match(/\./g) ?? []).length + 1)}· ${step.code} — ${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`));
 		}
 		lines.push("");
 		if (!this.content.hasDocument) {

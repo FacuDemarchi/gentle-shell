@@ -120,9 +120,9 @@ test("an empty capability renders its facts and no invented description", () => 
 test("lists sub-elements before the unchanged description", () => {
 	const description = ["The body stays exactly as it was.", "Its second line stays too."];
 	const steps: ProjectMapStep[] = [
-		{ code: "FP-1b.0", title: "Prepare provisioning", state: "done", path: "odd/tasks/provisioning.md" },
-		{ code: "FP-1b.1", title: "Create account", state: "active", path: "odd/tasks/provisioning.md" },
-		{ code: "FP-1b.2", title: "Prepare delivery", state: "planned", path: "odd/tasks/provisioning.md" },
+		{ code: "FP-1a", title: "Prepare provisioning", state: "done", path: "odd/tasks/provisioning.md" },
+		{ code: "FP-1a.1", title: "Create account", state: "active", path: "odd/tasks/provisioning.md" },
+		{ code: "FP-1b.0", title: "Prepare delivery", state: "planned", path: "odd/tasks/provisioning.md" },
 	];
 	const before = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description });
 	const content = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description }, [], undefined, steps);
@@ -130,10 +130,10 @@ test("lists sub-elements before the unchanged description", () => {
 	const rendered = new ProjectMapHelpModal(content, () => {}, theme).render(120).join("\n");
 	assert.ok(rendered.indexOf("Subelementos: 3") < rendered.indexOf("Lo que dice el documento:"), "the section precedes the description");
 	assert.equal((rendered.match(/Subelementos: 3/g) ?? []).length, 1, "the count is stated once");
-	const subelementLines = rendered.split("\n").filter((line) => line.includes("FP-1b."));
-	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.0 — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`)));
-	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.1 — Create account · ${PROJECT_MAP_STATE_GLYPH.active}`)));
-	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.2 — Prepare delivery · ${PROJECT_MAP_STATE_GLYPH.planned}`)));
+	const subelementLines = rendered.split("\n").filter((line) => line.includes("FP-1"));
+	assert.ok(subelementLines.some((line) => line.includes(`  · FP-1a — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`)), "a lettered cut is one visible level in");
+	assert.ok(subelementLines.some((line) => line.includes(`    · FP-1a.1 — Create account · ${PROJECT_MAP_STATE_GLYPH.active}`)), "a dotted step is two visible levels in");
+	assert.ok(subelementLines.some((line) => line.includes(`    · FP-1b.0 — Prepare delivery · ${PROJECT_MAP_STATE_GLYPH.planned}`)));
 	for (const word of ["hecha", "activa", "planificada"]) assert.ok(!subelementLines.some((line) => line.includes(word)), `the sub-element list does not use ${word}`);
 	assert.ok(rendered.includes("? close-the-gate · planificada"), "the capability subtitle keeps its Spanish state word");
 	assert.ok(rendered.includes(description[0]!));

@@ -134,7 +134,11 @@ export function collectProjectMapSteps(documents: readonly { path: string; text:
 			const label = match[3]!.replace(/\s+/g, " ").trim();
 			const split = splitWorkUnitLabel(label);
 			const unitCode = (split.head.length === 0 ? label : split.head.replace(/—\s*$/, "")).trim();
-			if (!unitCode.startsWith(`${code}.`) || seen.has(unitCode)) continue;
+			// D2 says a letter or a dot, and it means any letter: `\p{L}` with the unicode flag, so an
+			// accented continuation is a continuation too. The row rule stays ASCII by nature, because
+			// what it accepts is digits and hyphens.
+			const extendsCode = unitCode.startsWith(code) && unitCode.length > code.length && /[\p{L}.]/u.test(unitCode[code.length]!);
+			if (!extendsCode || seen.has(unitCode)) continue;
 			seen.add(unitCode);
 			steps.push({ code: unitCode, title: split.title, state: projectMapStateFromCheckbox(match[2]!), path: document.path });
 		}
@@ -338,7 +342,7 @@ function comparePaths(left: string, right: string): number {
 function isDelegableWorkUnitLabel(label: string, prefix: string): boolean {
 	const { head } = splitWorkUnitLabel(label);
 	const code = head.length === 0 ? label.trim() : head.replace(/—\s*$/, "").trim();
-	return code.startsWith(prefix) && !code.includes(".");
+	return code.startsWith(prefix) && /^\d+(?:-\d+)*$/.test(code.slice(prefix.length));
 }
 
 interface ExtractedWorkUnits {
