@@ -2,25 +2,41 @@ import { normalizeIdentifier } from "./shell-project-map-draft.ts";
 
 // What a capability IS, in the project's own words.
 //
-// The map cannot answer that: `extractWorkUnits` copies the work unit's title into `outcome`,
-// so a capability's `id` and its `outcome` are two renderings of one string and the Inspector
-// has nothing to add. The description exists anyway — in the ODD document the work unit came
-// from, as the indented body under its checkbox line — and the generator reads only that line
-// and discards the body. This module reads the body back.
+// The map cannot answer that: `extractWorkUnits` preserves the work unit's bold label in
+// `outcome` — up to the first closing `**`, which is the boundary this module's own pattern
+// shares — while the description lives in the indented body under that checkbox line. The
+// generator reads only the line and discards the body; this module reads the body back.
 //
-// It is deliberately more tolerant than the generator's own pattern. That pattern requires the
-// line to end at the closing `**`, so a work unit carrying a parenthetical after it is
-// invisible in the map with no omission at all; a reader that inherited the same blind spot
-// could never explain the capabilities that did survive it.
+// The reader deliberately remains more tolerant than the generator about indentation. It can
+// explain any work unit in a document, including a nested one, while the generator keeps nested
+// checkboxes out of the map's top-level capability set.
 
 /**
  * A work unit line: an indentation, a checkbox, a bolded label, and anything after it.
  * `(.+?)` stops at the first closing emphasis, so a label with emphasis inside it keeps its
  * head and the rest stays in the trailing group.
  */
-const WORK_UNIT = /^(\s*)-\s\[([ xX])\]\s\*\*(.+?)\*\*(.*)$/;
+const WORK_UNIT = /^(\s*)-\s+\[([ xX~])\]\s*\*\*(.+?)\*\*(.*)$/;
 /** The separator this project's documents use between a work-unit prefix and its title. */
 const SEPARATOR = "—";
+
+/** The prefix and title the document wrote inside a bold work-unit label. */
+export interface ProjectMapWorkUnitLabel {
+	head: string;
+	title: string;
+}
+
+/**
+ * Splits a bold work-unit label at its first separator. The head retains the separator and any
+ * following whitespace so a translated title can preserve the functional-point code exactly.
+ */
+export function splitWorkUnitLabel(label: string): ProjectMapWorkUnitLabel {
+	const separator = label.indexOf(SEPARATOR);
+	if (separator === -1) return { head: "", title: label.trim() };
+	let headEnd = separator + SEPARATOR.length;
+	while (/\s/.test(label[headEnd] ?? "")) headEnd += 1;
+	return { head: label.slice(0, headEnd), title: label.slice(headEnd).trim() };
+}
 /** A list marker at the start of a body line, which the reader drops. */
 const BULLET = /^(?:[-*+]|\d+[.)])\s+/;
 
@@ -44,8 +60,7 @@ export function readCapabilityDescription(documentText: string, capabilityId: st
 		const match = WORK_UNIT.exec(lines[index]!.replace(/\r$/, ""));
 		if (match === null) continue;
 		const label = match[3]!.trim();
-		const separator = label.indexOf(SEPARATOR);
-		const title = (separator === -1 ? label : label.slice(separator + SEPARATOR.length)).trim();
+		const { title } = splitWorkUnitLabel(label);
 		if (normalizeIdentifier(title) !== capabilityId) continue;
 		return { title, lines: readBody(lines, index + 1, match[1]!.length) };
 	}

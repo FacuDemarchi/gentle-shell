@@ -36,14 +36,58 @@ test("returns the body of the work unit whose title normalizes to the capability
 	]);
 });
 
-// The generator's own pattern refuses a line with anything after the closing `**`, which makes
-// such a work unit invisible in the map with no omission at all. A reader that inherited that
-// blind spot could never explain the capabilities that survived it.
+// The generator now shares the same trailing-text tolerance. The reader remains more tolerant
+// only about indentation, so it can explain a nested work unit the top-level map deliberately
+// does not turn into a capability.
 test("tolerates trailing text after the closing emphasis", () => {
 	const description = readCapabilityDescription(DOCUMENT, "railway-the-api-service");
 	assert.ok(description, "expected a work unit with trailing text to be found");
 	assert.equal(description.title, "Railway: the API service");
 	assert.deepEqual(description.lines, ["Deploy the API with the repository's own preflight script."]);
+});
+
+test("resolves an active work unit by its generated truncated id", () => {
+	const document = [
+		"- [~] **FP-6 — Merchant order notification worker producer gate and reconciliation**",
+		"  - Publish an order notification after the producer gate passes.",
+		"",
+	].join("\n");
+	assert.deepEqual(readCapabilityDescription(document, "merchant-order-notification-worker-producer-gate-and"), {
+		title: "Merchant order notification worker producer gate and reconciliation",
+		lines: ["Publish an order notification after the producer gate passes."],
+	});
+});
+
+test("tolerates runs of whitespace around a work-unit marker", () => {
+	const document = [
+		"-  [ ] **X**",
+		"  - Its first body remains available.",
+		"-\t[ ] **Tab**",
+		"  - Its second body remains available.",
+		"- [ ]  **FP-5 — Two spaces**",
+		"  - Its third body remains available.",
+		"",
+	].join("\n");
+	assert.deepEqual(readCapabilityDescription(document, "x"), {
+		title: "X",
+		lines: ["Its first body remains available."],
+	});
+	assert.deepEqual(readCapabilityDescription(document, "tab"), {
+		title: "Tab",
+		lines: ["Its second body remains available."],
+	});
+	assert.deepEqual(readCapabilityDescription(document, "two-spaces"), {
+		title: "Two spaces",
+		lines: ["Its third body remains available."],
+	});
+});
+
+test("continues to resolve a nested work unit", () => {
+	const document = ["  - [ ] **FP-5.1 — Nested unit**", "    - Its body remains available.", ""].join("\n");
+	assert.deepEqual(readCapabilityDescription(document, "nested-unit"), {
+		title: "Nested unit",
+		lines: ["Its body remains available."],
+	});
 });
 
 test("matches the whole title when the label carries no separator", () => {

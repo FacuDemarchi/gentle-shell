@@ -6,7 +6,8 @@ import {
 	serializeProjectMap,
 	validateProjectMap,
 } from "../lib/shell-project-map-schema.ts";
-import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
+import { generateProjectMapDraft, normalizeIdentifier } from "../lib/shell-project-map-draft.ts";
+import { readCapabilityDescription } from "../lib/project-map-description.ts";
 
 function manifest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
@@ -36,6 +37,13 @@ function joined(values: string[]): string {
 	return values.join("\n");
 }
 
+function sources(text: string) {
+	return {
+		packageJson: manifest(),
+		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text }],
+	};
+}
+
 test("derives project identity and the repository foundation from a manifest", () => {
 	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
 	assert.ok(result.map);
@@ -55,7 +63,7 @@ test("normalizes a scoped package name into an identifier", () => {
 });
 
 test("returns no map and an omission when the manifest has no usable name", () => {
-	for (const packageJson of [undefined, {}, { name: "   " }, { name: "!!!" }, { name: 42 }]) {
+	for (const packageJson of [undefined, {}, { name: "   " }, { name: "!!!" }, { name: "a".repeat(70) }, { name: 42 }]) {
 		const result = generateProjectMapDraft({ packageJson });
 		assert.equal(result.map, null);
 		assert.ok(joined(result.omissions).includes("package.json"), `expected a package.json omission for ${JSON.stringify(packageJson)}`);
@@ -199,10 +207,10 @@ test("points every capability at the document that declared it", () => {
 	}
 });
 
-test("keeps the declared outcome text and leaves surfaces undetermined", () => {
+test("keeps the written work-unit label as the outcome and leaves surfaces undetermined", () => {
 	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }] });
 	const capability = result.map?.capabilities.find((entry) => entry.id === "add-draft-generation-and-human-plan-approval");
-	assert.equal(capability?.outcome, "Add draft generation and human plan approval");
+	assert.equal(capability?.outcome, "PM-2 — Add draft generation and human plan approval");
 	assert.deepEqual(capability?.surfaces, []);
 	assert.deepEqual(capability?.foundationRefs, []);
 });
@@ -229,18 +237,36 @@ test("reads work units from several documents in a stable order", () => {
 	assert.ok(first.map.capabilities.some((capability) => capability.id === "preserve-the-card-order"));
 });
 
-test("deduplicates colliding capability identifiers and reports the collision", () => {
+test("deduplicates cross-document capability identifiers and names both source lines", () => {
+	const firstLine = "- [ ] **PM-9 — Shared title**";
+	const secondLine = "- [ ] **PM-8 — Shared title**";
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
 		oddTaskDocuments: [
-			{ path: "odd/tasks/a.md", text: "- [ ] **PM-9 — Shared title**\n" },
-			{ path: "odd/tasks/b.md", text: "- [ ] **PM-8 — Shared title**\n" },
+			{ path: "odd/tasks/a.md", text: `${firstLine}\n` },
+			{ path: "odd/tasks/b.md", text: `${secondLine}\n` },
 		],
 	});
 	assert.ok(result.map);
 	assert.equal(result.map.capabilities.filter((capability) => capability.id === "shared-title").length, 1);
 	assert.equal(result.map.capabilities[0].featureDocs[0], "odd/tasks/a.md");
-	assert.ok(joined(result.omissions).includes("shared-title"));
+	const omissions = joined(result.omissions);
+	assert.ok(omissions.includes("shared-title"));
+	assert.ok(omissions.includes("odd/tasks/a.md"));
+	assert.ok(omissions.includes("odd/tasks/b.md"));
+	assert.ok(omissions.includes(firstLine));
+	assert.ok(omissions.includes(secondLine));
+});
+
+test("deduplicates a capability declared twice in one document and names both source lines", () => {
+	const firstLine = "- [ ] **PM-9 — Shared title**";
+	const secondLine = "- [ ] **PM-8 — Shared title**";
+	const result = generateProjectMapDraft(sources(`${firstLine}\n${secondLine}\n`));
+	assert.equal(result.map?.capabilities.filter((capability) => capability.id === "shared-title").length, 1);
+	const omissions = joined(result.omissions);
+	assert.ok(omissions.includes("declared twice in odd/tasks/roadmap.md"));
+	assert.ok(omissions.includes(firstLine));
+	assert.ok(omissions.includes(secondLine));
 });
 
 test("reports a document that yields no work units as an omission", () => {
@@ -259,11 +285,14 @@ test("ignores prose and checklists that are not work units", () => {
 	assert.deepEqual(result.map.capabilities.map((capability) => capability.id), ["real-unit"]);
 });
 
-test("reports a work-unit title that cannot become an identifier", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/odd.md", text: "- [ ] **PM-1 — !!!**\n" }] });
-	assert.ok(result.map);
-	assert.deepEqual(result.map.capabilities, []);
-	assert.ok(joined(result.omissions).includes("odd/tasks/odd.md"));
+test("reports an invalid work-unit title with its source line", () => {
+	for (const line of ["- [ ] **PM-1 — !!!**", "- [ ] **FP — !!!** trailing"]) {
+		const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/odd.md", text: `${line}\n` }] });
+		assert.ok(result.map);
+		assert.deepEqual(result.map.capabilities, []);
+		assert.ok(joined(result.omissions).includes("odd/tasks/odd.md"));
+		assert.ok(joined(result.omissions).includes(line));
+	}
 });
 
 test("never throws on malformed document entries", () => {
@@ -357,4 +386,113 @@ test("produces a draft that the schema accepts even when a document is skipped",
 	});
 	assert.ok(result.map);
 	assert.deepEqual(validateProjectMap(result.map).diagnostics, []);
+});
+
+test("reads a work unit that carries text after its closing bold label", () => {
+	const result = generateProjectMapDraft(sources("- [ ] **FP-1b — Provisioning** (blocked on accounts): the projects\n"));
+	assert.deepEqual(result.map?.capabilities, [
+		{
+			id: "provisioning",
+			outcome: "FP-1b — Provisioning",
+			foundationRefs: [],
+			dependsOn: [],
+			contracts: [],
+			featureDocs: ["odd/tasks/roadmap.md"],
+			surfaces: [],
+			state: "planned",
+		},
+	]);
+	assert.ok(!joined(result.omissions).includes("Provisioning"));
+});
+
+test("maps an active work-unit marker to active and keeps it explainable", () => {
+	const documentText = "- [~] **FP-6 — Merchant order notification**\n  Notify merchants when an order arrives.\n";
+	const result = generateProjectMapDraft(sources(documentText));
+	const capability = result.map?.capabilities[0];
+	assert.equal(capability?.state, "active");
+	assert.deepEqual(readCapabilityDescription(documentText, capability?.id ?? ""), {
+		title: "Merchant order notification",
+		lines: ["Notify merchants when an order arrives."],
+	});
+});
+
+test("keeps the whole written label as the outcome while the id uses its title", () => {
+	const result = generateProjectMapDraft(sources("- [x] **PM-2 — Add draft generation** — **delivered**: notes\n"));
+	assert.deepEqual(result.map?.capabilities[0], {
+		id: "add-draft-generation",
+		outcome: "PM-2 — Add draft generation",
+		foundationRefs: [],
+		dependsOn: [],
+		contracts: [],
+		featureDocs: ["odd/tasks/roadmap.md"],
+		surfaces: [],
+		state: "done",
+	});
+});
+
+test("truncates a long work-unit title while its description still resolves", () => {
+	const documentText = "- [ ] **FP-0b — Local dev service-worker freshness (small, found by the prototype acceptance)**\n  The browser keeps the service worker current.\n";
+	const result = generateProjectMapDraft(sources(documentText));
+	const capability = result.map?.capabilities[0];
+	assert.ok(capability);
+	assert.ok(capability.id.length <= 64);
+	assert.deepEqual(validateProjectMap(result.map).diagnostics, []);
+	assert.ok(!joined(result.omissions).includes("cannot be normalized"));
+	assert.deepEqual(readCapabilityDescription(documentText, capability.id), {
+		title: "Local dev service-worker freshness (small, found by the prototype acceptance)",
+		lines: ["The browser keeps the service worker current."],
+	});
+});
+
+test("reports unreadable top-level work units instead of silently dropping them", () => {
+	for (const line of ["- [-] **Something unreadable**", "- [] **Empty marker**"]) {
+		const result = generateProjectMapDraft(sources(`${line}\n`));
+		assert.deepEqual(result.map?.capabilities, []);
+		assert.ok(joined(result.omissions).includes("odd/tasks/roadmap.md"));
+		assert.ok(joined(result.omissions).includes(line));
+	}
+});
+
+test("reads runs of whitespace around a work-unit marker", () => {
+	const result = generateProjectMapDraft(sources("-  [ ] **X**\n-\t[ ] **Tab**\n- [ ]  **FP-5 — Two spaces**\n"));
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["tab", "two-spaces", "x"]);
+	assert.equal(result.map?.capabilities[1]?.outcome, "FP-5 — Two spaces");
+});
+
+test("normalizes long identifiers with the documented fallback boundaries", () => {
+	assert.equal(normalizeIdentifier("a".repeat(64)), "a".repeat(64));
+	assert.equal(normalizeIdentifier("a".repeat(65)), "a".repeat(64));
+	assert.equal(normalizeIdentifier(`a-${"b".repeat(62)}`), `a-${"b".repeat(62)}`);
+	const fallback = normalizeIdentifier(`a-${"b".repeat(63)}`);
+	assert.ok(fallback);
+	assert.ok(fallback.length > 1);
+	assert.ok(fallback.length <= 64);
+	assert.match(fallback, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+});
+
+test("never returns an identifier that a hard cut left ending in a separator", () => {
+	// The 64th character of this normalization is the hyphen, so the fallback cut would end in it.
+	const boundary = `${"b".repeat(63)} - c`;
+	const id = normalizeIdentifier(boundary);
+	assert.ok(id);
+	assert.ok(id.length <= 64);
+	assert.match(id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+	assert.ok(!id.endsWith("-"));
+});
+
+test("does not read an indented work unit", () => {
+	const result = generateProjectMapDraft(sources("  - [ ] **Nested unit**\n"));
+	assert.deepEqual(result.map?.capabilities, []);
+});
+
+test("keeps a plain work unit working", () => {
+	const result = generateProjectMapDraft(sources("- [ ] **Do the thing**\n"));
+	assert.equal(result.map?.capabilities[0]?.outcome, "Do the thing");
+	assert.equal(result.map?.capabilities[0]?.id, "do-the-thing");
+});
+
+test("documents that bold text inside a label stops at the first closing emphasis", () => {
+	const result = generateProjectMapDraft(sources("- [ ] **Add **dual** support**\n"));
+	assert.equal(result.map?.capabilities[0]?.outcome, "Add");
+	assert.equal(result.map?.capabilities[0]?.id, "add");
 });

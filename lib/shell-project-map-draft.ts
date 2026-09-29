@@ -6,6 +6,7 @@ import {
 	type ProjectMapFoundationV1,
 	type ProjectMapV1,
 } from "./shell-project-map-schema.ts";
+import { splitWorkUnitLabel } from "./project-map-description.ts";
 
 export interface ProjectMapDraftSources {
 	packageJson?: unknown;
@@ -23,13 +24,28 @@ const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER_MAX_LENGTH = 64;
 const CONFIG_BARE_KEY = /^([a-z][a-z0-9_]*):\s*$/;
 const CONFIG_VALUED_ENTRY = /^([a-z][a-z0-9_]*):\s*(\S.*)$/;
-const WORK_UNIT = /^-\s\[([ xX])\]\s\*\*(.+?)\*\*\s*$/;
-const WORK_UNIT_SEPARATOR = "—";
+const WORK_UNIT = /^-\s+\[([ xX~])\]\s*\*\*(.+?)\*\*(.*)$/;
+const UNREADABLE_WORK_UNIT = /^-\s+\[([^\]]*)\]\s*\*\*(.+)/;
 
 type RecordValue = Record<string, unknown>;
 
 function isRecord(value: unknown): value is RecordValue {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The lowercase kebab-case form of a name, or `null` when it cannot be one at all. */
+function normalizeToKebab(name: string): string | null {
+	const withoutScope = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
+	const normalized = withoutScope
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return normalized.length === 0 || !IDENTIFIER.test(normalized) ? null : normalized;
+}
+
+function normalizeExactIdentifier(name: string): string | null {
+	const normalized = normalizeToKebab(name);
+	return normalized === null || normalized.length > IDENTIFIER_MAX_LENGTH ? null : normalized;
 }
 
 /**
@@ -38,15 +54,26 @@ function isRecord(value: unknown): value is RecordValue {
  * Exported so the reader that explains a capability and the generator that names it share one
  * definition: two functions that disagree about a title would produce a capability nobody can
  * look up, which is the same defect class as a reader that cannot read what the writer writes.
+ * A title past the identifier limit is truncated here rather than refused, and because the
+ * reader truncates with this same function its lookup keeps agreeing with the generator's name.
  */
 export function normalizeIdentifier(name: string): string | null {
-	const withoutScope = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
-	const normalized = withoutScope
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	if (normalized.length === 0 || normalized.length > IDENTIFIER_MAX_LENGTH || !IDENTIFIER.test(normalized)) return null;
-	return normalized;
+	const normalized = normalizeToKebab(name);
+	if (normalized === null || normalized.length <= IDENTIFIER_MAX_LENGTH) return normalized;
+
+	let truncated = "";
+	let words = 0;
+	for (const word of normalized.split("-")) {
+		const candidate = truncated.length === 0 ? word : `${truncated}-${word}`;
+		if (candidate.length > IDENTIFIER_MAX_LENGTH) break;
+		truncated = candidate;
+		words += 1;
+	}
+// A hard cut can land on the separator that made the input too long, and a trailing hyphen is
+	// not an identifier. The word-assembly result never ends that way, so only the fallback trims.
+	const fallback = normalized.slice(0, IDENTIFIER_MAX_LENGTH).replace(/-+$/, "");
+	const truncatedTo = words >= 2 ? truncated : fallback;
+	return truncatedTo.length === 0 ? null : truncatedTo;
 }
 
 function unquote(value: string): string {
@@ -57,23 +84,19 @@ function unquote(value: string): string {
 	return trimmed;
 }
 
-/**
- * Reads only the simple `key: value` shape of a YAML document, including one level of
- * nesting. Block scalars, lists, comments, anchors, and multi-line values are deliberately
- * not interpreted; a caller that needs them must treat them as an omission.
- */
+/** Whether a value is a YAML block-scalar marker (`|` or `>`, each with an optional chomping indicator). */
 function isBlockScalarMarker(value: string): boolean {
 	return /^[|>][+-]?$/.test(value.trim());
 }
 
 /**
- * Reads the simple `section.key: value` entries of a project config, skipping block
- * scalars, comments and nested structures it does not interpret. Exported because the
- * integration-readiness report needs the project's own test command, and a second copy
- * of this parser is how two readers of the same file drift apart.
- */
-/**
  * The simple key/value entries a configuration declares, keyed by their full dotted path.
+ *
+ * Exported because the integration-readiness report needs the project's own test command, and a
+ * second copy of this parser is how two readers of the same file drift apart. It interprets no
+ * YAML construct: a value keeps the literal text its line wrote, including a list, an anchor or a
+ * trailing comment, while a block-scalar body is skipped, and so is a line whose shape this
+ * reader does not recognise.
  *
  * The path is tracked by indentation rather than by a fixed depth, because the shape this
  * repository writes nests three levels deep: `rules.apply.test_command` is a bare key
@@ -137,28 +160,35 @@ function comparePaths(left: string, right: string): number {
 	return left < right ? -1 : 1;
 }
 
-function extractWorkUnits(path: string, text: string, omissions: string[]): ProjectMapCapabilityV1[] {
-	const capabilities: ProjectMapCapabilityV1[] = [];
+function extractWorkUnits(path: string, text: string, omissions: string[]): { capability: ProjectMapCapabilityV1; line: string }[] {
+	const capabilities: { capability: ProjectMapCapabilityV1; line: string }[] = [];
 	for (const rawLine of text.split("\n")) {
-		const match = WORK_UNIT.exec(rawLine.replace(/\r$/, ""));
-		if (!match) continue;
-		const label = match[2].trim();
-		const separatorIndex = label.indexOf(WORK_UNIT_SEPARATOR);
-		const title = (separatorIndex === -1 ? label : label.slice(separatorIndex + WORK_UNIT_SEPARATOR.length)).trim();
-		const id = normalizeIdentifier(title);
+		const line = rawLine.replace(/\r$/, "");
+		const match = WORK_UNIT.exec(line);
+		if (!match) {
+			if (UNREADABLE_WORK_UNIT.test(line)) {
+				omissions.push(`The work unit line "${line}" in ${path} cannot be read as a capability, so it was omitted.`);
+			}
+			continue;
+		}
+		const label = match[2].replace(/\s+/g, " ").trim();
+		const id = normalizeIdentifier(splitWorkUnitLabel(label).title);
 		if (id === null) {
-			omissions.push(`The work unit "${label}" in ${path} cannot be normalized into a capability identifier.`);
+			omissions.push(`The work unit line "${line}" in ${path} cannot be normalized into a capability identifier.`);
 			continue;
 		}
 		capabilities.push({
-			id,
-			outcome: title,
-			foundationRefs: [],
-			dependsOn: [],
-			contracts: [],
-			featureDocs: [path],
-			surfaces: [],
-			state: match[1] === " " ? "planned" : "done",
+			capability: {
+				id,
+				outcome: label,
+				foundationRefs: [],
+				dependsOn: [],
+				contracts: [],
+				featureDocs: [path],
+				surfaces: [],
+				state: match[1] === " " ? "planned" : match[1] === "~" ? "active" : "done",
+			},
+			line,
 		});
 	}
 	return capabilities;
@@ -179,7 +209,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			omissions.push("package.json declares no usable \"name\", so the project identity could not be derived.");
 		} else {
 			projectName = rawName.trim();
-			projectId = normalizeIdentifier(projectName);
+			projectId = normalizeExactIdentifier(projectName);
 			if (projectId === null) {
 				omissions.push(`package.json declares the name "${projectName}", which cannot be normalized into a project identifier.`);
 			}
@@ -225,7 +255,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 
 	omissions.push("No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.");
 	const capabilities: ProjectMapCapabilityV1[] = [];
-	const declaredBy = new Map<string, string>();
+	const declaredBy = new Map<string, { path: string; line: string }>();
 	if (!Array.isArray(sources.oddTaskDocuments)) {
 		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
 	} else {
@@ -245,13 +275,18 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			if (extracted.length === 0) {
 				omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
 			}
-			for (const capability of extracted) {
+			for (const extractedWorkUnit of extracted) {
+				const { capability, line } = extractedWorkUnit;
 				const existing = declaredBy.get(capability.id);
 				if (existing !== undefined) {
-					omissions.push(`The capability "${capability.id}" is declared by both ${existing} and ${document.path}; the first document in sorted order wins.`);
+					if (existing.path === document.path) {
+						omissions.push(`The capability "${capability.id}" is declared twice in ${document.path}: "${existing.line}" and "${line}"; the first declaration wins.`);
+					} else {
+						omissions.push(`The capability "${capability.id}" is declared by both ${existing.path}, line "${existing.line}", and ${document.path}, line "${line}"; the first document in sorted order wins.`);
+					}
 					continue;
 				}
-				declaredBy.set(capability.id, document.path);
+				declaredBy.set(capability.id, { path: document.path, line });
 				capabilities.push(capability);
 			}
 		}
