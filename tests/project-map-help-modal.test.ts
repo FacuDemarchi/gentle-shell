@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { buildProjectMapHelpContent, ProjectMapHelpModal } from "../lib/project-map-help-modal.ts";
+import type { ProjectMapStep } from "../lib/shell-project-map-draft.ts";
+import { PROJECT_MAP_STATE_GLYPH } from "../lib/shell-project-map-view.ts";
 
 const theme = { fg: (_role: string, text: string) => text };
 const capability = {
@@ -75,7 +77,7 @@ test("closes on escape, enter and ctrl+c, and never twice", () => {
 
 test("scrolls with the arrow and page keys", () => {
 	const long = Array.from({ length: 40 }, (_, index) => `line ${index}`);
-	const { instance } = modal(long, 12);
+	const { instance } = modal(long, 20);
 	const first = instance.render(60).join("\n");
 	assert.ok(first.includes("line 0"), "the first render starts at the top");
 	assert.ok(first.includes("↓ "), "and says how much is below it");
@@ -115,6 +117,31 @@ test("an empty capability renders its facts and no invented description", () => 
 
 // The retired Inspector alone carried this fact, so the explanation inherits it rather than
 // losing it with the surface.
+test("lists sub-elements before the unchanged description", () => {
+	const description = ["The body stays exactly as it was.", "Its second line stays too."];
+	const steps: ProjectMapStep[] = [
+		{ code: "FP-1b.0", title: "Prepare provisioning", state: "done", path: "odd/tasks/provisioning.md" },
+		{ code: "FP-1b.1", title: "Create account", state: "active", path: "odd/tasks/provisioning.md" },
+		{ code: "FP-1b.2", title: "Prepare delivery", state: "planned", path: "odd/tasks/provisioning.md" },
+	];
+	const before = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description });
+	const content = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description }, [], undefined, steps);
+	assert.deepEqual(content.description, before.description, "the body bytes remain the builder's existing result");
+	const rendered = new ProjectMapHelpModal(content, () => {}, theme).render(120).join("\n");
+	assert.ok(rendered.indexOf("Subelementos: 3") < rendered.indexOf("Lo que dice el documento:"), "the section precedes the description");
+	assert.equal((rendered.match(/Subelementos: 3/g) ?? []).length, 1, "the count is stated once");
+	const subelementLines = rendered.split("\n").filter((line) => line.includes("FP-1b."));
+	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.0 — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`)));
+	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.1 — Create account · ${PROJECT_MAP_STATE_GLYPH.active}`)));
+	assert.ok(subelementLines.some((line) => line.includes(`FP-1b.2 — Prepare delivery · ${PROJECT_MAP_STATE_GLYPH.planned}`)));
+	for (const word of ["hecha", "activa", "planificada"]) assert.ok(!subelementLines.some((line) => line.includes(word)), `the sub-element list does not use ${word}`);
+	assert.ok(rendered.includes("? close-the-gate · planificada"), "the capability subtitle keeps its Spanish state word");
+	assert.ok(rendered.includes(description[0]!));
+	assert.ok(rendered.includes(description[1]!));
+	const empty = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description }), () => {}, theme).render(120).join("\n");
+	assert.ok(empty.includes("Subelementos: ninguno"), "an empty sub-element section is explicit");
+});
+
 test("states the static blockers, and says none when there are none", () => {
 	const withBlockers = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, null, ["estado bloqueado", "dependencia catalog ○"]), () => {}, theme).render(60).join("\n");
 	assert.ok(withBlockers.includes("Bloqueos: estado bloqueado, dependencia catalog ○"), "the blockers are stated");

@@ -1,6 +1,7 @@
 import { isKeyRelease, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { normalizeIdentifier } from "./shell-project-map-draft.ts";
+import { normalizeIdentifier, type ProjectMapStep } from "./shell-project-map-draft.ts";
 import type { ProjectMapCapabilityV1, ProjectMapState } from "./shell-project-map-schema.ts";
+import { PROJECT_MAP_STATE_GLYPH } from "./shell-project-map-view.ts";
 import type { ProjectMapDescription } from "./project-map-description.ts";
 
 // What a capability IS, as an overlay.
@@ -46,6 +47,8 @@ export interface ProjectMapHelpContent {
 	subtitle: string;
 	/** One `Label: value` line per declared fact. */
 	facts: string[];
+	/** The coded sub-elements the functional point owns across the repository documents. */
+	steps: readonly ProjectMapStep[];
 	/** The body the declaring document carries for this capability. */
 	description: string[];
 	/** True when the map names a document, so the description is the document's silence. */
@@ -69,7 +72,7 @@ export type ProjectMapHelpResult = { type: "close" };
  * the prefix: `normalizeIdentifier` drops a scope before a `/`, so a label such as
  * `Title/Provisioning` still normalizes to the id and is suppressed.
  */
-export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string): ProjectMapHelpContent {
+export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string, steps: readonly ProjectMapStep[] = []): ProjectMapHelpContent {
 	const list = (values: readonly string[]): string => (values.length === 0 ? "ninguno" : values.join(", "));
 	const facts: string[] = [];
 	if (normalizeIdentifier(capability.outcome) !== capability.id) facts.push(`Resultado: ${capability.outcome}`);
@@ -83,6 +86,7 @@ export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, d
 		subtitle: STATE_LABEL[capability.state] ?? capability.state,
 		facts,
 		...(descriptionNote === undefined || descriptionNote.length === 0 ? {} : { descriptionNote }),
+		steps,
 		description: description?.lines ?? [],
 		hasDocument: capability.featureDocs.length > 0,
 	};
@@ -131,6 +135,12 @@ export class ProjectMapHelpModal {
 
 	private bodyLines(): string[] {
 		const lines = [...this.content.facts, ""];
+		if (this.content.steps.length === 0) lines.push("Subelementos: ninguno.");
+		else {
+			lines.push(`Subelementos: ${this.content.steps.length}`);
+			lines.push(...this.content.steps.map((step) => `· ${step.code} — ${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`));
+		}
+		lines.push("");
 		if (!this.content.hasDocument) {
 			lines.push("El mapa no declara ningún documento para esta capability, así que no hay nada para leer.");
 			return lines;

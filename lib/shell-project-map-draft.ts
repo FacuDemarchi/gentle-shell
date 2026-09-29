@@ -5,6 +5,7 @@ import {
 	isSafeFeatureDocumentPath,
 	type ProjectMapCapabilityV1,
 	type ProjectMapFoundationV1,
+	type ProjectMapState,
 	type ProjectMapSurface,
 	type ProjectMapV1,
 } from "./shell-project-map-schema.ts";
@@ -104,6 +105,41 @@ export function splitWorkUnitLabel(label: string): ProjectMapWorkUnitLabel {
 export interface ProjectMapDescription {
 	title: string;
 	lines: string[];
+}
+
+export interface ProjectMapStep {
+	code: string;
+	title: string;
+	state: ProjectMapState;
+	path: string;
+}
+
+function projectMapStateFromCheckbox(checkbox: string): ProjectMapState {
+	return checkbox === " " ? "planned" : checkbox === "~" ? "active" : "done";
+}
+
+/**
+ * Collects the coded sub-elements a functional point owns from the same work-unit grammar the
+ * draft reads. Documents and declarations retain their sorted, written order; the first matching
+ * declaration of a repeated code therefore wins.
+ */
+export function collectProjectMapSteps(documents: readonly { path: string; text: string }[], code: string): ProjectMapStep[] {
+	if (code.trim().length === 0) return [];
+	const steps: ProjectMapStep[] = [];
+	const seen = new Set<string>();
+	for (const document of [...documents].sort((left, right) => comparePaths(left.path, right.path))) {
+		for (const rawLine of document.text.split("\n")) {
+			const match = DESCRIPTION_WORK_UNIT.exec(rawLine.replace(/\r$/, ""));
+			if (match === null) continue;
+			const label = match[3]!.replace(/\s+/g, " ").trim();
+			const split = splitWorkUnitLabel(label);
+			const unitCode = (split.head.length === 0 ? label : split.head.replace(/—\s*$/, "")).trim();
+			if (!unitCode.startsWith(`${code}.`) || seen.has(unitCode)) continue;
+			seen.add(unitCode);
+			steps.push({ code: unitCode, title: split.title, state: projectMapStateFromCheckbox(match[2]!), path: document.path });
+		}
+	}
+	return steps;
 }
 
 /**
@@ -341,7 +377,7 @@ function extractWorkUnits(path: string, text: string, omissions: string[], deleg
 				contracts: [],
 				featureDocs: [path],
 				surfaces: [],
-				state: match[1] === " " ? "planned" : match[1] === "~" ? "active" : "done",
+				state: projectMapStateFromCheckbox(match[1]),
 			},
 			line,
 		});

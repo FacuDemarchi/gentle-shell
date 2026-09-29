@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { TUI } from "@earendil-works/pi-tui";
 import { sidebarHeaderContributors, sidebarPart, sidebarState } from "../lib/shell-sidebar.ts";
 import { PROJECT_MAP_RAIL_KEY } from "../lib/shell-project-map-card.ts";
+import { PROJECT_MAP_STATE_GLYPH } from "../lib/shell-project-map-view.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib/project-map-store-heartbeats.ts";
@@ -137,6 +138,26 @@ test("explaining a capability opens the overlay with what its document says", as
 		assert.ok(body.includes("The body line the document carries."), "the overlay shows the document's own words");
 		assert.ok(body.includes("Lo que dice el documento:"), "and labels them as the document's, in Spanish");
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+});
+
+test("the explanation lists sub-elements declared by another document", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(120));
+			return {} as never;
+		};
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities[0]?.id;
+		assert.equal(id, "provisioning");
+		writeFileSync(join(directory, "odd", "tasks", "provisioning-steps.md"), "- [x] **FP-1b.0 — Prepare provisioning**\n", "utf8");
+		await explainProjectMapCapability(probe.ctx, id);
+		const body = opened.join("\n");
+		assert.ok(body.includes("Subelementos: 1"));
+		assert.ok(body.includes(`FP-1b.0 — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`));
+	}, { task: "- [ ] **FP-1b — Provisioning**\n  The body line the document carries.\n" });
 });
 
 test("the help overlay reserves the rail when the fullscreen sidebar owns it", async () => {

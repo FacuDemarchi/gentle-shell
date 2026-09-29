@@ -9,6 +9,7 @@ import {
 	validateProjectMap,
 } from "../lib/shell-project-map-schema.ts";
 import {
+	collectProjectMapSteps,
 	generateProjectMapDraft,
 	normalizeIdentifier,
 	readConfigTestCommand,
@@ -991,6 +992,62 @@ function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadC
 		capabilities,
 	});
 }
+
+test("collects all thirteen coded sub-elements from every document in deterministic order", () => {
+	const documents = [
+		{
+			path: "odd/tasks/zulu.md",
+			text: [
+				"- [x] **FP-1b.0 — Later duplicate**",
+				"- [x] **FP-1b.8 — Final top-level step**",
+				"",
+			].join("\n"),
+		},
+		{
+			path: "odd/tasks/alpha.md",
+			text: [
+				"- [ ] **FP-1b — Provisioning**",
+				"  - [x] **FP-1b.0 — First nested step**",
+				"  - [ ] **FP-1b.1 — Planned nested step**",
+				"- [~] **FP-1b.1a — Active top-level step**",
+				"- [x] **FP-1b.2 — Done step**",
+				"- [ ] **FP-1b.3 — Planned step**",
+				"- [x] **FP-1b.3a — Done lettered step**",
+				"- [x] **FP-1b.3a-b — Done hyphenated step**",
+				"- [x] **FP-1b.3b — Done lettered sibling**",
+				"- [x] **FP-1b.4 — Done fourth step**",
+				"- [ ] **FP-1b.5 — Planned fifth step**",
+				"- [x] **FP-1b.6 — Done sixth step**",
+				"- [~] **FP-1b.7 — Active seventh step**",
+				"- [x] **FP-1b — The functional point itself**",
+				"- [x] **FP-1b-extra.2 — Shares a prefix without the dot**",
+				"- [x] **FP-1.b.3 — Carries the dot elsewhere**",
+				"- [x] **FP-4a1 — Continues with a letter rather than a dot**",
+				"- [x] **An uncoded unit**",
+				"",
+			].join("\n"),
+		},
+	];
+	const steps = collectProjectMapSteps(documents, "FP-1b");
+
+	assert.deepEqual(steps, [
+		{ code: "FP-1b.0", title: "First nested step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.1", title: "Planned nested step", state: "planned", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.1a", title: "Active top-level step", state: "active", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.2", title: "Done step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.3", title: "Planned step", state: "planned", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.3a", title: "Done lettered step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.3a-b", title: "Done hyphenated step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.3b", title: "Done lettered sibling", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.4", title: "Done fourth step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.5", title: "Planned fifth step", state: "planned", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.6", title: "Done sixth step", state: "done", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.7", title: "Active seventh step", state: "active", path: "odd/tasks/alpha.md" },
+		{ code: "FP-1b.8", title: "Final top-level step", state: "done", path: "odd/tasks/zulu.md" },
+	]);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-4"), []);
+	assert.deepEqual(collectProjectMapSteps([{ path: "odd/tasks/alpha.md", text: "- [ ] **FP-1b.0 — Setup**\n" }], "FP-9"), []);
+});
 
 test("matches HEAD's complete output for synthetic no-convention corpora", () => {
 	const commonOmissions = [
