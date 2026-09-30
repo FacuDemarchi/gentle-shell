@@ -16,15 +16,14 @@ import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
-import { collectProjectMapSteps, generateProjectMapDraft, readProjectMapDelegablePrefix, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
+import { collectProjectMapSteps, generateProjectMapDraft, projectMapSourceChanges, readProjectMapDelegablePrefix, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import {
-	PROJECT_MAP_TRANSLATIONS_LANGUAGE,
 	PROJECT_MAP_TRANSLATIONS_PATH,
 	projectMapTranslationFor,
 	projectMapTranslationWorklist,
-	renderProjectMapTranslationShape,
+	renderProjectMapTranslationReport,
 	readProjectMapTranslations,
 } from "../lib/project-map-translations.ts";
 import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpResult } from "../lib/project-map-help-modal.ts";
@@ -1015,45 +1014,35 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	 * identity of the body the reader extracted, not of the file — so the command prints it and
 	 * the writer copies it verbatim.
 	 */
-	if (parsed.action === "translate") {
-		const read = readProjectMapFile(artifactPath);
-		if (read.map === null) {
-			ctx.ui.notify(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}, so there is nothing to translate.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return emptyReport("translate", read.diagnostics);
-		}
+	const reportTranslations = (map: ProjectMapV1): ProjectMapDiagnostic[] => {
 		const sidecar = readSource(join(ctx.cwd, PROJECT_MAP_TRANSLATIONS_PATH));
 		const stored = sidecar.ok ? readProjectMapTranslations(sidecar.text) : { translations: null, diagnostics: [] };
-		const described = read.map.capabilities.map((capability) => {
+		const described = map.capabilities.map((capability) => {
 			const document = capability.featureDocs[0];
 			const source = document === undefined ? null : readSource(join(ctx.cwd, document));
 			const description = source !== null && source.ok ? readCapabilityDescription(source.text, capability.id) : null;
 			return { id: capability.id, source: document ?? null, lines: description?.lines ?? null };
 		});
 		const worklist = projectMapTranslationWorklist(described, stored.translations);
-		const lines = [
-			`Project Map translations · ${PROJECT_MAP_TRANSLATIONS_LANGUAGE}`,
-			`Target: ${PROJECT_MAP_TRANSLATIONS_PATH}${sidecar.ok ? "" : " (does not exist yet)"}`,
-			`Already translated: ${worklist.fresh} · need a pass: ${worklist.items.length} · no document: ${worklist.withoutDocument.length}`,
-			...stored.diagnostics.map((diagnostic) => `The target could not be used: ${diagnostic}`),
-			...(worklist.items.length === 0
-				? ["Every capability the map declares with a document is translated and current."]
-				: [
-					"",
-					"Needs a pass — capability, body hash, document:",
-					...worklist.items.map((item) => `  ${item.capabilityId}  ${item.sourceHash}  ${item.source}${item.state === "stale" ? "  (stale)" : ""}`),
-					"",
-					"Read each document, translate that work unit's title and body into Spanish, and write the target with this shape:",
-					renderProjectMapTranslationShape(),
-					"Copy each hash verbatim: it identifies the body that was translated, and the explanation only shows a translation whose hash still matches.",
-				]),
-			...(worklist.withoutDocument.length === 0 ? [] : ["", `No document to translate: ${worklist.withoutDocument.join(", ")}`]),
-		];
-		ctx.ui.notify(lines.join("\n"));
-		return { action: "translate", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [...read.diagnostics, ...stored.diagnostics.map((message) => refusal(message, "$.translations"))] };
+		ctx.ui.notify(renderProjectMapTranslationReport({ worklist, targetExists: sidecar.ok, diagnostics: stored.diagnostics }));
+		return stored.diagnostics.map((message) => refusal(message, "$.translations"));
+	};
+
+	if (parsed.action === "translate") {
+		const read = readProjectMapFile(artifactPath);
+		if (read.map === null) {
+			ctx.ui.notify(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}, so there is nothing to translate.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return emptyReport("translate", read.diagnostics);
+		}
+		return { action: "translate", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [...read.diagnostics, ...reportTranslations(read.map)] };
 	}
 
+	const confirmDraftWrite = (returnsToDraft = false): Promise<boolean> => ctx.hasUI
+		? ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.${returnsToDraft ? " This write returns the approved map to draft." : ""}`)
+		: Promise.resolve(false);
+
 	/**
-	 * Generates the plan, shows it, and writes it only after a typed confirmation. `draft` and
+	 * Generates the plan, shows it, and writes it only after a confirmation. `draft` and
 	 * `ensure` share this flow so the two entries can never drift apart: the only difference
 	 * between them is what `ensure` does first when a usable map already exists.
 	 */
@@ -1083,9 +1072,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		// The confirmation is the same two-option dialog every other write in this command uses:
 		// the human accepts or rejects the write instead of typing an answer, and a dialog that is
 		// dismissed is not an acceptance.
-		const confirmed = ctx.hasUI
-			? await ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.`)
-			: false;
+		const confirmed = await confirmDraftWrite();
 		if (!confirmed) {
 			ctx.ui.notify("Draft discarded; nothing was written.");
 			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
@@ -1104,16 +1091,66 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		return { action, wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
 	};
 
+	const refreshPlan = async (stored: ProjectMapV1, observed: ReturnType<typeof readSource>): Promise<ProjectMapCommandReport> => {
+		const kept: ProjectMapCommandReport = { action: "ensure", wrote: false, map: stored, assumptions: [], omissions: [], diagnostics: [] };
+		const repository = readRepositorySources(ctx.cwd);
+		const generated = generateProjectMapDraft(repository.sources);
+		const omissions = [...repository.omissions, ...generated.omissions];
+		if (generated.map === null) {
+			ctx.ui.notify(`A draft could not be generated.\n${omissions.join("\n")}`);
+			return { ...kept, assumptions: generated.assumptions, omissions };
+		}
+		const changes = projectMapSourceChanges(stored, generated.map);
+		if (changes.length === 0) return kept;
+		ctx.ui.notify(["Project Map sources changed:", ...changes.map((change) => `- ${change}`)].join("\n"));
+		// A document that says nothing about surfaces leaves that declaration to the human.
+		// Only that field carries over: all other facts, including approval, belong to this draft.
+		const storedById = new Map(stored.capabilities.map((capability) => [capability.id, capability]));
+		const draft: ProjectMapV1 = {
+			...generated.map,
+			capabilities: generated.map.capabilities.map((capability) => ({
+				...capability,
+				surfaces: capability.surfaces.length === 0
+					? [...(storedById.get(capability.id)?.surfaces ?? [])]
+					: capability.surfaces,
+			})),
+		};
+		const confirmed = await confirmDraftWrite(stored.approval.state === "approved");
+		if (!confirmed) {
+			ctx.ui.notify("Draft discarded; nothing was written.");
+			return kept;
+		}
+		if (artifactMovedSince(artifactPath, observed)) {
+			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
+			ctx.ui.notify(message);
+			return { ...kept, map: readProjectMapFile(artifactPath).map, diagnostics: [refusal(message, "$")] };
+		}
+		const written = writeProjectMapFile(artifactPath, draft);
+		if (!written.ok) {
+			ctx.ui.notify(`The draft could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
+			return { ...kept, diagnostics: written.diagnostics };
+		}
+		ctx.ui.notify(`Wrote a draft map to ${PROJECT_MAP_ARTIFACT_PATH}.`);
+		return { action: "ensure", wrote: artifactMovedSince(artifactPath, observed), map: draft, assumptions: generated.assumptions, omissions, diagnostics: [] };
+	};
+
 	if (parsed.action === "ensure") {
+		const observed = readSource(artifactPath);
 		const read = readProjectMapFile(artifactPath);
+		let settled: ProjectMapCommandReport;
 		if (read.map !== null) {
 			options.onShow?.();
 			ctx.ui.notify(`Project Map card shown for this session.\n\n${describe(read.map)}`);
-			return { action: "ensure", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
+			settled = await refreshPlan(read.map, observed);
+		} else {
+			settled = await generatePlan("ensure");
+			if (settled.wrote) options.onShow?.();
 		}
-		const generated = await generatePlan("ensure");
-		if (generated.wrote) options.onShow?.();
-		return generated;
+		// The agent needs the settled map's bodies, not the draft the human may have declined.
+		// Reading the artifact again also respects a competing write refused by the guard.
+		const map = readProjectMapFile(artifactPath).map;
+		if (map !== null) settled.diagnostics.push(...reportTranslations(map));
+		return settled;
 	}
 
 	if (parsed.action === "draft") return generatePlan("draft");

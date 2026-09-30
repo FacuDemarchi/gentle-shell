@@ -2,12 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	hashProjectMapDescription,
+	renderProjectMapTranslationReport,
 	projectMapTranslationFor,
 	projectMapTranslationWorklist,
 	readProjectMapTranslations,
 	PROJECT_MAP_TRANSLATIONS_LANGUAGE,
 	PROJECT_MAP_TRANSLATIONS_VERSION,
 } from "../lib/project-map-translations.ts";
+
+test("the shared report preserves the translate command's exact worklist text", () => {
+	assert.equal(renderProjectMapTranslationReport({
+		worklist: { fresh: 1, items: [{ capabilityId: "catalog", source: "odd/tasks/a.md", sourceHash: "sha256:copy-me", state: "stale" }], withoutDocument: ["shipping"] },
+		targetExists: false, diagnostics: ["invalid target"],
+	}), [
+		"Project Map translations · es",
+		"Target: openspec/project-map.es.json (does not exist yet)",
+		"Already translated: 1 · need a pass: 1 · no document: 1",
+		"The target could not be used: invalid target",
+		"",
+		"Needs a pass — capability, body hash, document:",
+		"  catalog  sha256:copy-me  odd/tasks/a.md  (stale)",
+		"",
+		"Read each document, translate that work unit's title and body into Spanish, and write the target with this shape:",
+		'{"version":"gentle-pi.project-map-translations/v1","language":"es","capabilities":{"<capability-id>":{"source":"<document path>","sourceHash":"<hash from the list>","title":"<translated title>","lines":["<translated line>"]}}}',
+		"Copy each hash verbatim: it identifies the body that was translated, and the explanation only shows a translation whose hash still matches.",
+		"",
+		"No document to translate: shipping",
+	].join("\n"));
+});
+
+test("the shared report preserves the current translation text without a worklist or shape", () => {
+	assert.equal(renderProjectMapTranslationReport({ worklist: { fresh: 2, items: [], withoutDocument: [] }, targetExists: true, diagnostics: [] }), [
+		"Project Map translations · es",
+		"Target: openspec/project-map.es.json",
+		"Already translated: 2 · need a pass: 0 · no document: 0",
+		"Every capability the map declares with a document is translated and current.",
+	].join("\n"));
+});
 
 const BODY = ["One line.", "Another line."];
 const HASH = hashProjectMapDescription(BODY);

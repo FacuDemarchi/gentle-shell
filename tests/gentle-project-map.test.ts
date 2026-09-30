@@ -16,6 +16,7 @@ import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree } from "../lib/project-map-store-worktrees.ts";
 import { issueProjectMapStoreReadinessReceipt, readProjectMapStoreReadinessReceipts } from "../lib/project-map-store-receipts.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
+import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { hashProjectMapDescription } from "../lib/project-map-translations.ts";
 import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import gentleProjectMap, {
@@ -431,6 +432,179 @@ test("the bare command ensures a map, shows it, and leaves an existing one alone
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), written);
 		assert.equal(again.map?.project.id, "example-shop");
 	});
+});
+
+test("ensure refresh reports canonical source changes before the generation confirmation and keeps a decline byte-identical", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n- [ ] **PM-4 — Added**\n");
+		const probe = harness(directory);
+		probe.ctx.ui.confirm = async (title, message) => {
+			assert.equal(title, "Write the Project Map draft?");
+			assert.equal(message, `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.`);
+			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": state planned → done.'));
+			return false;
+		};
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.wrote, false);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+		assert.deepEqual(report.map, readProjectMapFile(artifactPath(directory)).map);
+		const changes = probe.notified.find((message) => message.includes("sources changed:"));
+		assert.equal(changes, 'Project Map sources changed:\n- Capability "keep": state planned → done.\n- Capability "removed" was removed.\n- Capability "added" was added.');
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(probe.notified.at(-1), translate.notified[0], "the kept map feeds the identical translation report");
+	}, { task: "- [ ] **PM-2 — Keep**\n- [ ] **PM-3 — Removed**\n" });
+});
+
+test("ensure preserves human surfaces without staleness and carries only those surfaces through an accepted refresh", async () => {
+	await withRepository(async (directory) => {
+		const draft = await runProjectMapCommand("draft", harness(directory).ctx);
+		const id = draft.map!.capabilities[0]!.id;
+		await runProjectMapCommand(`declare ${id} web`, harness(directory).ctx);
+		const unchanged = harness(directory);
+		const kept = await runProjectMapCommand("", unchanged.ctx);
+		assert.equal(unchanged.confirmations, 0);
+		assert.equal(kept.wrote, false);
+		assert.deepEqual(kept.map!.capabilities[0]!.surfaces, ["web"]);
+		assert.equal(unchanged.notified.length, 2, "only the card and shared report are printed");
+		assert.equal(unchanged.notified.some((message) => message.includes("sources changed")), false);
+
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		const accepted = harness(directory, [true]);
+		const refreshed = await runProjectMapCommand("", accepted.ctx);
+		assert.equal(accepted.confirmations, 1);
+		assert.equal(refreshed.wrote, true);
+		assert.deepEqual(refreshed.map!.capabilities[0]!.surfaces, ["web"]);
+		assert.equal(refreshed.map!.capabilities[0]!.state, "done");
+		assert.deepEqual(refreshed.map, readProjectMapFile(artifactPath(directory)).map);
+		const expected = generateProjectMapDraft(readRepositorySources(directory).sources).map!;
+		expected.capabilities[0]!.surfaces = ["web"];
+		assert.deepEqual(refreshed.map, expected, "the human surfaces are the only merge into the generated draft");
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(accepted.notified.at(-1), translate.notified[0]);
+	}, { task: "- [ ] **PM-2 — Keep**\n" });
+});
+
+test("ensure ignores approval alone, reports outcome changes, and warns that an accepted approved refresh returns to draft", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		await runProjectMapCommand("declare keep web", harness(directory).ctx);
+		await runProjectMapCommand("approve maintainer", harness(directory).ctx, { now: () => NOW });
+		const unchanged = harness(directory);
+		const kept = await runProjectMapCommand("", unchanged.ctx);
+		assert.equal(kept.map!.approval.state, "approved");
+		assert.equal(unchanged.confirmations, 0);
+		assert.equal(kept.wrote, false);
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **PM-3 — Keep**\n");
+		const probe = harness(directory);
+		let confirmations = 0;
+		probe.ctx.ui.confirm = async (title, message) => {
+			confirmations += 1;
+			assert.equal(title, "Write the Project Map draft?");
+			assert.ok(message.includes("returns the approved map to draft"));
+			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": outcome PM-2 — Keep → PM-3 — Keep.'));
+			return true;
+		};
+		const refreshed = await runProjectMapCommand("", probe.ctx);
+		assert.equal(confirmations, 1);
+		assert.equal(refreshed.wrote, true);
+		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map!.approval, { state: "draft" });
+	}, { task: "- [ ] **PM-2 — Keep**\n" });
+});
+
+test("ensure reports and replaces document-declared surfaces", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **PM-2 — Keep**\n  **Allowed edit surfaces:** `api/keep.ts`\n");
+		const probe = harness(directory);
+		const refreshed = await runProjectMapCommand("", probe.ctx);
+		assert.equal(refreshed.wrote, true);
+		assert.equal(probe.confirmations, 1);
+		assert.ok(probe.notified.some((message) => message.includes('Capability "keep": surfaces ["web"] → ["api"].')));
+		assert.deepEqual(refreshed.map!.capabilities[0]!.surfaces, ["api"]);
+	}, { config: "project_map:\n  surfaces:\n    web: web/\n    api: api/\n", task: "- [ ] **PM-2 — Keep**\n  **Allowed edit surfaces:** `web/keep.ts`\n" });
+});
+
+test("ensure refuses a refresh when the artifact moves during confirmation and translates the settled artifact", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		const probe = harness(directory);
+		let moved = "";
+		probe.ctx.ui.confirm = async () => {
+			const map = readProjectMapFile(artifactPath(directory)).map!;
+			map.capabilities = [];
+			moved = JSON.stringify(map);
+			writeFileSync(artifactPath(directory), moved);
+			return true;
+		};
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.wrote, false);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), moved);
+		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed while the decision was pending")));
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(probe.notified.at(-1), translate.notified[0]);
+	}, { task: "- [ ] **PM-2 — Keep**\n" });
+});
+
+test("ensure never asks or refreshes without a UI even when the sources moved", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		const probe = harness(directory);
+		probe.ctx.hasUI = false;
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+		assert.ok(probe.notified.some((message) => message.includes("sources changed")));
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(probe.notified.at(-1), translate.notified[0]);
+	}, { task: "- [ ] **PM-2 — Keep**\n" });
+});
+
+test("ensure keeps the stored map and reports omissions when project identity cannot be regenerated", async () => {
+	await withRepository(async (directory) => {
+		await runProjectMapCommand("draft", harness(directory).ctx);
+		const before = readFileSync(artifactPath(directory), "utf8");
+		writeFileSync(join(directory, "package.json"), "{}");
+		const probe = harness(directory);
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+		assert.ok(report.omissions.length > 0);
+		assert.ok(probe.notified.some((message) => message.includes("A draft could not be generated.")));
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(probe.notified.at(-1), translate.notified[0]);
+	});
+});
+
+test("ensure with current translations stays quiet, and first-run ensure also hands over the shared report", async () => {
+	await withRepository(async (directory) => {
+		const first = harness(directory);
+		const drafted = await runProjectMapCommand("", first.ctx);
+		const translate = harness(directory);
+		await runProjectMapCommand("translate", translate.ctx);
+		assert.equal(first.notified.at(-1), translate.notified[0]);
+		writeFileSync(join(directory, "openspec/project-map.es.json"), JSON.stringify({
+			version: "gentle-pi.project-map-translations/v1", language: "es",
+			capabilities: { [drafted.map!.capabilities[0]!.id]: { source: "odd/tasks/roadmap.md", sourceHash: hashProjectMapDescription(["Body."]), lines: ["Cuerpo."] } },
+		}));
+		const probe = harness(directory);
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.equal(probe.notified.length, 2);
+		assert.ok(probe.notified[1]!.includes("Every capability the map declares with a document is translated and current."));
+	}, { task: "- [ ] **PM-2 — Keep**\n  Body.\n" });
 });
 
 test("the bare command replaces an unusable artifact only after saying so", async () => {

@@ -153,6 +153,36 @@ export function projectMapTranslationWorklist(
 	return { items, fresh, withoutDocument };
 }
 
+/**
+ * Both command readers hand the agent the same report. Keeping its text here means a refresh
+ * cannot ask for a different translation shape than the explicit, read-only translation pass.
+ */
+export function renderProjectMapTranslationReport(input: {
+	worklist: ProjectMapTranslationWorklist;
+	targetExists: boolean;
+	diagnostics: readonly string[];
+}): string {
+	const { worklist, targetExists, diagnostics } = input;
+	return [
+		`Project Map translations · ${PROJECT_MAP_TRANSLATIONS_LANGUAGE}`,
+		`Target: ${PROJECT_MAP_TRANSLATIONS_PATH}${targetExists ? "" : " (does not exist yet)"}`,
+		`Already translated: ${worklist.fresh} · need a pass: ${worklist.items.length} · no document: ${worklist.withoutDocument.length}`,
+		...diagnostics.map((diagnostic) => `The target could not be used: ${diagnostic}`),
+		...(worklist.items.length === 0
+			? ["Every capability the map declares with a document is translated and current."]
+			: [
+				"",
+				"Needs a pass — capability, body hash, document:",
+				...worklist.items.map((item) => `  ${item.capabilityId}  ${item.sourceHash}  ${item.source}${item.state === "stale" ? "  (stale)" : ""}`),
+				"",
+				"Read each document, translate that work unit's title and body into Spanish, and write the target with this shape:",
+				renderProjectMapTranslationShape(),
+				"Copy each hash verbatim: it identifies the body that was translated, and the explanation only shows a translation whose hash still matches.",
+			]),
+		...(worklist.withoutDocument.length === 0 ? [] : ["", `No document to translate: ${worklist.withoutDocument.join(", ")}`]),
+	].join("\n");
+}
+
 /** The shape the agent writes, printed once so the file it produces cannot drift from the reader. */
 export function renderProjectMapTranslationShape(): string {
 	return JSON.stringify({
