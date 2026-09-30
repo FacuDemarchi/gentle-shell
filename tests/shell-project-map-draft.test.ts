@@ -11,6 +11,7 @@ import {
 import {
 	collectProjectMapSteps,
 	generateProjectMapDraft,
+	projectMapSourceChanges,
 	normalizeIdentifier,
 	readConfigTestCommand,
 	readProjectMapDelegablePrefix,
@@ -1446,4 +1447,159 @@ test("matches HEAD's complete output for synthetic no-convention corpora", () =>
 		assert.deepEqual(result.omissions, fixture.omissions, fixture.name);
 		assert.deepEqual(result.assumptions, headFallbackAssumptions, fixture.name);
 	}
+});
+
+function comparisonMap(text = "- [ ] **FP-1 — Checkout**", path = "odd/tasks/roadmap.md", openspecConfig?: string) {
+	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig, oddTaskDocuments: [{ path, text }] });
+	assert.ok(result.map);
+	return result.map;
+}
+
+test("source changes: identical generated maps return no lines without mutating inputs", () => {
+	const stored = comparisonMap();
+	const generated = comparisonMap();
+	assert.deepEqual(stored.capabilities, [expectedHeadCapability("odd/tasks/roadmap.md", "checkout", "FP-1 — Checkout")]);
+	const before = JSON.stringify([stored, generated]);
+	assert.deepEqual(projectMapSourceChanges(stored, generated), []);
+	assert.equal(JSON.stringify([stored, generated]), before);
+});
+
+for (const [field, value, rendered] of [
+	["outcome", "FP-2 — Checkout", "FP-1 — Checkout → FP-2 — Checkout"],
+	["state", "done", "planned → done"],
+	["foundationRefs", ["repository-tooling"], '[] → ["repository-tooling"]'],
+	["dependsOn", ["catalog"], '[] → ["catalog"]'],
+	["contracts", ["checkout-v1", "payment-v1"], '[] → ["checkout-v1","payment-v1"]'],
+	["featureDocs", ["odd/tasks/moved.md"], '["odd/tasks/roadmap.md"] → ["odd/tasks/moved.md"]'],
+] as const) {
+	test(`source changes: ${field} produces its field line with compact arrays`, () => {
+		const stored = comparisonMap();
+		// References and contracts cannot currently be derived by the generator.
+		const generated = comparisonMap(
+			field === "outcome" ? "- [ ] **FP-2 — Checkout**" : field === "state" ? "- [x] **FP-1 — Checkout**" : undefined,
+			field === "featureDocs" ? "odd/tasks/moved.md" : undefined,
+		);
+		if (field === "foundationRefs" || field === "dependsOn" || field === "contracts") {
+			generated.capabilities[0] = { ...generated.capabilities[0]!, [field]: [...value] };
+		}
+		assert.deepEqual(projectMapSourceChanges(stored, generated), [`Capability "checkout": ${field} ${rendered}.`]);
+	});
+}
+
+test("source changes: document-declared surfaces produce a compact field line", () => {
+	const surfaceConfig = "project_map:\n  surfaces:\n    web: web/\n    api: api/\n";
+	const stored = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`", undefined, surfaceConfig);
+	const generated = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `api/cart.ts`", undefined, surfaceConfig);
+	assert.deepEqual(projectMapSourceChanges(stored, generated), ['Capability "checkout": surfaces ["web"] → ["api"].']);
+});
+
+test("source changes: hand-declared surfaces and removed declarations are ignored when generated surfaces are empty", () => {
+	const stored = comparisonMap();
+	stored.capabilities[0]!.surfaces = ["web"];
+	assert.deepEqual(projectMapSourceChanges(stored, comparisonMap()), []);
+	const declared = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`", undefined, "project_map:\n  surfaces:\n    web: web/\n");
+	assert.deepEqual(projectMapSourceChanges(declared, comparisonMap(undefined, undefined, "project_map:\n  surfaces:\n    web: web/\n")), []);
+});
+
+test("source changes: approved stored maps with identical sources return no lines", () => {
+	const stored = comparisonMap();
+	stored.approval = { state: "approved", approvedBy: "maintainer", approvedAt: "2026-09-29T00:00:00Z" };
+	assert.deepEqual(projectMapSourceChanges(stored, comparisonMap()), []);
+	assert.deepEqual(projectMapSourceChanges(comparisonMap(), stored), []);
+});
+
+test("source changes: renamed capability identities are named as removed and added", () => {
+	assert.deepEqual(projectMapSourceChanges(comparisonMap(), comparisonMap("- [ ] **FP-1 — Catalog**")), [
+		'Capability "checkout" was removed.',
+		'Capability "catalog" was added.',
+	]);
+});
+
+test("source changes: project id and name produce their identity lines", () => {
+	const stored = comparisonMap();
+	const generated = generateProjectMapDraft({ ...sources("- [ ] **FP-1 — Checkout**"), packageJson: manifest({ name: "new-shop" }) }).map!;
+	assert.deepEqual(projectMapSourceChanges(stored, generated), [
+		"Project id changed: example-shop → new-shop.",
+		"Project name changed: example-shop → new-shop.",
+	]);
+});
+
+test("source changes: foundations added removed and changed are compared by id", () => {
+	const stored = comparisonMap();
+	const withGate = comparisonMap(undefined, undefined, config);
+	assert.deepEqual(projectMapSourceChanges(stored, withGate), ['Foundation "quality-gates" was added.']);
+	assert.deepEqual(projectMapSourceChanges(withGate, stored), ['Foundation "quality-gates" was removed.']);
+	const generated = generateProjectMapDraft({ ...sources("- [ ] **FP-1 — Checkout**"), packageJson: manifest({ scripts: {} }) }).map!;
+	// Foundation outcomes cannot currently be changed through generator inputs.
+	generated.foundations[0]!.outcome = "Tooling changed.";
+	assert.deepEqual(projectMapSourceChanges(stored, generated), [
+		'Foundation "repository-tooling": outcome The repository and its declared tooling are present and consistent. → Tooling changed..',
+		'Foundation "repository-tooling": state done → planned.',
+		'Foundation "repository-tooling": evidence ["package.json"] → undefined.',
+	]);
+});
+
+test("source changes: D2/AC5 generated-only capability order does not affect canonical lines", () => {
+	const stored = comparisonMap();
+	const generated = comparisonMap();
+	const capability = generated.capabilities[0]!;
+	generated.capabilities.push({ ...capability, id: "zeta" }, { ...capability, id: "alpha" });
+	const reversed = { ...generated, capabilities: [...generated.capabilities].reverse() };
+	const expected = ['Capability "alpha" was added.', 'Capability "zeta" was added.'];
+	assert.deepEqual(projectMapSourceChanges(stored, generated), expected);
+	assert.deepEqual(projectMapSourceChanges(stored, reversed), expected);
+});
+
+test("source changes: D2/AC5 repeated generated ids are added once in canonical position", () => {
+	const stored = comparisonMap();
+	const generated = comparisonMap();
+	const capability = generated.capabilities[0]!;
+	generated.capabilities.push(
+		{ ...capability, id: "zeta" },
+		{ ...capability, id: "new" },
+		{ ...capability, id: "alpha" },
+		{ ...capability, id: "new" },
+	);
+	assert.deepEqual(projectMapSourceChanges(stored, generated), [
+		'Capability "alpha" was added.',
+		'Capability "new" was added.',
+		'Capability "zeta" was added.',
+	]);
+});
+
+test("source changes: repeated stored ids retain their first position and generated comparison uses the first occurrence", () => {
+	const stored = comparisonMap();
+	const generated = comparisonMap();
+	const capability = stored.capabilities[0]!;
+	stored.capabilities.push(
+		{ ...capability, id: "removed" },
+		{ ...capability, outcome: "Ignored stored duplicate." },
+		{ ...capability, id: "removed" },
+	);
+	generated.capabilities[0] = { ...capability, outcome: "First generated outcome." };
+	generated.capabilities.push({ ...capability, outcome: "Ignored generated duplicate." });
+	assert.deepEqual(projectMapSourceChanges(stored, generated), [
+		`Capability "checkout": outcome ${capability.outcome} → First generated outcome..`,
+		'Capability "removed" was removed.',
+	]);
+});
+
+test("source changes: identity foundations stored capability order and generated-only order are deterministic", () => {
+	const stored = comparisonMap("- [ ] **FP-1 — Zebra**\n- [ ] **FP-2 — Alpha**\n- [ ] **FP-3 — Removed**");
+	const generated = comparisonMap("- [ ] **FP-4 — Aardvark first**\n- [x] **FP-2 — Alpha**\n- [ ] **FP-5 — New second**\n- [x] **FP-1 — Zebra**", undefined, config);
+	generated.project = { id: "new-shop", name: "New shop" };
+	generated.capabilities.find((capability) => capability.id === "zebra")!.outcome = "FP-9 — Zebra";
+	const expected = [
+		"Project id changed: example-shop → new-shop.",
+		"Project name changed: example-shop → New shop.",
+		'Foundation "quality-gates" was added.',
+		'Capability "alpha": state planned → done.',
+		'Capability "removed" was removed.',
+		'Capability "zebra": outcome FP-1 — Zebra → FP-9 — Zebra.',
+		'Capability "zebra": state planned → done.',
+		'Capability "aardvark-first" was added.',
+		'Capability "new-second" was added.',
+	];
+	assert.deepEqual(projectMapSourceChanges(stored, generated), expected);
+	assert.deepEqual(projectMapSourceChanges(stored, generated), expected);
 });

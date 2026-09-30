@@ -465,6 +465,68 @@ function unmatchedDeclaredEditSurfacePaths(documentText: string, capability: Pro
 	);
 }
 
+/**
+ * Reports the source-owned projection in project, foundation and stored-capability order;
+ * each stored capability id is visited once at its first position, and generated-only
+ * capabilities follow in canonical id order. Repeated generated capability ids use the
+ * first occurrence for field comparison. Foundation ordering is unchanged.
+ * Approval is human-owned and ignored.
+ * Empty generated surfaces preserve human declarations rather than signal staleness.
+ * Known limit: a document that stops declaring an Allowed edit surfaces line is not detected
+ * as a change, because its regenerated empty list also looks like a human's own declaration.
+ */
+export function projectMapSourceChanges(stored: ProjectMapV1, generated: ProjectMapV1): string[] {
+	const changes: string[] = [];
+	const render = (value: unknown): string => Array.isArray(value) ? JSON.stringify(value) : String(value);
+	for (const field of ["id", "name"] as const) {
+		if (stored.project[field] !== generated.project[field]) {
+			changes.push(`Project ${field} changed: ${stored.project[field]} → ${generated.project[field]}.`);
+		}
+	}
+
+	function compareEntries<T extends { id: string }>(
+		label: string,
+		before: T[],
+		after: T[],
+		fields: readonly (keyof T)[],
+		shouldCompare: (entry: T, field: keyof T) => boolean = () => true,
+		canonicalCapabilityIds = false,
+	): void {
+		const generatedById = new Map<string, T>();
+		for (const entry of after) {
+			if (!canonicalCapabilityIds || !generatedById.has(entry.id)) generatedById.set(entry.id, entry);
+		}
+		const storedIds = new Set(before.map((entry) => entry.id));
+		const visitedIds = new Set<string>();
+		for (const entry of before) {
+			if (canonicalCapabilityIds && visitedIds.has(entry.id)) continue;
+			visitedIds.add(entry.id);
+			const next = generatedById.get(entry.id);
+			if (next === undefined) {
+				changes.push(`${label} "${entry.id}" was removed.`);
+				continue;
+			}
+			for (const field of fields) {
+				if (shouldCompare(next, field) && JSON.stringify(entry[field]) !== JSON.stringify(next[field])) {
+					changes.push(`${label} "${entry.id}": ${String(field)} ${render(entry[field])} → ${render(next[field])}.`);
+				}
+			}
+		}
+		const addedIds = canonicalCapabilityIds ? [...generatedById.keys()].sort() : after.map((entry) => entry.id);
+		for (const id of addedIds) {
+			if (!storedIds.has(id)) changes.push(`${label} "${id}" was added.`);
+		}
+	}
+
+	compareEntries("Foundation", stored.foundations, generated.foundations, ["outcome", "state", "evidence"]);
+	compareEntries("Capability", stored.capabilities, generated.capabilities,
+		["outcome", "state", "foundationRefs", "dependsOn", "contracts", "featureDocs", "surfaces"],
+		(entry, field) => field !== "surfaces" || entry.surfaces.length > 0,
+		true,
+	);
+	return changes;
+}
+
 export function generateProjectMapDraft(sources: ProjectMapDraftSources): ProjectMapDraftResult {
 	const assumptions: string[] = [];
 	const omissions: string[] = [];
