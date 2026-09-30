@@ -35,6 +35,8 @@ const BULLET = /^(?:[-*+]|\d+[.)])\s+/;
 // After a body's optional list marker is stripped, only a line beginning exactly with this bold
 // marker (allowing the colon inside or immediately after the closing bold marker) declares paths.
 const ALLOWED_EDIT_SURFACES_MARKER = /^\*\*Allowed edit surfaces:?\*\*:?[\t ]*/;
+// Like allowed edit surfaces, the colon may sit inside or immediately after the bold marker.
+const BELONGS_TO_MARKER = /^\*\*Belongs to:?\*\*:?[\t ]*/;
 // The trailing dot excludes structural parents such as `project_map.surfaces` from surface reports.
 const PROJECT_MAP_SURFACES_PREFIX = "project_map.surfaces.";
 
@@ -119,21 +121,31 @@ function projectMapStateFromCheckbox(checkbox: string): ProjectMapState {
 }
 
 /**
- * Collects the coded sub-elements a functional point owns from the same work-unit grammar the
- * draft reads. Documents and declarations retain their sorted, written order; the first matching
- * declaration of a repeated code therefore wins.
+ * Collects a functional point's sub-elements from the same work-unit grammar the draft reads.
+ * Documents and declarations retain their sorted, written order; repeated coded entries therefore
+ * keep their first declaration.
  */
-export function collectProjectMapSteps(documents: readonly { path: string; text: string }[], code: string): ProjectMapStep[] {
+export function collectProjectMapSteps(documents: readonly { path: string; text: string }[], code: string, delegablePrefix: string | null = null): ProjectMapStep[] {
 	if (code.trim().length === 0) return [];
 	const steps: ProjectMapStep[] = [];
 	const seen = new Set<string>();
 	for (const document of [...documents].sort((left, right) => comparePaths(left.path, right.path))) {
+		const declared = readDeclaredProjectMapParent(document.text);
+		const declaredParentIsUsable = declared.code !== null && delegablePrefix !== null && isDelegableWorkUnitCode(declared.code, delegablePrefix);
 		for (const rawLine of document.text.split("\n")) {
 			const match = DESCRIPTION_WORK_UNIT.exec(rawLine.replace(/\r$/, ""));
 			if (match === null) continue;
 			const label = match[3]!.replace(/\s+/g, " ").trim();
 			const split = splitWorkUnitLabel(label);
 			const unitCode = (split.head.length === 0 ? label : split.head.replace(/—\s*$/, "")).trim();
+			if (declared.hasDeclaration) {
+				if (!declaredParentIsUsable || declared.code !== code || (delegablePrefix !== null && isDelegableWorkUnitLabel(label, delegablePrefix))) continue;
+				const stepCode = split.head.length === 0 ? "" : unitCode;
+				if (stepCode.length > 0 && seen.has(stepCode)) continue;
+				if (stepCode.length > 0) seen.add(stepCode);
+				steps.push({ code: stepCode, title: split.title, state: projectMapStateFromCheckbox(match[2]!), path: document.path });
+				continue;
+			}
 			// D2 says a letter or a dot, and it means any letter: `\p{L}` with the unicode flag, so an
 			// accented continuation is a continuation too. The row rule stays ASCII by nature, because
 			// what it accepts is digits and hyphens.
@@ -339,10 +351,40 @@ function comparePaths(left: string, right: string): number {
 	return left < right ? -1 : 1;
 }
 
+function isDelegableWorkUnitCode(code: string, prefix: string): boolean {
+	return code.startsWith(prefix) && /^\d+(?:-\d+)*$/.test(code.slice(prefix.length));
+}
+
 function isDelegableWorkUnitLabel(label: string, prefix: string): boolean {
 	const { head } = splitWorkUnitLabel(label);
 	const code = head.length === 0 ? label.trim() : head.replace(/—\s*$/, "").trim();
-	return code.startsWith(prefix) && /^\d+(?:-\d+)*$/.test(code.slice(prefix.length));
+	return isDelegableWorkUnitCode(code, prefix);
+}
+
+interface DeclaredProjectMapParent {
+	code: string | null;
+	hasDeclaration: boolean;
+	hasUnreadableDeclaration: boolean;
+}
+
+/** Reads the first readable parent declaration, retaining unreadable markers anywhere for reporting. */
+function readDeclaredProjectMapParent(documentText: string): DeclaredProjectMapParent {
+	let code: string | null = null;
+	let hasDeclaration = false;
+	let hasUnreadableDeclaration = false;
+	for (const rawLine of documentText.split("\n")) {
+		const line = rawLine.replace(/\r$/, "").trim().replace(BULLET, "");
+		const marker = BELONGS_TO_MARKER.exec(line);
+		if (marker === null) continue;
+		hasDeclaration = true;
+		const codes = [...line.slice(marker[0].length).matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+		if (codes.length !== 1) {
+			hasUnreadableDeclaration = true;
+			continue;
+		}
+		if (code === null) code = codes[0]!;
+	}
+	return { code, hasDeclaration, hasUnreadableDeclaration };
 }
 
 interface ExtractedWorkUnits {
@@ -513,7 +555,6 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	if (!Array.isArray(sources.oddTaskDocuments)) {
 		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
 	}
-
 	let capabilityDocuments = documents;
 	if (declaredRoadmapPath === null) {
 		assumptions.push(
@@ -562,6 +603,25 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 				}
 			}
 			capabilities.push(capability);
+		}
+	}
+	// Only retained extraction rows can honour a parent, including when a roadmap limits sources.
+	const rowCodes = new Set(capabilities.map((capability) => {
+		const label = splitWorkUnitLabel(capability.outcome);
+		return (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
+	}));
+	for (const document of documents) {
+		const declared = readDeclaredProjectMapParent(document.text);
+		if (!declared.hasDeclaration) continue;
+		const usable = declared.code !== null && declaredDelegablePrefix !== null
+			&& isDelegableWorkUnitCode(declared.code, declaredDelegablePrefix) && rowCodes.has(declared.code);
+		if (!usable) {
+			const reason = declared.code === null ? ""
+				: declaredDelegablePrefix === null ? ": the project declares no project_map.delegable convention"
+				: `: "${declared.code}" is not a functional point this map declares`;
+			omissions.push(`${document.path} declares an unusable **Belongs to:** declaration${reason}, so its work units were associated with no functional-point row.`);
+		} else if (declared.hasUnreadableDeclaration) {
+			omissions.push(`${document.path} has an unreadable **Belongs to:** marker that was ignored; the readable declaration "${declared.code}" was used instead.`);
 		}
 	}
 	if (declaredDelegablePrefix !== null) {

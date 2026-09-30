@@ -123,17 +123,20 @@ test("lists sub-elements before the unchanged description", () => {
 		{ code: "FP-1a", title: "Prepare provisioning", state: "done", path: "odd/tasks/provisioning.md" },
 		{ code: "FP-1a.1", title: "Create account", state: "active", path: "odd/tasks/provisioning.md" },
 		{ code: "FP-1b.0", title: "Prepare delivery", state: "planned", path: "odd/tasks/provisioning.md" },
+		{ code: "", title: "Uncoded declared unit", state: "done", path: "odd/tasks/provisioning.md" },
 	];
 	const before = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description });
 	const content = buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description }, [], undefined, steps);
 	assert.deepEqual(content.description, before.description, "the body bytes remain the builder's existing result");
 	const rendered = new ProjectMapHelpModal(content, () => {}, theme).render(120).join("\n");
-	assert.ok(rendered.indexOf("Subelementos: 3") < rendered.indexOf("Lo que dice el documento:"), "the section precedes the description");
-	assert.equal((rendered.match(/Subelementos: 3/g) ?? []).length, 1, "the count is stated once");
-	const subelementLines = rendered.split("\n").filter((line) => line.includes("FP-1"));
+	assert.ok(rendered.indexOf("Subelementos: 4") < rendered.indexOf("Lo que dice el documento:"), "the section precedes the description");
+	assert.equal((rendered.match(/Subelementos: 4/g) ?? []).length, 1, "the count is stated once");
+	const subelementLines = rendered.split("\n").filter((line) => line.includes("FP-1") || line.includes("Uncoded declared unit"));
 	assert.ok(subelementLines.some((line) => line.includes(`  · FP-1a — Prepare provisioning · ${PROJECT_MAP_STATE_GLYPH.done}`)), "a lettered cut is one visible level in");
 	assert.ok(subelementLines.some((line) => line.includes(`    · FP-1a.1 — Create account · ${PROJECT_MAP_STATE_GLYPH.active}`)), "a dotted step is two visible levels in");
 	assert.ok(subelementLines.some((line) => line.includes(`    · FP-1b.0 — Prepare delivery · ${PROJECT_MAP_STATE_GLYPH.planned}`)));
+	assert.ok(subelementLines.some((line) => line.includes(`  · Uncoded declared unit · ${PROJECT_MAP_STATE_GLYPH.done}`)), "an uncoded entry has one depth level and no empty code column");
+	assert.equal(subelementLines.some((line) => line.includes("·  — Uncoded declared unit")), false);
 	for (const word of ["hecha", "activa", "planificada"]) assert.ok(!subelementLines.some((line) => line.includes(word)), `the sub-element list does not use ${word}`);
 	assert.ok(rendered.includes("? close-the-gate · planificada"), "the capability subtitle keeps its Spanish state word");
 	assert.ok(rendered.includes(description[0]!));

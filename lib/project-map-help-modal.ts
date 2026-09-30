@@ -47,7 +47,7 @@ export interface ProjectMapHelpContent {
 	subtitle: string;
 	/** One `Label: value` line per declared fact. */
 	facts: string[];
-	/** The coded sub-elements the functional point owns across the repository documents. */
+	/** The sub-elements the functional point owns across the repository documents. */
 	steps: readonly ProjectMapStep[];
 	/** The body the declaring document carries for this capability. */
 	description: string[];
@@ -138,7 +138,10 @@ export class ProjectMapHelpModal {
 		if (this.content.steps.length === 0) lines.push("Subelementos: ninguno.");
 		else {
 			lines.push(`Subelementos: ${this.content.steps.length}`);
-			lines.push(...this.content.steps.map((step) => `${"  ".repeat((step.code.match(/\./g) ?? []).length + 1)}· ${step.code} — ${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`));
+			lines.push(...this.content.steps.map((step) => {
+				const code = step.code.length === 0 ? "" : `${step.code} — `;
+				return `${"  ".repeat(step.code.length === 0 ? 1 : (step.code.match(/\./g) ?? []).length + 1)}· ${code}${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`;
+			}));
 		}
 		lines.push("");
 		if (!this.content.hasDocument) {

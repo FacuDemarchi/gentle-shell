@@ -169,6 +169,38 @@ test("the explanation renders every lettered cut and dotted step inside its func
 	}, { task: "- [ ] **FP-1 — Provisioning**\n  The body line the document carries.\n" });
 });
 
+test("the explanation honors a document's declared parent for coded and uncoded sub-elements", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 40 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(...component.render(100));
+			return {} as never;
+		};
+		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  delegable: FP-\n", "utf8");
+		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), [
+			"**Belongs to:** `FP-5`",
+			"- [ ] **FP-5 — Five**",
+		].join("\n"), "utf8");
+		writeFileSync(join(directory, "odd", "tasks", "five-steps.md"), [
+			"  * **Belongs to:** `FP-5`",
+			"- [~] **F5b-1 — A different code family**",
+			"  - [x] **A bare declared unit**",
+			"- [ ] **FP-9 — A row is excluded**",
+		].join("\n"), "utf8");
+		const drafted = await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const id = drafted.map?.capabilities.find((capability) => capability.outcome === "FP-5 — Five")?.id;
+		assert.equal(id, "five");
+		await explainProjectMapCapability(probe.ctx, id);
+		const body = opened.join("\n");
+		assert.ok(body.includes("Subelementos: 2"));
+		assert.ok(body.includes(`  · F5b-1 — A different code family · ${PROJECT_MAP_STATE_GLYPH.active}`));
+		assert.ok(body.includes(`  · A bare declared unit · ${PROJECT_MAP_STATE_GLYPH.done}`));
+		assert.equal(body.includes("A row is excluded"), false);
+	});
+});
+
 test("the help overlay reserves the rail when the fullscreen sidebar owns it", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory, [true]);

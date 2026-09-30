@@ -16,7 +16,7 @@ import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
-import { collectProjectMapSteps, generateProjectMapDraft, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
+import { collectProjectMapSteps, generateProjectMapDraft, readProjectMapDelegablePrefix, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import {
@@ -413,7 +413,7 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	const label = splitWorkUnitLabel(capability.outcome);
 	const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
 	const repository = readRepositorySources(ctx.cwd);
-	const steps = collectProjectMapSteps(repository.sources.oddTaskDocuments ?? [], code);
+	const steps = collectProjectMapSteps(repository.sources.oddTaskDocuments ?? [], code, readProjectMapDelegablePrefix(repository.sources.openspecConfig));
 	// The static blockers are the one fact the retired Inspector alone carried, so they travel
 	// with the explanation instead of disappearing with it.
 	const content = buildProjectMapHelpContent(

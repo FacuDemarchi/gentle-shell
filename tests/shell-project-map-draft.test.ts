@@ -1145,6 +1145,251 @@ test("collects only letter- or dot-continuing codes from every document in deter
 	assert.deepEqual(collectProjectMapSteps([{ path: "odd/tasks/alpha.md", text: "- [ ] **FP-1b.0 — Setup**\n" }], "FP-9"), []);
 });
 
+test("declared parents own every non-row unit despite its code, indentation, or missing head", () => {
+	const documents = [{
+		path: "odd/tasks/declared.md",
+		text: [
+			"  - **Belongs to**: `FP-5`",
+			"- [~] **F5b-1 — Coded in another family**",
+			"- [x] **A bare prose unit**",
+			"  - [ ] **FP-7x — A different row's extension**",
+			"    - [x] **FP-1b.0 — Another different row's extension**",
+			"- [ ] **FP-9 — A row stays a row**",
+		].join("\n"),
+	}];
+
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-5", "FP-"), [
+		{ code: "F5b-1", title: "Coded in another family", state: "active", path: "odd/tasks/declared.md" },
+		{ code: "", title: "A bare prose unit", state: "done", path: "odd/tasks/declared.md" },
+		{ code: "FP-7x", title: "A different row's extension", state: "planned", path: "odd/tasks/declared.md" },
+		{ code: "FP-1b.0", title: "Another different row's extension", state: "done", path: "odd/tasks/declared.md" },
+	]);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-7", "FP-"), [], "a declaration takes precedence over the extension fallback");
+});
+
+test("reports each unreadable or unusable declared parent once without falling back", () => {
+	const documents = [
+		{
+			path: "odd/tasks/declared.md",
+			text: [
+				"**Belongs to:** `FP-5` and `FP-6`",
+				"**Belongs to:** `FP-5`",
+				"- [ ] **FP-5 — Five**",
+				"- [x] **F5-1 — First declared step**",
+			].join("\n"),
+		},
+		{
+			path: "odd/tasks/unusable.md",
+			text: [
+				"**Belongs to:** `F5`",
+				"- [x] **FP-5a — Must not fall back**",
+			].join("\n"),
+		},
+	];
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n",
+		oddTaskDocuments: documents,
+	});
+
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-5", "FP-"), [
+		{ code: "F5-1", title: "First declared step", state: "done", path: "odd/tasks/declared.md" },
+	]);
+	assert.equal(collectProjectMapSteps(documents, "FP-5", "FP-").some((step) => step.title === "Must not fall back"), false);
+	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+		"odd/tasks/declared.md has an unreadable **Belongs to:** marker that was ignored; the readable declaration \"FP-5\" was used instead.",
+		"odd/tasks/unusable.md declares an unusable **Belongs to:** declaration: \"F5\" is not a functional point this map declares, so its work units were associated with no functional-point row.",
+	]);
+});
+
+test("reports unreadable markers after the winning declaration once while keeping its association", () => {
+	for (const unreadable of ["**Belongs to:**", "**Belongs to:** `FP-5` and `FP-6`"]) {
+		const documents = [{
+			path: "odd/tasks/declared.md",
+			text: [
+				"**Belongs to:** `FP-5`",
+				unreadable,
+				"**Belongs to:** `FP-6`",
+				unreadable,
+				"- [ ] **FP-5 — Five**",
+				"- [ ] **FP-6 — Six**",
+				"- [x] **F5-1 — Declared step**",
+			].join("\n"),
+		}];
+		const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+		assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+			'odd/tasks/declared.md has an unreadable **Belongs to:** marker that was ignored; the readable declaration "FP-5" was used instead.',
+		]);
+		assert.deepEqual(collectProjectMapSteps(documents, "FP-5", "FP-"), [
+			{ code: "F5-1", title: "Declared step", state: "done", path: "odd/tasks/declared.md" },
+		]);
+		assert.deepEqual(collectProjectMapSteps(documents, "FP-6", "FP-"), []);
+	}
+});
+
+test("reports a readable declared parent without a delegable convention as its own cause", () => {
+	const documents = [{ path: "odd/tasks/declared.md", text: "**Belongs to:** `FP-5`\n- [x] **FP-5a — No fallback**" }];
+	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "", oddTaskDocuments: documents });
+	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+		'odd/tasks/declared.md declares an unusable **Belongs to:** declaration: the project declares no project_map.delegable convention, so its work units were associated with no functional-point row.',
+	]);
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-5", null), []);
+});
+
+test("reports a well-shaped declared parent absent from the extracted roadmap once", () => {
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n  roadmap: odd/tasks/roadmap.md\n",
+		oddTaskDocuments: [
+			{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-5 — Five**" },
+			{ path: "odd/tasks/missing.md", text: "**Belongs to:** `FP-999`\n- [ ] **FP-999 — Not extracted from this document**\n- [x] **FP-5a — Must not fall back**" },
+		],
+	});
+	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+		"odd/tasks/missing.md declares an unusable **Belongs to:** declaration: \"FP-999\" is not a functional point this map declares, so its work units were associated with no functional-point row.",
+	]);
+	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-5 — Five"]);
+});
+
+test("unhonoured declarations report only non-association even after unreadable markers", () => {
+	for (const [config, code] of [
+		["project_map:\n  delegable: FP-\n", "FP-999"],
+		["project_map:\n  delegable: FP-\n", "FP-5x"],
+		["", "FP-5"],
+	] as const) {
+		const documents = [
+			{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-5 — Five**" },
+			{ path: "odd/tasks/declared.md", text: `**Belongs to:**\n**Belongs to:** \`${code}\`\n**Belongs to:** \`FP-5\`\n- [x] **FP-5a — No fallback**` },
+		];
+		assert.deepEqual(collectProjectMapSteps(documents, "FP-5", config ? "FP-" : null), [], "the first readable declaration wins even when unusable");
+		const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config, oddTaskDocuments: documents });
+		assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+			config
+				? `odd/tasks/declared.md declares an unusable **Belongs to:** declaration: "${code}" is not a functional point this map declares, so its work units were associated with no functional-point row.`
+				: "odd/tasks/declared.md declares an unusable **Belongs to:** declaration: the project declares no project_map.delegable convention, so its work units were associated with no functional-point row.",
+		]);
+	}
+});
+
+test("adding an unreadable marker removes a derived step and reports one omission", () => {
+	const document = { path: "odd/tasks/fallback.md", text: "- [ ] **FP-5 — Five**\n- [x] **FP-5a — Extending code**" };
+	assert.equal(collectProjectMapSteps([document], "FP-5", "FP-").length, 1);
+	const declaring = { ...document, text: "**Belongs to:** `FP-5` and `FP-6`\n" + document.text };
+	assert.deepEqual(collectProjectMapSteps([declaring], "FP-5", "FP-"), []);
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n",
+		oddTaskDocuments: [declaring],
+	});
+	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
+		"odd/tasks/fallback.md declares an unusable **Belongs to:** declaration, so its work units were associated with no functional-point row.",
+	]);
+});
+
+test("collects the declared junglex-shaped families without crossing into another row", () => {
+	// Bold labels transcribed from junglex/odd/tasks/fp-4-writable-catalog.md (2026-09-29).
+	// The 33 separator-free labels and nine prose em dashes are intentional, not invented codes.
+	const catalogLabels = [
+		"Close the coverage gaps independent verification named, which this unit is the right place for.",
+		"Restore the storage-path traversal checks in `assertValidStoragePath`.",
+		"Scope `imageCreateStatement` to the authorized merchant.",
+		"Add the dual-member mismatched-merchant proofs",
+		"Classify `last_variant` by SQLSTATE rather than by a `/variant/i` match on any error message",
+		"Make product creation honour a sole explicit default regardless of its position in the input.",
+		"Add the persisted-state success proofs that are missing.",
+		"Cover the category-assignment boundary.",
+		"Cover the variant-deletion product equality.",
+		"Prove the new ordering fix has teeth",
+		"Implement the decided cross-tenant denial vocabulary: uniform absence, always 404.",
+		"Discriminate the disabled-merchant refusal from the cross-tenant refusal, because both raise `42501`.",
+		"The disabled-merchant answer itself is unowned",
+		"Close the default-variant contract divergence measured in FP-4a2",
+		"Close the `displayOrder` contract divergence — measured closed.",
+		"Close the multiple-default contract divergence — measured closed.",
+		"Which layer catches the fourteen table-swap mutants (batch M33–M46) — measured, and the unit layer does not.",
+		"The pre-`try` failure release path — measured independently.",
+		"Add the missing markup functions to the three catalog controllers",
+		"Forced cleanup of pre-existing formatter suppressions.",
+		"c2 — the three catalog surfaces are mounted and wired to real routes.",
+		"Mount `CategoryManager`, `ProductEditor`, `AvailabilityToggle`, `OnboardingAdmin` and `ServiceSettings` into `apps/web/src/app/shell.ts` for a real merchant session.",
+		"Blocked dependency, discovered while mounting: there is no media-upload path in this repository, so `ProductEditorApi.upload` cannot be wired to anything real.",
+		"Register `AvailabilityToggle.test.tsx`, `CategoryManager.test.tsx` and `ProductEditor.test.tsx` in both `package.json` (`test:ts:ci:non-rls`) and `tests/unit/test-runner-config.test.ts`.",
+		"Run the full gate and confirm zero failures.",
+		"Extend the shell tests to cover the mounted surfaces and their absence for a customer session.",
+		"BLOCKER (independent verification; r5 scope) — the mounted catalog has no product-creation path.",
+		"SECOND LAYER OF THE SAME BLOCKER, found when the fix was attempted — `ProductEditor` is a viewer wearing an editor's name.",
+		"BLOCKER (independent verification; r6 scope) — state binding is unproven.",
+		"Close the six escapes, then measure the closure (r6).",
+		"BLOCKER (final verification; r7a): the mounted variant controls and price are inert.",
+		"BLOCKER (final verification; r7b): category management was a viewer with inert buttons.",
+		"BLOCKER (final verification; r7b): no product picker and no \"new product\" action.",
+		"HIGH (round-three verification; r8a): a successful existing-product save kept stale variant identities.",
+		"HIGH (round-three verification; r8a): removing a persisted variant updated and deleted by position instead of identity.",
+		"MEDIUM (round-three verification; r8b): mounted interaction coverage is still incomplete.",
+		"BLOCKER (round-three verification; r8c/r8d): an empty configuration cannot be populated through the mounted controls — and I measured that the enablement gate therefore cannot be satisfied at all.",
+		"DEFECT (round-four verification; r9a): the operating-hours values failed the contract at the browser boundary.",
+		"GAP (round-four verification; r9b): the single seven-prerequisite journey and general list retention.",
+		"MEASUREMENT (r9c): the four escapes are closed.",
+		"BLOCKER (final verification; r7c/r7d): onboarding configuration saves and the service actions were inert.",
+		"Follow-up (final verification; r7d): the mounted availability toggle is never clicked.",
+	];
+	const catalogStates = "              xxxxxxxx xxxx   xxxxx  xxxxx";
+	assert.equal(catalogStates.length, 42);
+	const documents = [
+		{ path: "odd/tasks/fp-4-writable-catalog.md", text: ["**Belongs to:** `FP-4`", ...catalogLabels.map((label, index) => `- [${catalogStates[index]}] **${label}** Trailing prose is outside the label.`)].join("\n") },
+		{ path: "odd/tasks/fp-5-geocoding.md", text: ["**Belongs to:** `FP-5`", ...Array.from({ length: 5 }, (_, number) => `- [x] **F5-${number + 1}** Trailing prose is outside the label.`)].join("\n") },
+		{ path: "odd/tasks/fp-6-notifications.md", text: ["**Belongs to:** `FP-6`", ...Array.from({ length: 7 }, (_, number) => `- [x] **F6-${number + 1}** Trailing prose is outside the label.`)].join("\n") },
+		{ path: "odd/tasks/fp-7-customer-truth-up.md", text: ["**Belongs to:** `FP-7`", ..."abcde".split("").map((letter) => `- [x] **F7-1${letter}** Trailing prose is outside the label.`)].join("\n") },
+	];
+	for (const [row, titles] of [
+		["FP-5", Array.from({ length: 5 }, (_, index) => `F5-${index + 1}`)],
+		["FP-6", Array.from({ length: 7 }, (_, index) => `F6-${index + 1}`)],
+		["FP-7", "abcde".split("").map((letter) => `F7-1${letter}`)],
+	] as const) {
+		assert.deepEqual(collectProjectMapSteps(documents, row, "FP-"), titles.map((title) => ({
+			code: "", title, state: "done", path: documents.find((document) => document.text.startsWith(`**Belongs to:** \`${row}\``))!.path,
+		})));
+	}
+	const catalog = collectProjectMapSteps(documents, "FP-4", "FP-");
+	assert.equal(catalog.length, 42);
+	assert.equal(catalog.filter((step) => step.code === "").length, 33);
+	assert.deepEqual(catalog.map((step) => step.code ? `${step.code} — ${step.title}` : step.title), catalogLabels);
+	assert.deepEqual(catalog.map((step) => step.state), [...catalogStates].map((state) => state === "x" ? "done" : "planned"));
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-8", "FP-"), [], "no document declares this row");
+});
+
+test("keeps the no-declaration collector and generated draft byte-identical", () => {
+	const documents = [{
+		path: "odd/tasks/fallback.md",
+		text: [
+			"- [ ] **FP-5 — Five**",
+			"- [x] **FP-5a — Extending code**",
+			"- [~] **F5-1 — Non-extending code**",
+			"  - [ ] **An uncoded unit**",
+		].join("\n"),
+	}];
+	const result = generateProjectMapDraft({
+		packageJson: manifest(),
+		openspecConfig: "project_map:\n  delegable: FP-\n",
+		oddTaskDocuments: documents,
+	});
+
+	assert.deepEqual(collectProjectMapSteps(documents, "FP-5", "FP-"), [
+		{ code: "FP-5a", title: "Extending code", state: "done", path: "odd/tasks/fallback.md" },
+	]);
+	assert.deepEqual(result.map?.capabilities, [expectedHeadCapability("odd/tasks/fallback.md", "five", "FP-5 — Five")]);
+	assert.deepEqual(result.omissions, [
+		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
+		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
+	]);
+	assert.deepEqual(result.assumptions, [
+		"No project_map.roadmap is declared, so units whose codes do not match the declared \"FP-\" convention were read as steps rather than capabilities.",
+		"2 work units were read as steps instead of capabilities because their codes do not match the declared \"FP-\" convention.",
+		...headFallbackAssumptions.slice(1),
+	]);
+	assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization([expectedHeadCapability("odd/tasks/fallback.md", "five", "FP-5 — Five")]));
+});
+
 test("matches HEAD's complete output for synthetic no-convention corpora", () => {
 	const commonOmissions = [
 		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
