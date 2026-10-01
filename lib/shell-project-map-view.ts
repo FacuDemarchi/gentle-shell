@@ -243,18 +243,16 @@ const CARD_BODY_BUDGET = 60;
 const EMPTY_LAUNCHABLE: ReadonlySet<string> = new Set<string>();
 
 /**
- * Keeps a useful beginning and, once three characters fit, an identifying end of compact
- * display text: an end-truncated label can lose the functional-point code or its distinguishing
- * end, while the card keeps the identifier in click metadata and the explanation carries it in
- * full. One or two characters leave only `…` or a head plus `…` once the text has to be cut;
- * text that already fits the room comes back unchanged.
+ * Cuts a label that does not fit at its end, keeping its head: the functional point's code and
+ * the beginning of its name are what a reader scans a row for, and the row's click metadata and
+ * the `?` explanation still carry the whole label, so dropping the tail loses nothing the row
+ * alone was holding. One character of room leaves `…` alone; text that already fits comes back
+ * unchanged.
  */
-function middleTruncate(text: string, room: number): string {
+function endTruncate(text: string, room: number): string {
 	if (room <= 0) return "";
 	if (text.length <= room) return text;
-	const head = Math.ceil((room - 1) / 2);
-	const tail = room - 1 - head;
-	return `${text.slice(0, head)}…${tail > 0 ? text.slice(text.length - tail) : ""}`;
+	return `${text.slice(0, room - 1)}…`;
 }
 
 /**
@@ -302,7 +300,7 @@ function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, in
 	// The label budget is measured on the plain head: the painted marker carries an escape
 	// sequence, and counting its bytes would shorten every launchable row for no reason.
 	const head = launchable ? plainHead.replace(PROJECT_MAP_LAUNCH_MARKER, paint("accent", PROJECT_MAP_LAUNCH_MARKER)) : plainHead;
-	return `${head}${middleTruncate(outcome, innerWidth - plainHead.length)}`;
+	return `${head}${endTruncate(outcome, innerWidth - plainHead.length)}`;
 }
 
 export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {

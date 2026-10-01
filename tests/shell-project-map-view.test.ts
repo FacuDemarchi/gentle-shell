@@ -159,9 +159,9 @@ test("structured card body records group headers and the selected capability row
 
 // A capability row is built as one body line rather than intentionally wrapped. A row that
 // spilled onto a second line lost its glyph and its indent, so it read as two unrelated lines.
-// The functional-point label is truncated in the middle instead, and the card keeps the
-// identifier in its click metadata.
-test("a capability row is one body line, middle-truncates a long outcome, and keeps its markers", () => {
+// The functional-point label is cut at its end instead, keeping the code and the beginning of the
+// name, and the card keeps the identifier in its click metadata.
+test("a capability row is one body line, end-truncates a long outcome, and keeps its markers", () => {
 	const id = "repo-production";
 	const outcome = `FP-1a — ${"Repo-side production path ".repeat(3)}(no accounts needed)`;
 	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46, new Set([id]));
@@ -172,6 +172,9 @@ test("a capability row is one body line, middle-truncates a long outcome, and ke
 	assert.match(row, /^  \? ✿ ✓ /, "the row keeps its indent and marker columns");
 	assert.equal(row.includes("· Web"), false, "the row has no surface tail");
 	assert.ok(row.includes("…"), "a row that does not fit truncates its functional-point label");
+	assert.ok(row.endsWith("…"), "the ellipsis lands at the end of the label, not inside it");
+	assert.ok(row.includes("FP-1a — Repo-side"), "the code and the head of the name survive");
+	assert.equal(row.includes("(no accounts needed)"), false, "the tail is what the ellipsis replaces");
 	assert.ok(row.length <= 46, `${row.length} exceeds the body budget`);
 });
 
