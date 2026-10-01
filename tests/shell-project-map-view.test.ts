@@ -19,6 +19,7 @@ import {
 	projectMapCardDigest,
 	projectMapCardState,
 	projectMapCoverage,
+	projectMapCoverageLines,
 	projectMapGroupFromHeader,
 	projectMapStaticBlockers,
 	projectMapSummaryLine,
@@ -145,8 +146,8 @@ test("renders grouped rows with done indicators and lifecycle glyphs", () => {
 	assert.ok(body.includes("▾ Foundations 1/1"));
 	assert.ok(body.includes("▾ Product capabilities 1/3"));
 	assert.ok(body.includes(`✓ repository-tooling`));
-	assert.ok(body.includes(`✓ Merchants manage a catalog. · Web · API`));
-	assert.ok(body.includes(`✕ Shoppers check out. · Web`));
+	assert.ok(body.includes(`✓ Merchants manage a catalog.`));
+	assert.ok(body.includes(`✕ Shoppers check out.`));
 });
 
 test("structured card body records group headers and the selected capability row", () => {
@@ -169,7 +170,7 @@ test("a capability row is one body line, middle-truncates a long outcome, and ke
 	assert.equal(target.id, id, "the click target remains the identifier");
 	const row = body.lines[target.line]!;
 	assert.match(row, /^  \? ✿ ✓ /, "the row keeps its indent and marker columns");
-	assert.ok(row.includes("· Web"), "the row keeps its surfaces");
+	assert.equal(row.includes("· Web"), false, "the row has no surface tail");
 	assert.ok(row.includes("…"), "a row that does not fit truncates its functional-point label");
 	assert.ok(row.length <= 46, `${row.length} exceeds the body budget`);
 });
@@ -184,7 +185,7 @@ test("a painted functional-point label keeps selection and click metadata addres
 	assert.equal(target.help, 2, "the help marker keeps its column");
 	assert.ok(target.launch !== undefined, "the launch marker stays available by identifier");
 	const row = body.lines[target.line]!;
-	assert.match(row, /^▸ \? ✿ ✓ FP-1a — Repo-side production path \(no accounts needed\) · Web · API$/);
+	assert.match(row, /^▸ \? ✿ ✓ FP-1a — Repo-side production path \(no accounts needed\)$/);
 	assert.equal(row.includes(id), false, "the identifier is not painted in place of the label");
 });
 
@@ -199,8 +200,8 @@ test("collapses outcome whitespace so a hand-edited label cannot split a row", (
 	})), PROJECT_MAP_EXPANDED, newlineId, 80, new Set([newlineId]));
 	const newlineTarget = body.capabilities.find((entry) => entry.id === newlineId)!;
 	const spacesTarget = body.capabilities.find((entry) => entry.id === spacesId)!;
-	assert.equal(body.lines[newlineTarget.line], "▸ ? ✿ ✓ FP-1 Second line · Web · API");
-	assert.equal(body.lines[spacesTarget.line], "  ? ○ Spaces collapse too · Web");
+	assert.equal(body.lines[newlineTarget.line], "▸ ? ✿ ✓ FP-1 Second line");
+	assert.equal(body.lines[spacesTarget.line], "  ? ○ Spaces collapse too");
 	assert.equal(body.lines[newlineTarget.line]!.includes("\n"), false, "a newline in the artifact stays inside one painted row");
 	assert.equal(newlineTarget.id, newlineId, "click metadata remains addressed by id");
 	assert.equal(spacesTarget.id, spacesId, "every collapsed label keeps its own id target");
@@ -209,7 +210,7 @@ test("collapses outcome whitespace so a hand-edited label cannot split a row", (
 test("a capability whose outcome is its id keeps its plain row text", () => {
 	const capability = { ...map().capabilities[1]!, outcome: "shopping-cart" };
 	const body = projectMapCardBody(ready(map({ capabilities: [capability] })), PROJECT_MAP_EXPANDED);
-	assert.equal(body.lines[body.capabilities[0]!.line], "  ? ○ shopping-cart · —");
+	assert.equal(body.lines[body.capabilities[0]!.line], "  ? ○ shopping-cart");
 });
 
 test("a capability row carries the marker left of its lifecycle glyph", () => {
@@ -236,9 +237,10 @@ test("a capability that cannot be launched keeps the row it has today", () => {
 	assert.equal(withEmptySet.capabilities[0]!.launch, undefined, "and records no launch column");
 });
 
-test("a capability that declares no surface renders the same absence Coverage uses", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("Shoppers build a cart. · —"));
+test("a capability that declares no surface ends at its label without an absence tail", () => {
+	const body = projectMapCardBody(ready(map()));
+	const target = body.capabilities.find((entry) => entry.id === "shopping-cart")!;
+	assert.equal(body.lines[target.line], "  ? ○ Shoppers build a cart.");
 });
 
 test("static blockers name the state, the foundations and the dependencies that are not done", () => {
@@ -273,7 +275,7 @@ test("collapsing one group preserves the other group and its header", () => {
 	assert.ok(body.includes("▸ Foundations 1/1"));
 	assert.equal(body.includes("repository-tooling"), false);
 	assert.ok(body.includes("▾ Product capabilities 1/3"));
-	assert.ok(body.includes("merchant-catalog"));
+	assert.ok(body.includes("Merchants manage a catalog."));
 	assert.deepEqual(toggleProjectMapGroup(collapsed, "capabilities"), { foundations: true, capabilities: true });
 });
 
@@ -291,9 +293,10 @@ test("reads a rendered group header back to its group and rejects content rows",
 	assert.equal(projectMapGroupFromHeader("│ ▾ Foundations"), undefined);
 });
 
-test("says a capability declares no surface instead of rendering an empty list", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	assert.ok(body.includes("Shoppers build a cart. · —"));
+test("a card with both groups collapsed contains only their headers", () => {
+	assert.deepEqual(projectMapCardDescriptor(ready(map()), { foundations: true, capabilities: true }).body, [
+		"▸ Foundations 1/1", "▸ Product capabilities 1/3",
+	]);
 });
 
 test("computes coverage from declared capabilities and counts only done ones", () => {
@@ -306,16 +309,45 @@ test("computes coverage from declared capabilities and counts only done ones", (
 	assert.deepEqual(security, { surface: "security", declared: 0, done: 0 });
 });
 
+test("builds unpacked map coverage lines in schema order from the supplied counts", () => {
+	const state = map();
+	const coverage = projectMapCoverage(state);
+	assert.deepEqual(projectMapCoverageLines(state, [...coverage].reverse()), [
+		"Product/UX —",
+		"Web 50% (1/2): merchant-catalog ✓, checkout ✕",
+		"API 100% (1/1): merchant-catalog ✓",
+		"Data —",
+		"Security —",
+		"Ops —",
+		"Tests —",
+	]);
+	const thirds = coverage.map((entry) => entry.surface === "web" ? { ...entry, done: 2, declared: 3 } : entry);
+	assert.equal(projectMapCoverageLines(state, thirds)[1], "Web 67% (2/3): merchant-catalog ✓, checkout ✕", "the builder formats supplied coverage, not a second derivation");
+	const empty = map({ capabilities: [] });
+	assert.deepEqual(projectMapCoverageLines(empty, projectMapCoverage(empty)), ["Product/UX —", "Web —", "API —", "Data —", "Security —", "Ops —", "Tests —"]);
+});
+
+test("the card paints only its groups and label-only rows, preserving row targets", () => {
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120, new Set(["merchant-catalog"]));
+	assert.deepEqual(body.lines, [
+		"▾ Foundations 1/1", "  ✓ repository-tooling", "▾ Product capabilities 1/3",
+		"▸ ? ✿ ✓ Merchants manage a catalog.", "  ? ○ Shoppers build a cart.", "  ? ✕ Shoppers check out.",
+	]);
+	assert.deepEqual(body.capabilities, [{ line: 3, id: "merchant-catalog", height: 1, help: 2, launch: 4 }, { line: 4, id: "shopping-cart", height: 1, help: 2 }, { line: 5, id: "checkout", height: 1, help: 2 }]);
+	assert.equal(body.selected, 3);
+});
+
 test("renders an undeclared surface as unknown and never as zero percent", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
-	const coverageLine = body.split("\n").find((line) => line.includes("Security"));
+	const state = map();
+	const coverageLine = projectMapCoverageLines(state, projectMapCoverage(state)).find((line) => line.includes("Security"));
 	assert.ok(coverageLine, "expected a coverage line naming Security");
 	assert.ok(coverageLine.includes("Security —"), `expected an unknown marker, got ${coverageLine}`);
 	assert.equal(coverageLine.includes("Security 0%"), false);
 });
 
 test("renders a declared surface with its share, counts, and declaring capabilities", () => {
-	const body = projectMapCardDescriptor(ready(map())).body.join("\n");
+	const state = map();
+	const body = projectMapCoverageLines(state, projectMapCoverage(state)).join("\n");
 	assert.ok(body.includes("Web 50% (1/2):"), `expected the Web explanation, got ${body}`);
 	assert.ok(body.includes("merchant-catalog ✓"), `expected the done declaring capability, got ${body}`);
 	assert.ok(body.includes("checkout ✕"), `expected the blocked declaring capability, got ${body}`);
@@ -340,6 +372,30 @@ test("folds every painted label into the digest, even past the default row budge
 	const equivalent = state("Same\npainted\tlabel");
 	assert.deepEqual(projectMapCardDescriptor(collapsed), projectMapCardDescriptor(equivalent), "the two states render identically after paint-time whitespace collapse");
 	assert.equal(projectMapCardDigest(collapsed), projectMapCardDigest(equivalent), "identically rendered states keep a stable digest");
+});
+
+test("a surfaces-only change leaves the painted card and its digest unchanged", () => {
+	const original = map();
+	const changed = map({ capabilities: original.capabilities.map((capability) => ({ ...capability, surfaces: ["data" as const, "tests" as const] })) });
+	assert.notDeepEqual(projectMapCoverage(original), projectMapCoverage(changed), "the map's roll-up really changes");
+	assert.deepEqual(projectMapCardDescriptor(ready(changed)), projectMapCardDescriptor(ready(original)));
+	assert.equal(projectMapCardDigest(ready(changed)), projectMapCardDigest(ready(original)));
+});
+
+test("a painted label change moves the card digest", () => {
+	const original = map();
+	const changed = map({ capabilities: original.capabilities.map((capability, index) => index === 0 ? { ...capability, outcome: "A different painted label." } : capability) });
+	assert.notDeepEqual(projectMapCardDescriptor(ready(changed)), projectMapCardDescriptor(ready(original)));
+	assert.notEqual(projectMapCardDigest(ready(changed)), projectMapCardDigest(ready(original)));
+});
+
+test("the label uses all the width left after the plain markers", () => {
+	for (const launchable of [new Set<string>(), new Set(["merchant-catalog"])]) {
+		const prefix = launchable.size === 0 ? "  ? ✓ " : "  ? ✿ ✓ ";
+		const outcome = "L".repeat(46 - prefix.length);
+		const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46, launchable);
+		assert.equal(body.lines[body.capabilities[0]!.line], `${prefix}${outcome}`);
+	}
 });
 
 test("keeps the digest stable when the card does not change and moves when it does", () => {

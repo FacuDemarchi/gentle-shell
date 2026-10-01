@@ -79,7 +79,7 @@ test("scrolls with the arrow and page keys", () => {
 	const long = Array.from({ length: 40 }, (_, index) => `line ${index}`);
 	const { instance } = modal(long, 20);
 	const first = instance.render(60).join("\n");
-	assert.ok(first.includes("line 0"), "the first render starts at the top");
+	assert.ok(first.includes("Superficies: ninguno"), "the first render starts at the facts, before the added roll-up");
 	assert.ok(first.includes("↓ "), "and says how much is below it");
 	assert.ok(!first.includes("arriba"), "with nothing above it");
 	instance.handleInput("\u001b[B");
@@ -143,6 +143,59 @@ test("lists sub-elements before the unchanged description", () => {
 	assert.ok(rendered.includes(description[1]!));
 	const empty = new ProjectMapHelpModal(buildProjectMapHelpContent(capability, { title: "Close the gate", lines: description }), () => {}, theme).render(120).join("\n");
 	assert.ok(empty.includes("Subelementos: ninguno"), "an empty sub-element section is explicit");
+});
+
+test("places the map roll-up after facts and sub-elements with the description still last", () => {
+	const steps: ProjectMapStep[] = [{ code: "FP-1a", title: "Prepare", state: "done", path: "odd/tasks/prepare.md" }];
+	const description = { title: "Close the gate", lines: ["Original body."] };
+	const rollup = ["Product/UX —", "Web 50% (1/2): gate ✓, catalog ✕", "API —", "Data —", "Security —", "Ops —", "Tests —"];
+	const before = buildProjectMapHelpContent(capability, description, ["estado bloqueado"], "Original note.", steps);
+	const content = buildProjectMapHelpContent(capability, description, ["estado bloqueado"], "Original note.", steps, rollup);
+	assert.deepEqual(content.facts, before.facts);
+	assert.deepEqual(content.steps, steps);
+	assert.deepEqual(content.description, description.lines);
+	const body = new ProjectMapHelpModal(content, () => {}, theme, () => 100).render(120).join("\n");
+	const ordered = ["Bloqueos: estado bloqueado", "Subelementos: 1", "FP-1a — Prepare · ✓", "Cobertura por superficie", "Este es el resumen del mapa completo, no de esta capability.", ...rollup, "Original note.", "Lo que dice el documento:", "· Original body."];
+	for (let index = 1; index < ordered.length; index++) assert.ok(body.indexOf(ordered[index]!) > body.indexOf(ordered[index - 1]!), `${ordered[index]} follows ${ordered[index - 1]}`);
+	assert.ok(body.includes("Superficies: ninguno · Fundamentos: ninguno"));
+	assert.ok(body.includes("? close-the-gate · planificada"));
+});
+
+test("keeps an explicit map roll-up when no surface or document is declared", () => {
+	const rollup = ["Product/UX —", "Web —", "API —", "Data —", "Security —", "Ops —", "Tests —"];
+	const content = buildProjectMapHelpContent({ ...capability, featureDocs: [] }, null, [], undefined, [], rollup);
+	const body = new ProjectMapHelpModal(content, () => {}, theme, () => 100).render(120).join("\n");
+	assert.ok(body.includes("El mapa no declara ninguna superficie."));
+	assert.ok(body.indexOf("Subelementos: ninguno.") < body.indexOf("Cobertura por superficie"));
+	for (const line of rollup) assert.ok(body.includes(line));
+	assert.ok(body.indexOf("Tests —") < body.indexOf("El mapa no declara ningún documento"));
+});
+
+test("omitting roll-up lines renders no coverage section or map-level claims", () => {
+	const content = buildProjectMapHelpContent({ ...capability, surfaces: ["web"] }, null);
+	const body = new ProjectMapHelpModal(content, () => {}, theme, () => 100).render(120).join("\n");
+	assert.ok(body.includes("Superficies: web"), "the capability's declared surfaces remain visible");
+	assert.ok(!body.includes("Cobertura por superficie"));
+	assert.ok(!body.includes("Este es el resumen del mapa completo"));
+	assert.ok(!body.includes("no declara ninguna superficie"));
+});
+
+test("supplied all-undeclared roll-up renders the coverage section and absence statement", () => {
+	const rollup = ["Product/UX —", "Web —", "API —", "Data —", "Security —", "Ops —", "Tests —"];
+	const content = buildProjectMapHelpContent(capability, null, [], undefined, [], rollup);
+	const body = new ProjectMapHelpModal(content, () => {}, theme, () => 100).render(120).join("\n");
+	assert.ok(body.includes("Cobertura por superficie"));
+	assert.ok(body.includes("Este es el resumen del mapa completo, no de esta capability."));
+	assert.ok(body.includes("El mapa no declara ninguna superficie."));
+	for (const line of rollup) assert.ok(body.includes(line));
+});
+
+test("wraps supplied roll-up text without dropping its tail", () => {
+	const rollup = [`Web 100% (1/1): ${"capability ✓, ".repeat(20)}last-capability ✓`];
+	const content = buildProjectMapHelpContent(capability, null, [], undefined, [], rollup);
+	const lines = new ProjectMapHelpModal(content, () => {}, theme, () => 100).render(40);
+	assert.ok(lines.join("\n").includes("last-capability ✓"));
+	for (const line of lines) assert.ok(visibleWidth(line) <= 40);
 });
 
 test("states the static blockers, and says none when there are none", () => {

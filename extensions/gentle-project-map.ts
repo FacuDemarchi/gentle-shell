@@ -49,6 +49,8 @@ import {
 } from "../lib/shell-project-map-schema.ts";
 import {
 	PROJECT_MAP_EXPANDED,
+	projectMapCoverage,
+	projectMapCoverageLines,
 	projectMapStaticBlockers,
 	toggleProjectMapGroup,
 	type ProjectMapCollapseState,
@@ -421,6 +423,7 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 		projectMapStaticBlockers(map, capabilityId),
 		translated.note,
 		steps,
+		projectMapCoverageLines(map, projectMapCoverage(map)),
 	);
 	try {
 		await ctx.ui.custom<ProjectMapHelpResult>(

@@ -49,6 +49,8 @@ export interface ProjectMapHelpContent {
 	facts: string[];
 	/** The sub-elements the functional point owns across the repository documents. */
 	steps: readonly ProjectMapStep[];
+	/** Map-level surface roll-up text supplied by the view library, never recomputed here. */
+	coverageLines: readonly string[];
 	/** The body the declaring document carries for this capability. */
 	description: string[];
 	/** True when the map names a document, so the description is the document's silence. */
@@ -72,7 +74,7 @@ export type ProjectMapHelpResult = { type: "close" };
  * the prefix: `normalizeIdentifier` drops a scope before a `/`, so a label such as
  * `Title/Provisioning` still normalizes to the id and is suppressed.
  */
-export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string, steps: readonly ProjectMapStep[] = []): ProjectMapHelpContent {
+export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, description: ProjectMapDescription | null, blockers: readonly string[] = [], descriptionNote?: string, steps: readonly ProjectMapStep[] = [], coverageLines: readonly string[] = []): ProjectMapHelpContent {
 	const list = (values: readonly string[]): string => (values.length === 0 ? "ninguno" : values.join(", "));
 	const facts: string[] = [];
 	if (normalizeIdentifier(capability.outcome) !== capability.id) facts.push(`Resultado: ${capability.outcome}`);
@@ -87,6 +89,7 @@ export function buildProjectMapHelpContent(capability: ProjectMapCapabilityV1, d
 		facts,
 		...(descriptionNote === undefined || descriptionNote.length === 0 ? {} : { descriptionNote }),
 		steps,
+		coverageLines,
 		description: description?.lines ?? [],
 		hasDocument: capability.featureDocs.length > 0,
 	};
@@ -142,6 +145,11 @@ export class ProjectMapHelpModal {
 				const code = step.code.length === 0 ? "" : `${step.code} — `;
 				return `${"  ".repeat(step.code.length === 0 ? 1 : (step.code.match(/\./g) ?? []).length + 1)}· ${code}${step.title} · ${PROJECT_MAP_STATE_GLYPH[step.state] ?? step.state}`;
 			}));
+		}
+		if (this.content.coverageLines.length > 0) {
+			lines.push("", "Cobertura por superficie", "Este es el resumen del mapa completo, no de esta capability.");
+			if (this.content.coverageLines.every((line) => line.endsWith(" —"))) lines.push("El mapa no declara ninguna superficie.");
+			lines.push(...this.content.coverageLines);
 		}
 		lines.push("");
 		if (!this.content.hasDocument) {

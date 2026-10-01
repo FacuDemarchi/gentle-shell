@@ -205,8 +205,8 @@ test("the marker explains a capability while the rest of the row still selects i
 		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, (id) => explained.push(id));
 		const lines = rail.render(56);
 		const header = lines.findIndex((line) => line.includes("Product capabilities"));
-		const coverage = lines.findIndex((line) => line.includes("Coverage"));
-		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < coverage && entry.line.includes("? "))!.index;
+		const bodyEnd = lines.length - 1;
+		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < bodyEnd && entry.line.includes("? "))!.index;
 		const click = (x: number) => rail.handleMouse?.({ type: "click", button: "left", x, y: row, screenX: x, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
 		// The marker is two body columns in, and the frame spends two columns before the body.
 		assert.deepEqual(click(4), { handled: true }, "the marker is handled, and nothing repaints");
@@ -226,8 +226,8 @@ test("the launch marker opens the capability while the rest of the row still sel
 		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: (id) => launched.push(id) });
 		const lines = rail.render(56);
 		const header = lines.findIndex((line) => line.includes("Product capabilities"));
-		const coverage = lines.findIndex((line) => line.includes("Coverage"));
-		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < coverage && entry.line.includes("? ✿ "))!.index;
+		const bodyEnd = lines.length - 1;
+		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < bodyEnd && entry.line.includes("? ✿ "))!.index;
 		const click = (x: number) => rail.handleMouse?.({ type: "click", button: "left", x, y: row, screenX: x, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
 		// The launch marker is four body columns in, and the frame spends two before the body.
 		assert.deepEqual(click(6), { handled: true }, "the launch marker is handled, and nothing repaints");
@@ -272,9 +272,9 @@ test("a capability row is one rendered line, and that line selects it", () => {
 		const probe = session();
 		const rail = projectMapCardRail(path, theme, probe);
 		const lines = rail.render(46);
-		const row = lines.findIndex((line) => line.includes("· Web"));
-		assert.ok(row > 0, "the capability row renders its surfaces on its own line");
-		assert.equal(lines.filter((line) => line.includes("· Web")).length, 1, "the row is not spread over several lines");
+		const row = lines.findIndex((line) => line.includes("? ✓ "));
+		assert.ok(row > 0, "the capability row renders its markers and label on its own line");
+		assert.equal(lines.filter((line) => line.includes("? ✓ ")).length, 1, "the row is not spread over several lines");
 		const result = rail.handleMouse?.({ type: "click", button: "left", x: 2, y: row, screenX: 2, screenY: row, width: 46, height: lines.length, shift: false, alt: false, ctrl: false });
 		assert.deepEqual(result, { handled: true, render: true });
 		assert.deepEqual(probe.selected, [longId]);

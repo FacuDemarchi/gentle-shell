@@ -141,6 +141,37 @@ test("explaining a capability opens the overlay with what its document says", as
 	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
+test("every capability explanation carries the whole map's surface roll-up without writing the artifact", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory, [true]);
+		await runProjectMapCommand("draft", probe.ctx, { now: () => NOW });
+		const map = readProjectMapFile(artifactPath(directory)).map!;
+		map.capabilities[0]!.surfaces = ["web"];
+		map.capabilities[0]!.state = "done";
+		map.capabilities[1]!.surfaces = ["web", "api"];
+		map.capabilities[1]!.state = "blocked";
+		writeFileSync(artifactPath(directory), JSON.stringify(map), "utf8");
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const opened: string[] = [];
+		probe.ctx.ui.custom = async (factory) => {
+			const component = factory({ terminal: { rows: 100 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {});
+			opened.push(component.render(120).join("\n"));
+			return {} as never;
+		};
+		for (const capability of map.capabilities) await explainProjectMapCapability(probe.ctx, capability.id);
+		assert.equal(opened.length, 2);
+		for (const body of opened) {
+			const ordered = ["Product/UX —", `Web 50% (1/2): ${map.capabilities[0]!.id} ✓, ${map.capabilities[1]!.id} ✕`, `API 0% (0/1): ${map.capabilities[1]!.id} ✕`, "Data —", "Security —", "Ops —", "Tests —"];
+			assert.ok(body.includes("Este es el resumen del mapa completo, no de esta capability."));
+			for (const line of ordered) assert.ok(body.includes(line), line);
+			for (let index = 1; index < ordered.length; index++) assert.ok(body.indexOf(ordered[index]!) > body.indexOf(ordered[index - 1]!));
+			assert.ok(body.indexOf("Subelementos: ninguno.") < body.indexOf("Cobertura por superficie"));
+			assert.ok(body.indexOf("Tests —") < body.indexOf("Lo que dice el documento:"));
+		}
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	}, { task: "- [ ] **FP-1 — Catalog**\n  Catalog body.\n- [ ] **FP-2 — Checkout**\n  Checkout body.\n" });
+});
+
 test("the explanation renders every lettered cut and dotted step inside its functional-point row", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory, [true]);

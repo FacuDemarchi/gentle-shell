@@ -113,7 +113,7 @@ export interface ProjectMapCardDescriptor {
 /**
  * Per-surface coverage. `declared` counts the capabilities that state the surface and
  * `done` those that also reached `done`. A surface nothing declares stays at zero of zero,
- * which the card renders as unknown: an undeclared surface is an absence of evidence, not
+ * which the explanation renders as unknown: an undeclared surface is an absence of evidence, not
  * evidence of absence.
  */
 export function projectMapCoverage(map: ProjectMapV1): ProjectMapCoverageEntry[] {
@@ -136,7 +136,7 @@ export function projectMapCardState(path: string, overlay: ProjectMapOverlay = P
 }
 
 /**
- * Wraps the coverage parts into lines that already fit a narrow card. The card renderer
+ * Wraps body text into lines that already fit a narrow card. The card renderer
  * would wrap them anyway, but a pre-wrapped line keeps the descriptor honest about its own
  * width and makes the bound testable without the runtime.
  */
@@ -175,8 +175,13 @@ function boundedLines(text: string, budget = CARD_BODY_BUDGET): string[] {
 	return lines;
 }
 
-function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], innerWidth: number): string[] {
-	const parts = coverage.map((entry) => {
+/**
+ * Map-level roll-up text, one unwrapped line per surface in canonical schema order.
+ * An undeclared surface renders `—`: absence of evidence, never a zero.
+ */
+export function projectMapCoverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[]): string[] {
+	return PROJECT_MAP_SURFACES.map((surface) => {
+		const entry = coverage.find((entry) => entry.surface === surface)!;
 		const label = SURFACE_LABEL[entry.surface];
 		if (entry.declared === 0) return `${label} —`;
 		const share = Math.round((entry.done / entry.declared) * 100);
@@ -188,22 +193,6 @@ function coverageLines(map: ProjectMapV1, coverage: ProjectMapCoverageEntry[], i
 			.join(", ");
 		return `${label} ${share}% (${entry.done}/${entry.declared}): ${capabilities}`;
 	});
-	// Packed to the width the card actually has, never to a fixed guess: a line built past the
-	// inner width is clipped mid-content, which loses the tail instead of moving it down.
-	const budget = Math.max(16, innerWidth - 2);
-	const lines: string[] = [];
-	let current = "";
-	for (const part of parts) {
-		const candidate = current.length === 0 ? part : `${current} · ${part}`;
-		if (candidate.length > budget && current.length > 0) {
-			lines.push(...boundedLines(`  ${current}`, innerWidth));
-			current = part;
-			continue;
-		}
-		current = candidate;
-	}
-	if (current.length > 0) lines.push(...boundedLines(`  ${current}`, innerWidth));
-	return lines;
 }
 
 function completed(items: { state: ProjectMapState }[]): number {
@@ -303,22 +292,17 @@ function paintedLabel(capability: ProjectMapCapabilityV1): string {
 }
 
 /**
- * One capability row, built to fit the inner width when its markers and its surface tail leave
- * room for the label. Below that floor the row is as short as its own markers allow, which is
- * wider than the width it was given.
- *
- * An undeclared surface renders `—`, the same vocabulary Coverage uses: undeclared is an
- * absence of evidence, never a zero.
+ * One capability row, ending at its label with all width after the markers available to it.
+ * Below the markers' floor the row is as short as its own markers allow, which is wider than
+ * the width it was given. The label is truncated rather than wrapped to keep one body line.
  */
 function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number, launchable: boolean, paint: ProjectMapRowPaint): string {
 	const outcome = paintedLabel(capability);
-	const surfaces = capability.surfaces.length === 0 ? "—" : capability.surfaces.map((surface) => SURFACE_LABEL[surface]).join(" · ");
 	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${launchable ? `${PROJECT_MAP_LAUNCH_MARKER} ` : ""}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
 	// The label budget is measured on the plain head: the painted marker carries an escape
 	// sequence, and counting its bytes would shorten every launchable row for no reason.
 	const head = launchable ? plainHead.replace(PROJECT_MAP_LAUNCH_MARKER, paint("accent", PROJECT_MAP_LAUNCH_MARKER)) : plainHead;
-	const tail = ` · ${surfaces}`;
-	return `${head}${middleTruncate(outcome, innerWidth - plainHead.length - tail.length)}${tail}`;
+	return `${head}${middleTruncate(outcome, innerWidth - plainHead.length)}`;
 }
 
 export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
@@ -363,8 +347,6 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 			if (selected) body.selected = line;
 		}
 	}
-	add("Coverage");
-	for (const line of coverageLines(map, state.coverage, innerWidth)) add(line);
 	return body;
 }
 
