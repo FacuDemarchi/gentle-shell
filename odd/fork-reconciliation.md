@@ -22,8 +22,9 @@ estimated.
    `HEAD → upstream/main`: **27 files, −2,516 lines**.
 2. **Upstream now owns the ODD layer we worked on.** `a76e6f29 feat(odd): default
    to applicable test-first development` plus the phase-inference family
-   (`aa8e5c09`, `5b37c261`, `725e198c`, `f2bbe0f1`). Our ODD/routing work
-   collides **semantically, not textually** — the harder kind to see.
+   (`aa8e5c09`, `5b37c261`, `725e198c`, `f2bbe0f1`). Our own ODD/routing work turns
+   out to be **already upstream and byte-identical** — see the correction below.
+   This branch's net footprint on the canon is one line, and it auto-merges.
 3. **Upstream moved to Pi 0.87.1** and redesigned the test runner
    (`fdc46b47 fix(tests): run all pnpm test stages independently`).
 4. **The Project Map does not exist upstream.** Zero files match `project-map` in
@@ -115,6 +116,56 @@ rebase task.
    the `package.json` `files` array, so `openspec/project-map.es.json` stays repo
    data: the mechanism ships, the translation does not.
 
+## Correction, 2026-10-02: the ODD front was not the risk
+
+The first reading warned that the ODD/routing layer was the front where work
+could be lost silently, because upstream built phase inference on the same
+ground. **A measurement refuted that warning**, so it is corrected here rather
+than left standing.
+
+- **This branch's net footprint on the ODD canon is one line**: the `Belongs to:`
+  clause in `assets/orchestrator-memory.md`. The artifact-language pair nets to
+  zero on the other three assets, so our net delta on them is nothing.
+- **That line auto-merges.** A three-way simulation
+  (`git merge-tree --write-tree --name-only HEAD upstream/main`) resolves
+  `assets/orchestrator-memory.md` cleanly: our clause and upstream's SDD deletion
+  sit in different sections.
+- **The ODD/routing units are not branch work.** `odd-proportional-delegation.md`,
+  `odd-routing-ratchet.md`, `odd-runtime-delegation-gate.md` and
+  `odd-todo-and-thinking-visuals.md` already exist upstream, together with
+  `scripts/mirror-odd-routing.mjs`, `fixtures/odd-routing-canonical.md` and
+  `tests/odd-routing-canonical-ratchet.test.ts`. All 30 `odd/` files shared by
+  both sides are byte-identical: the `HEAD` to `upstream/main` diff under `odd/`
+  contains additions and deletions and **zero modifications**.
+- **`fixtures/odd-routing-canonical.md` is identical on both sides.** The routing
+  ratchet has no drift to reconcile.
+- Upstream's `assets/orchestrator-delegation.md` is a wholesale semantic shift:
+  SDD removed, "these instructions apply to all development work", applicable
+  test-first by default, and a new *Signaling the ODD phase to the Gentle prompt*
+  section. Our net delta there is zero, so the rebase adopts it without a
+  decision.
+
+**What actually conflicts is the shell and TUI layer.** The same simulation
+reports exactly five conflicted files:
+
+| File | Ours (+/−) | Theirs (commits) | Our commits touching it |
+| --- | --- | --- | --- |
+| `README.md` | +2 / −0 | 21 | 1 |
+| `extensions/gentle-ai.ts` | +64 / −15 | 19 | 2 |
+| `extensions/gentle-shell.ts` | +26 / −4 | 23 | 1 |
+| `lib/shell-sidebar-layout.ts` | +30 / −2 | 4 | 2 |
+| `lib/shell-sidebar.ts` | +39 / −1 | 3 | 2 |
+
+Ten of the fifteen colliding files auto-merge, including `docs/gentle-shell.md`
+(ours 16 commits, theirs 5), `docs/readme-reference.md`,
+`scripts/verify-package-files.mjs` and all three colliding tests.
+
+**Conflict-stop bound:** only 8 of the 218 commits touch those five files, so a
+rebase stops at most eight times. That is a bound derived from the merge surface,
+not a measured rebase: `git replay` refuses to run in this environment and an
+actual rebase was not attempted. Treat the file set as exact and the stop count
+as an upper bound.
+
 ## Rebase plan, in slices
 
 1. Drop artifact-language and the packaging pins.
@@ -122,6 +173,5 @@ rebase task.
 3. Re-apply the single `orchestrator-memory.md` line onto upstream's new canon.
 4. Resolve `docs/gentle-shell.md`, the sidebar files and the three colliding
    tests.
-5. **Before any of this:** a semantic diff of our ODD/routing work against
-   upstream's phase inference. It is the only front where work can be lost
-   silently.
+5. **Resolve the five shell and TUI conflicts** listed in the correction above.
+   The ODD front was diffed and needs nothing: it auto-merges.
