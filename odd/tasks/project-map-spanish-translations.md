@@ -43,3 +43,28 @@ The `?` explanation quotes the work unit's body from the project's own ODD docum
 - Any language other than Spanish, or any setting for it. The sidecar's language is fixed at `es`.
 - Translating identifiers, paths, or the map's frozen English values.
 - Writing the sidecar from the command. The agent writes it with its own tools, which is what keeps the extension free of a model call.
+
+## The content pass (2026-09-28)
+
+The unit shipped the mechanism; this section records the pass that filled it.
+
+**What ran.** `openspec/project-map.es.json` now holds **49 entries / 189,965 characters**: every capability the map declares with a document. Measured with the repository's own reader — `readProjectMapFile` + `readCapabilityDescription` + `projectMapTranslationWorklist` — the worklist went from `fresh: 0 · need a pass: 49` to **`fresh: 49 / 49`**, which is the reader's verdict, not a claim about the file.
+
+**How it was produced.** The input was split by size into eight batches under `/tmp/pm-es-in/` (29,871 down to 98 characters per body); the translations were written under `/tmp/pm-es-out/`. A single merge script builds the artifact and refuses to write unless every check passes, so a hand-written hash can never forge an identity:
+
+- `source` and `sourceHash` come from the batch **input** files, never from the translated output.
+- every output id must exist in the inputs, appear once, and carry a non-empty title and a non-empty array of string lines;
+- the assembled text must survive `readProjectMapTranslations` with **zero diagnostics** and lose no entry — the file is checked by the same strict decoder the reader uses;
+- the freshness check runs `projectMapTranslationFor` per capability against the live map, so `fresh: 49 / 49` is the explanation path itself, not a shape check.
+
+**Standing rule for the next project.** Translate the prose; copy identifiers, paths, `code spans`, commit hashes, diagnostic codes and literal state values (`planned`, `ready`, `draft`, `approved`) verbatim; keep technical nouns that Spanish would blur (worktree, store, commit, gate, slice, receipt, claim, lease, heartbeat, blocker, handoff, digest, lineage, CAS, lock) glued into Spanish grammar.
+
+**A pass is a lot of prose.** 159,654 characters of English went in; the Spanish is 189,965. That does not fit in one turn, so it is a **batch job**: translate a batch, merge, re-read freshness, continue. The batch boundary is a size boundary, not a capability boundary — one capability's body is one entry, so a capability is never split across writers.
+
+**Gates.** `tests/project-map-translations.test.ts` 5/5; `node scripts/verify-package-files.mjs` passes (200 files; the sidecar is not a package resource, so the pin is untouched); the reader's own freshness check 49/49.
+
+**Not done, and why.**
+
+- **Committed?** No. `openspec/project-map.es.json` is untracked. Two open decisions gate it: whether `openspec/project-map.json` should be tracked at all (handoff, operational fact 5), and whether a 190 KB derived artifact belongs in a commit whose review budget is 400 lines. This is the user's call.
+- **Other projects.** The sidecar is per repository: junglex and every other project need their own pass over their own map. The command reports the work, never does it, because an extension has no model call.
+- **Staleness is real.** A translation is `stale` the moment a body changes, and a stale entry is never shown. Editing an ODD work-unit body means re-running that entry (`/gentle:project-map translate` names it with its new hash).
