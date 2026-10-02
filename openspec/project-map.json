@@ -28,7 +28,7 @@
   "capabilities": [
     {
       "id": "add-draft-generation-and-human-plan-approval",
-      "outcome": "Add draft generation and human plan approval",
+      "outcome": "PM-2 — Add draft generation and human plan approval",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -40,7 +40,7 @@
     },
     {
       "id": "add-integration-readiness-sequencing",
-      "outcome": "Add integration-readiness sequencing",
+      "outcome": "PM-8 — Add integration-readiness sequencing",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -51,8 +51,20 @@
       "state": "done"
     },
     {
+      "id": "align-inspect-selection",
+      "outcome": "T2 — Align inspect selection.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/1091-inspect-base-ref.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "apply-an-accepted-contract-to-the-approved-map",
-      "outcome": "Apply an accepted contract to the approved map",
+      "outcome": "PM5-2 — Apply an accepted contract to the approved map",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -64,7 +76,7 @@
     },
     {
       "id": "approval-contract-in-the-versioned-map",
-      "outcome": "Approval contract in the versioned map",
+      "outcome": "PM2-1 — Approval contract in the versioned map",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -76,7 +88,7 @@
     },
     {
       "id": "approval-transition-and-atomic-persistence",
-      "outcome": "Approval transition and atomic persistence",
+      "outcome": "PM2-4 — Approval transition and atomic persistence",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -88,7 +100,7 @@
     },
     {
       "id": "artifact-reading-and-reusable-validation-entry-points",
-      "outcome": "Artifact reading and reusable validation entry points",
+      "outcome": "PM1-5 — Artifact reading and reusable validation entry points",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -100,7 +112,7 @@
     },
     {
       "id": "blockers-with-an-owner-and-a-resolution-path",
-      "outcome": "Blockers with an owner and a resolution path",
+      "outcome": "PM4-5a — Blockers with an owner and a resolution path",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -112,7 +124,7 @@
     },
     {
       "id": "build-the-shared-cross-worktree-coordination-store",
-      "outcome": "Build the shared cross-worktree coordination store",
+      "outcome": "PM-4 — Build the shared cross-worktree coordination store",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -124,7 +136,7 @@
     },
     {
       "id": "card-composition-and-shell-wiring",
-      "outcome": "Card composition and shell wiring",
+      "outcome": "PM3-1b — Card composition and shell wiring",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -136,7 +148,7 @@
     },
     {
       "id": "claims-and-leases",
-      "outcome": "Claims and leases",
+      "outcome": "PM4-3 — Claims and leases",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -147,8 +159,32 @@
       "state": "done"
     },
     {
+      "id": "close-the-lifecycle-coverage-gap-delegated-correction",
+      "outcome": "T4 — Close the lifecycle coverage gap (delegated correction).",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/background-cache-warming.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "command-and-live-prompt-policy",
+      "outcome": "T2 — Command and live prompt policy.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/animation-modes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "command-surface",
-      "outcome": "Command surface",
+      "outcome": "PM2-5 — Command surface",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -160,7 +196,7 @@
     },
     {
       "id": "contract-proposals-in-the-store",
-      "outcome": "Contract proposals in the store",
+      "outcome": "PM5-1 — Contract proposals in the store",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -172,7 +208,7 @@
     },
     {
       "id": "coordination-projection",
-      "outcome": "Coordination projection",
+      "outcome": "PM5-3 — Coordination projection",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -183,8 +219,32 @@
       "state": "planned"
     },
     {
+      "id": "correct-missing-pin-documentation",
+      "outcome": "T5 — Correct missing-pin documentation.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "correct-the-ci-type-regression-inline-correction-delegated",
+      "outcome": "T5 — Correct the CI type regression (inline correction + delegated verification).",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/background-cache-warming.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "coverage-explanations-and-grouping",
-      "outcome": "Coverage explanations and grouping",
+      "outcome": "PM3-2 — Coverage explanations and grouping",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -196,7 +256,7 @@
     },
     {
       "id": "cross-worktree-end-to-end",
-      "outcome": "Cross-worktree end to end",
+      "outcome": "PM4-6 — Cross-worktree end to end",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -208,7 +268,7 @@
     },
     {
       "id": "define-and-validate-the-versioned-project-map",
-      "outcome": "Define and validate the versioned Project Map",
+      "outcome": "PM-1 — Define and validate the versioned Project Map",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -220,7 +280,7 @@
     },
     {
       "id": "deterministic-draft-generation-from-structured-sources",
-      "outcome": "Deterministic draft generation from structured sources",
+      "outcome": "PM2-2 — Deterministic draft generation from structured sources",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -231,8 +291,20 @@
       "state": "done"
     },
     {
+      "id": "discovery-and-documentation",
+      "outcome": "T4 — Discovery and documentation.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/animation-modes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "documentation",
-      "outcome": "Documentation",
+      "outcome": "PM1-6 — Documentation",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -243,8 +315,20 @@
       "state": "done"
     },
     {
+      "id": "documentation-and-unit-verification",
+      "outcome": "TAB-4 — Documentation and unit verification.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "planned"
+    },
+    {
       "id": "documentation-and-verification",
-      "outcome": "Documentation and verification",
+      "outcome": "PM2-6 — Documentation and verification",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -255,8 +339,20 @@
       "state": "done"
     },
     {
+      "id": "eliminate-indefinitely-stale-positive-git-identities",
+      "outcome": "T7 — Eliminate indefinitely stale positive Git identities.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "enforce-the-primary-direct-multi-file-write-boundary",
-      "outcome": "Enforce the primary direct multi-file write boundary.",
+      "outcome": "ODD-GATE-1 — Enforce the primary direct multi-file write boundary.",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -268,7 +364,7 @@
     },
     {
       "id": "feature-document-references",
-      "outcome": "Feature-document references",
+      "outcome": "PM1-4 — Feature-document references",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -279,8 +375,32 @@
       "state": "done"
     },
     {
+      "id": "global-animation-policy",
+      "outcome": "T1 — Global animation policy.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/animation-modes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "header-contributor-registry-and-composition",
+      "outcome": "TAB-3a — Header contributor registry and composition.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "heartbeats-and-session-bindings",
-      "outcome": "Heartbeats and session bindings",
+      "outcome": "PM4-4 — Heartbeats and session bindings",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -292,7 +412,7 @@
     },
     {
       "id": "honest-launch-uncertainty-documentation-and-verification",
-      "outcome": "Honest launch uncertainty, documentation and verification",
+      "outcome": "PM7-4 — Honest launch uncertainty, documentation and verification",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -304,7 +424,7 @@
     },
     {
       "id": "implement-the-explicit-open-pi-flow",
-      "outcome": "Implement the explicit Open Pi flow",
+      "outcome": "PM-7 — Implement the explicit Open Pi flow",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -315,8 +435,32 @@
       "state": "done"
     },
     {
+      "id": "implement-the-gentle-shell-integration-delegated",
+      "outcome": "T2 — Implement the Gentle Shell integration (delegated).",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/background-cache-warming.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "integrate-current-main-without-behavior-loss",
+      "outcome": "T10 — Integrate current main without behavior loss.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "interactive-surface-declaration",
-      "outcome": "Interactive surface declaration",
+      "outcome": "PM3-4 — Interactive surface declaration",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -327,8 +471,56 @@
       "state": "done"
     },
     {
+      "id": "make-odd-todo-projection-mandatory",
+      "outcome": "T1 — Make ODD todo projection mandatory.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/odd-todo-and-thinking-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "make-repository-declarations-safely-committable",
+      "outcome": "T1 — Make repository declarations safely committable.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "make-thinking-labels-static-pink",
+      "outcome": "T2 — Make Thinking labels static pink.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/odd-todo-and-thinking-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "normalize-an-empty-config-home-override",
+      "outcome": "T6 — Normalize an empty config-home override.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "odd-work-unit-extraction",
-      "outcome": "ODD work-unit extraction",
+      "outcome": "PM2-3 — ODD work-unit extraction",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -339,8 +531,32 @@
       "state": "done"
     },
     {
+      "id": "paint-the-read-only-detail",
+      "outcome": "TAB-3d — Paint the read-only detail.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "prove-the-inspect-divergence",
+      "outcome": "T1 — Prove the inspect divergence.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/1091-inspect-base-ref.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "provision-and-manage-capability-worktrees-safely",
-      "outcome": "Provision and manage capability worktrees safely",
+      "outcome": "PM-6 — Provision and manage capability worktrees safely",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -352,7 +568,7 @@
     },
     {
       "id": "provisioning-behind-a-confirmation",
-      "outcome": "Provisioning, behind a confirmation",
+      "outcome": "PM6-2 — Provisioning, behind a confirmation",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -363,8 +579,32 @@
       "state": "done"
     },
     {
+      "id": "pure-card-core-of-the-real-map",
+      "outcome": "PM3-1a — Pure card core of the real map",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-3-render-and-inspector.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "pure-tab-projection",
+      "outcome": "TAB-1 — Pure tab projection.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "readiness-predicate-and-the-open-pi-affordance-read-only",
-      "outcome": "Readiness predicate and the `[Open Pi]` affordance (read-only)",
+      "outcome": "PM7-1 — Readiness predicate and the `[Open Pi]` affordance (read-only)",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -376,7 +616,7 @@
     },
     {
       "id": "readiness-receipts-that-grant-nothing",
-      "outcome": "Readiness receipts that grant nothing",
+      "outcome": "PM4-5b — Readiness receipts that grant nothing",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -387,8 +627,20 @@
       "state": "done"
     },
     {
+      "id": "recover-from-a-cached-git-identity-miss",
+      "outcome": "T2 — Recover from a cached Git identity miss.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "reference-resolution-and-dependency-cycles",
-      "outcome": "Reference resolution and dependency cycles",
+      "outcome": "PM1-3 — Reference resolution and dependency cycles",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -399,8 +651,32 @@
       "state": "done"
     },
     {
+      "id": "register-the-contribution-from-the-map-extension",
+      "outcome": "TAB-3c — Register the contribution from the map extension.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "remove-timing-from-the-atomic-no-op-test",
+      "outcome": "T8 — Remove timing from the atomic no-op test.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "render-the-real-map-and-capability-inspector",
-      "outcome": "Render the real map and capability inspector",
+      "outcome": "PM-3 — Render the real map and capability inspector",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -412,7 +688,7 @@
     },
     {
       "id": "reproduce-prompt-ownership-regression-with-a-failing-test",
-      "outcome": "Reproduce prompt ownership regression with a failing test",
+      "outcome": "UV-1 — Reproduce prompt ownership regression with a failing test",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -424,7 +700,7 @@
     },
     {
       "id": "restore-gentle-prompt-and-thinking-continuity",
-      "outcome": "Restore Gentle prompt and thinking continuity",
+      "outcome": "UV-2 — Restore Gentle prompt and thinking continuity",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -436,7 +712,7 @@
     },
     {
       "id": "roll-out-migrate-document-and-verify-end-to-end",
-      "outcome": "Roll out, migrate, document, and verify end to end",
+      "outcome": "PM-9 — Roll out, migrate, document, and verify end to end",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -447,8 +723,20 @@
       "state": "done"
     },
     {
+      "id": "row-and-detail-rendering",
+      "outcome": "TAB-2 — Row and detail rendering.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "row-selection-and-the-capability-inspector",
-      "outcome": "Row selection and the capability inspector",
+      "outcome": "PM3-3 — Row selection and the capability inspector",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -459,8 +747,20 @@
       "state": "done"
     },
     {
+      "id": "sanitize-the-pin-scope-notification",
+      "outcome": "T3 — Sanitize the pin-scope notification.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "satellite-coordination-contracts",
-      "outcome": "Establish lead/satellite coordination contracts",
+      "outcome": "PM-5 — Establish lead/satellite coordination contracts",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -472,7 +772,7 @@
     },
     {
       "id": "schema-version-fail-closed-version-gate-and-canonical-form",
-      "outcome": "Schema version, fail-closed version gate, and canonical form",
+      "outcome": "PM1-1 — Schema version, fail-closed version gate, and canonical form",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -484,7 +784,7 @@
     },
     {
       "id": "session-registration-and-the-command-surface",
-      "outcome": "Session registration and the command surface",
+      "outcome": "PM6-4 — Session registration and the command surface",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -495,8 +795,32 @@
       "state": "done"
     },
     {
+      "id": "specify-the-native-warming-contract-delegated",
+      "outcome": "T1 — Specify the native-warming contract (delegated).",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/background-cache-warming.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "startup-banner-policy",
+      "outcome": "T3 — Startup banner policy.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/animation-modes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "store-engine-with-compare-and-swap-and-corruption-handling",
-      "outcome": "Store engine with compare-and-swap and corruption handling",
+      "outcome": "PM4-2 — Store engine with compare-and-swap and corruption handling",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -508,7 +832,7 @@
     },
     {
       "id": "store-schema-and-canonical-root",
-      "outcome": "Store schema and canonical root",
+      "outcome": "PM4-1 — Store schema and canonical root",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -520,7 +844,7 @@
     },
     {
       "id": "structural-validation",
-      "outcome": "Structural validation",
+      "outcome": "PM1-2 — Structural validation",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -531,8 +855,32 @@
       "state": "done"
     },
     {
+      "id": "the-bounded-snapshot-and-the-row-rail",
+      "outcome": "TAB-3b — The bounded snapshot and the row rail.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/orchestrator-session-tabs.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-document-readers",
+      "outcome": "PM8-2b — The document readers.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-8-integration-readiness.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "the-durable-worktree-binding",
-      "outcome": "The durable worktree binding",
+      "outcome": "PM6-3 — The durable worktree binding",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -543,8 +891,20 @@
       "state": "done"
     },
     {
+      "id": "the-launch-nonce",
+      "outcome": "PM8-4 — The launch nonce.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-8-integration-readiness.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "the-launch-plan-and-the-tmux-adapter",
-      "outcome": "The launch plan and the tmux adapter",
+      "outcome": "PM7-2 — The launch plan and the tmux adapter",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -555,8 +915,44 @@
       "state": "done"
     },
     {
+      "id": "the-readiness-projection",
+      "outcome": "PM8-1 — The readiness projection.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-8-integration-readiness.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-report-and-the-receipts",
+      "outcome": "PM8-3 — The report and the receipts.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-8-integration-readiness.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "the-repository-readers",
+      "outcome": "PM8-2a — The repository readers.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pm-8-integration-readiness.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "the-visible-fallback-to-a-background-subagent",
-      "outcome": "The visible fallback to a background subagent",
+      "outcome": "PM7-3 — The visible fallback to a background subagent",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -568,7 +964,7 @@
     },
     {
       "id": "unify-sidebar-dashboard",
-      "outcome": "Unify sidebar dashboard",
+      "outcome": "UV-3 — Unify sidebar dashboard",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -580,7 +976,7 @@
     },
     {
       "id": "verification",
-      "outcome": "Verification",
+      "outcome": "PM1-7 — Verification",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -591,8 +987,20 @@
       "state": "done"
     },
     {
+      "id": "verify-behavior-and-regression-boundaries-delegated-verification",
+      "outcome": "T3 — Verify behavior and regression boundaries (delegated verification).",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/background-cache-warming.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "verify-delegated-scope",
-      "outcome": "Verify delegated scope",
+      "outcome": "UV-4 — Verify delegated scope",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
@@ -603,8 +1011,68 @@
       "state": "done"
     },
     {
+      "id": "verify-focused-behavior",
+      "outcome": "T3 — Verify focused behavior.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/odd-todo-and-thinking-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verify-the-combined-candidate",
+      "outcome": "T4 — Verify the combined candidate.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verify-the-complete-candidate",
+      "outcome": "T4 — Verify the complete candidate.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/odd-todo-and-thinking-visuals.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verify-the-follow-up-candidate",
+      "outcome": "T9 — Verify the follow-up candidate.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/pr-1075-review-fixes.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
+      "id": "verify-the-work-unit",
+      "outcome": "T3 — Verify the work unit.",
+      "foundationRefs": [],
+      "dependsOn": [],
+      "contracts": [],
+      "featureDocs": [
+        "odd/tasks/1091-inspect-base-ref.md"
+      ],
+      "surfaces": [],
+      "state": "done"
+    },
+    {
       "id": "worktree-identity-and-safety-inspection-read-only",
-      "outcome": "Worktree identity and safety inspection (read-only)",
+      "outcome": "PM6-1 — Worktree identity and safety inspection (read-only)",
       "foundationRefs": [],
       "dependsOn": [],
       "contracts": [],
