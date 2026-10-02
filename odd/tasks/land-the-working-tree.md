@@ -67,4 +67,23 @@ content pass with its sidecar, and the fork governance records.
   clean `git status`.
 
 ## Progress
-Landed 2026-10-02.
+Landed 2026-10-02. Four commits, all on `feat/project-map-orchestration`, none
+pushed, no history rewritten.
+
+| Task | Commit | Subject |
+| --- | --- | --- |
+| LWT-2 | `255a7ac4` | feat(models): show every model the terminal can hold in `/gentle:models` |
+| LWT-3 | `366dee80` | docs(project-map): record every delivered unit and label each outcome by code |
+| LWT-4 | `639df717` | docs(project-map): record the Spanish content pass and track its sidecar |
+| LWT-5 | `1b4e587d` | docs(odd): record the fork reconciliation, the contract and the landing unit |
+
+Both suites were observed green on this exact tree before the commits (650 pass /
+0 fail across 34 files; `tests/gentle-ai.test.ts` 85 pass / 0 fail). Committing
+moves bytes between the index and `HEAD` without changing content, so those runs
+still describe the landed content.
+
+## Next
+Not this unit: the satellite-loop surface gaps recorded in
+`odd/fork-reconciliation.md` are the next real unit — the cockpit cannot be
+driven end-to-end from the product yet. The upstream rebase follows the sliced
+plan in the same document.
