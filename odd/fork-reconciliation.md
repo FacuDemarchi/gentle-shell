@@ -175,3 +175,7 @@ as an upper bound.
    tests.
 5. **Resolve the five shell and TUI conflicts** listed in the correction above.
    The ODD front was diffed and needs nothing: it auto-merges.
+
+**Executed 2026-10-02.** Seven conflict stops, two skipped commits and one repair
+the merge simulation could not see; the outcome is recorded in
+`odd/tasks/rebase-onto-upstream.md`.
