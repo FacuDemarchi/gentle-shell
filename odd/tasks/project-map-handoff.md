@@ -38,13 +38,21 @@ These are not obvious and each cost something today.
 
 ## Open work, in priority order
 
-### 1. A capability's meaning has no writer — and it blocks `open`
+### 1. A capability's meaning has no writer — real, but not a blocker
 
 The map can record a capability's `surfaces` (through `declare`), its `approval` and its `contracts`. **`outcome`, `state`, `dependsOn`, `foundationRefs` and `featureDocs` have no writer at all** on the command surface: only the generator fills them, and only a hand edit changes them — which the next `draft` overwrites.
 
-Two consequences, both real. The map cannot say what a capability *is*, which is why the help overlay reads the document instead. And **no capability can be set to `ready`**, which is exactly what `open` requires — so the executable half cannot be exercised end to end through the command surface. The generator only ever produces `planned` (`[ ]`) or `done` (`[x]`).
+One consequence is real: the map cannot say what a capability *is*, which is why the help overlay reads the document instead.
 
-The fix is two sub-actions of the shape `declare` already has: `outcome <capability-id> <text>` and `state <capability-id> <state>`. **This is the highest-value open item**, because it unblocks the junglex test below.
+**The other claim in the first version of this handoff was wrong and is corrected here.** It said that no capability can be set to `ready`, "which is exactly what `open` requires", so the executable half could not be exercised end to end through the command surface. Measured on 2026-10-03: `lib/project-map-open-pi.ts:390-391` refuses a capability only when its declared state is `done` or `blocked`, with the design stated in the code beside it — *"A `planned` capability is as openable as a `ready` one"* — and `docs/project-map.md` says the same in the product's words. The generator only ever produces `planned` (`[ ]`) or `done` (`[x]`), and `planned` is openable.
+
+The fix is still two sub-actions of the shape `declare` already has — `outcome <capability-id> <text>` and `state <capability-id> <state>` — but their value is that the map can say what a capability is and report progress. They do not unblock `open`.
+
+### 1b. The real blocker of the documented flow — closed
+
+`worktree provision <capability-id>` requires a live capability claim for that capability held by the calling session (`lib/project-map-worktrees.ts:291-300`), and the command surface could only ever acquire the claim for the reserved `__lead` id, because `lead <claim|renew|release|status>` hard-coded it. The documented flow was therefore circular: provisioning needed a capability claim the product could not create, and `open` needs the worktree to exist.
+
+The `lead` route now takes an optional capability id — `lead claim <capability-id>` — so the claim provisioning requires can be created from the product, and the id is checked against the artifact so a typo cannot create a phantom claim that would satisfy the worktree precondition for a capability that does not exist. With no id the route behaves exactly as before.
 
 ### 2. Three ways a capability vanishes from a generated map
 
@@ -63,16 +71,15 @@ Verified state: **the map exists** (`openspec/project-map.json`, untracked there
 The sequence, and what it needs:
 
 ```bash
-export GENTLE_PI_PROJECT_MAP=1                 # the executable half is gated
-/gentle:project-map declare <cap> <surface>... # 0 of 27 declare any surface
+export GENTLE_PI_PROJECT_MAP=1                    # the executable half is gated
+/gentle:project-map declare <cap> <surface>...   # 0 of 27 declare any surface
 /gentle:project-map approve <actor>
-/gentle:project-map state <cap> ready          # BLOCKED by open item 1
-/gentle:project-map lead claim
+/gentle:project-map lead claim <cap>             # the capability claim provisioning requires
 /gentle:project-map worktree provision <cap>
 /gentle:project-map open <cap>
 ```
 
-`open` requires an **approved** map, a capability in **`ready`**, ready dependencies, no open blocker, no undecided proposed contract, a live claim, and a **provisioned** worktree — the launch target must already exist. A worktree already exists at `junglex-worktrees/fp-1b-storage-surface`, which is exactly the layout the feature derives; no collision unless a capability id matches.
+`open` requires an **approved** map, a capability whose declared state is neither `done` nor `blocked`, ready dependencies, no open blocker, no undecided proposed contract, a **live capability claim** (which `lead claim <cap>` now provides), and a **provisioned** worktree — the launch target must already exist. A worktree already exists at `junglex-worktrees/fp-1b-storage-surface`, which is exactly the layout the feature derives; no collision unless a capability id matches.
 
 ### 4. Regenerating the map throws the declarations away
 
@@ -106,6 +113,6 @@ Run it with the recipe in `odd/tasks/pm-9-rollout-e2e.md` plus the two correctio
 
 ## What the user is waiting on
 
-1. **The junglex parallel test** — blocked by open item 1.
+1. **The junglex parallel test** — the blocker recorded here (item 1b) is closed. What remains is the human work the sequence above needs: declaring the 27 surface lists and approving.
 2. **A decision on the tracked artifact** in this repo (operational fact 5).
 3. **The review pass**, which is theirs to trigger: it is their switch and it spends real reviewer runs.
