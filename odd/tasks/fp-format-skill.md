@@ -1,6 +1,6 @@
 # FP formatting skill for Gentle
 
-Status: FPF-1 committed; FPF-2 skill-only activation independently verified, evidence commit in progress.
+Status: FPF-1 and FPF-2 complete with verified outcomes and work-unit commits; live-interface reload/registry refresh remain user next steps.
 Repository: release worktree `/home/facundo/projects/gentle-v4.0.0`.
 Branch: `feat/fp-format-skill`, based on release `v4.0.0` (`1f35ab1e`).
 
@@ -47,7 +47,7 @@ The parent alone maintains this feature document and its memory mirror.
   - Observe applicable structural and packaging checks and review the resulting diff.
   - Record the now explicitly authorized work-unit commit after the verified source and staged scope are checked.
 
-- [ ] **FPF-2 — Activate only the authorized FP skill and verify discovery.**
+- [x] **FPF-2 — Activate only the authorized FP skill and verify discovery.**
   - Map the existing launcher/package-registration behavior and exact settings/generated-index surfaces before changing them.
   - Create only `/home/facundo/.pi/agent/skills/fp-format` as a symlink to the tracked skill directory; do not overwrite an existing conflicting path, edit settings, install dependencies, or replace Gentle.
   - Document `/reload` and `/skill-registry:refresh` as pending live-interface actions; do not manufacture a registry or call private testing hooks.
@@ -87,6 +87,7 @@ Additionally inspect frontmatter, skill name/length, relative links, preservatio
 - FPF-1 work-unit commit: `efd65ae869ac856e2286cfc6491539fbee08ef89` (`feat(skills): add Spanish functional point documentation format`), seven paths and 375 additions including this tracking document. Commit observed, staged check passed, no push.
 - FPF-2 activation map: launcher `--link --package-root` is a per-run takeover, not persistent registration or link-only; it leaves settings unchanged and launches Pi. Registry refresh writes registry/cache/.atl ignore files and has no documented headless CLI. Do not launch a blocking TUI or call private testing hooks as a public API.
 - Installed Gentle already declares 4.0.0. Local package registration matches resolved source paths rather than manifest names, so npm and checkout registrations can coexist and duplicate Gentle loading. Local registration does not install the checkout's missing dependency tree. Settings manager preserves unrelated settings, but these are distinct identities.
+- FPF-2 work-unit evidence commit: `70359811a374687ba94170edc0cad49780b00040` (`chore(skills): record verified user FP skill activation`), observed with whitespace checks passing and no push.
 - User chose the supported narrower option `skill_only`: `/home/facundo/.pi/agent/skills/fp-format` -> `/home/facundo/projects/gentle-v4.0.0/skills/fp-format`. Pi follows directory symlinks for skill discovery. This does not activate the checkout's entire Gentle runtime. Settings, installed npm package, and dependency tree remain untouched.
 - External allowed activation surface: only the symlink above (and its parent skills directory if absent); existing conflicting paths must not be overwritten. No private registry-testing hook is authorized.
 - Skill-only activation performed: the user symlink was created without overwriting any existing target. `settings.json` SHA-256 remained `0124fe2bce2d7f8f0fe61c23bf3edc8f007be3afe0daac81c9299563889dcf71`; no config/package/runtime/dependency changes. The release source change is only this progress document; original fork remains clean.
@@ -95,4 +96,4 @@ Additionally inspect frontmatter, skill name/length, relative links, preservatio
 
 ## Next step
 
-Commit the observed activation evidence, record the commit identity, and close FPF-2. User-interface next steps: `/reload`, then `/skill-registry:refresh` in the project whose registry should include the skill; those live actions were not executed by this task. No push, runtime replacement, or document conversion.
+User-interface next steps: `/reload`, then `/skill-registry:refresh` in the project whose registry should include the skill; those live actions were not executed by this task. Implementation, package checks, authorized user-skill registration and default-loader discovery are complete. No push, runtime replacement, or document conversion. Validator and Project Map integration require separate authorization.
