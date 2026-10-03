@@ -1,6 +1,6 @@
 # FP formatting skill for Gentle
 
-Status: source content independently verified; commit and local activation explicitly authorized, delivery in progress.
+Status: FPF-1 committed; FPF-2 skill-only activation independently verified, evidence commit in progress.
 Repository: release worktree `/home/facundo/projects/gentle-v4.0.0`.
 Branch: `feat/fp-format-skill`, based on release `v4.0.0` (`1f35ab1e`).
 
@@ -8,7 +8,7 @@ Branch: `feat/fp-format-skill`, based on release `v4.0.0` (`1f35ab1e`).
 
 The user approved the proposal: "apruebo la propuesta, procede".
 Deliver the first unit: a reusable `gentle-ai-fp-format` skill, a Spanish narrative template and examples, plus packaged discovery integration. Normalize functional-point documentation inside ODD without creating another source of truth.
-The user subsequently selected `commit_and_activate`: commit the verified unit and activate the local 4.0.0 checkout in the user environment. No push/publication is authorized. Preserve unrelated settings and distinguish persistent registration, runtime loading, and registry refresh.
+The user subsequently selected `commit_and_activate`: commit the verified unit and activate the local 4.0.0 checkout in the user environment. After concrete activation risks were explained, the user selected `skill_only`, narrowing activation to a user skill-directory symlink while retaining the installed Gentle 4.0.0 runtime. No push/publication is authorized. Preserve unrelated settings and distinguish registration/discovery, runtime loading, and registry refresh.
 
 ## Problem and rationale
 
@@ -39,7 +39,7 @@ The parent alone maintains this feature document and its memory mirror.
 
 ## Work unit
 
-- [ ] **FPF-1 — Deliver the packaged FP formatting skill and verify its integration.**
+- [x] **FPF-1 — Deliver the packaged FP formatting skill and verify its integration.**
   - Provide a compact, trigger-rich skill with preservation rules and Spanish FP narrative defaults.
   - Provide a reusable template and a clearly illustrative example, including per-subtask explanation, acceptance and evidence without fabricated project facts.
   - Add a scoped FP discovery hint without changing mirrored ODD lifecycle/routing.
@@ -47,11 +47,11 @@ The parent alone maintains this feature document and its memory mirror.
   - Observe applicable structural and packaging checks and review the resulting diff.
   - Record the now explicitly authorized work-unit commit after the verified source and staged scope are checked.
 
-- [ ] **FPF-2 — Activate the authorized local checkout and verify skill discovery/registry.**
+- [ ] **FPF-2 — Activate only the authorized FP skill and verify discovery.**
   - Map the existing launcher/package-registration behavior and exact settings/generated-index surfaces before changing them.
-  - Use supported target-scoped activation; preserve unrelated packages/settings and avoid duplicate Gentle extension loading.
-  - Refresh the registry using existing code/command in the correct project context when technically available.
-  - Verify registration/discovery; do not claim the current live session has reloaded without observed evidence.
+  - Create only `/home/facundo/.pi/agent/skills/fp-format` as a symlink to the tracked skill directory; do not overwrite an existing conflicting path, edit settings, install dependencies, or replace Gentle.
+  - Document `/reload` and `/skill-registry:refresh` as pending live-interface actions; do not manufacture a registry or call private testing hooks.
+  - Verify default-root discovery exactly once with no target diagnostics and unchanged settings. Current-session reload is not an acceptance claim for this scoped user-skill link.
   - Record reversible configuration effects and checks in this document; retain pending live-session actions honestly.
   - Commit the repository-facing activation evidence after the outcome is observed; never commit credentials or user configuration.
 
@@ -80,12 +80,19 @@ Additionally inspect frontmatter, skill name/length, relative links, preservatio
 - Independent verifier: completed with no severe candidate findings; six candidate source paths, 284 added lines, zero deletions (279 lines in the four new skill files; tracking document excluded).
 - Independent checks after correction: `node --test tests/verify-package-files.test.ts` 9 passed, 0 failed/skipped; `node --test tests/skill-registry.test.ts` 18 passed, 0 failed/skipped; `node scripts/verify-package-files.mjs` passed (159 resources, 69 byte-pinned artifacts); `git diff --check` passed.
 - Parent spot check: corrected template membership at line 3 confirmed; `git diff --check` rerun passed; original session fork `git status --short` empty.
-- Registry refresh and runtime activation: not performed. The documented launcher is `gentle-shell --link --package-root /home/facundo/projects/gentle-v4.0.0`; a session rooted in this checkout can run `/skill-registry:refresh`. Neither invocation was authorized/executed; packaged source is not claimed installed, loaded, or refreshed.
+- Full-checkout runtime replacement: not performed and superseded by the user's explicit `skill_only` selection. The user-skill symlink is registered through default discovery; current live session `/reload` and `/skill-registry:refresh` were not performed. In the user's active project, reload resources and invoke the public refresh command if the project registry should be updated. Do not claim this running host is already reloaded or its registry refreshed.
 - Preexisting follow-up: `skills/skill-registry/SKILL.md` references absent `skills/_shared/skill-resolver.md`; left untouched, not a candidate blocker.
 - Full suite/build/live-session behavior: not run; passive documentation and package enumeration were checked proportionately. RED/GREEN lifecycle not applicable to this documentation unit.
 - Native review: clone-local RDD is off in the host; no review authority is created by this document.
-- Commit and local activation: explicitly authorized by `commit_and_activate`; source commit about to be created. No push.
+- FPF-1 work-unit commit: `efd65ae869ac856e2286cfc6491539fbee08ef89` (`feat(skills): add Spanish functional point documentation format`), seven paths and 375 additions including this tracking document. Commit observed, staged check passed, no push.
+- FPF-2 activation map: launcher `--link --package-root` is a per-run takeover, not persistent registration or link-only; it leaves settings unchanged and launches Pi. Registry refresh writes registry/cache/.atl ignore files and has no documented headless CLI. Do not launch a blocking TUI or call private testing hooks as a public API.
+- Installed Gentle already declares 4.0.0. Local package registration matches resolved source paths rather than manifest names, so npm and checkout registrations can coexist and duplicate Gentle loading. Local registration does not install the checkout's missing dependency tree. Settings manager preserves unrelated settings, but these are distinct identities.
+- User chose the supported narrower option `skill_only`: `/home/facundo/.pi/agent/skills/fp-format` -> `/home/facundo/projects/gentle-v4.0.0/skills/fp-format`. Pi follows directory symlinks for skill discovery. This does not activate the checkout's entire Gentle runtime. Settings, installed npm package, and dependency tree remain untouched.
+- External allowed activation surface: only the symlink above (and its parent skills directory if absent); existing conflicting paths must not be overwritten. No private registry-testing hook is authorized.
+- Skill-only activation performed: the user symlink was created without overwriting any existing target. `settings.json` SHA-256 remained `0124fe2bce2d7f8f0fe61c23bf3edc8f007be3afe0daac81c9299563889dcf71`; no config/package/runtime/dependency changes. The release source change is only this progress document; original fork remains clean.
+- First public-loader verification command failed (exit 1): parent omitted required `skillPaths: []`, causing `TypeError: skillPaths is not iterable` before skill count/diagnostics/settings comparison. No source or configuration defect is inferred from this command/API mismatch.
+- Corrected independent verification: `loadSkills({ cwd: '/home/facundo/projects/project-map-preview', agentDir: '/home/facundo/.pi/agent', includeDefaults: true, skillPaths: [] })` returned the target exactly once, exit 0, no target diagnostics. Loaded path `/home/facundo/.pi/agent/skills/fp-format/SKILL.md`; unchanged settings SHA verified. Symlink, source name and all three relative references are readable; installed Gentle remains 4.0.0. `git diff --check` passed; only this progress document changed. No live-session reload or registry refresh claimed.
 
 ## Next step
 
-Commit FPF-1 on the feature branch, then use the read-only activation map to derive FPF-2's narrow edit/configuration surfaces and verification. Validator and Project Map adaptation remain outside these units.
+Commit the observed activation evidence, record the commit identity, and close FPF-2. User-interface next steps: `/reload`, then `/skill-registry:refresh` in the project whose registry should include the skill; those live actions were not executed by this task. No push, runtime replacement, or document conversion.
