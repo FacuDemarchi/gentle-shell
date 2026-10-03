@@ -5,7 +5,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
-import { acquireProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
+import { acquireProjectMapClaim, readProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree, listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
@@ -129,7 +129,7 @@ const USAGE = {
 	status: `Usage: /${PROJECT_MAP_COMMAND_NAME} status`,
 	show: `Usage: /${PROJECT_MAP_COMMAND_NAME} show`,
 	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
-	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status>`,
+	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status> [capability-id]`,
 	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
 	worktree: `Usage: /${PROJECT_MAP_COMMAND_NAME} worktree <inspect|provision|list> [capability-id]`,
 	integrate: `Usage: /${PROJECT_MAP_COMMAND_NAME} integrate`,
@@ -748,19 +748,52 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		const instant = now().toISOString();
 
 		if (parsed.action === "lead") {
-			const [operation = ""] = parsed.argument.split(/\s+/);
+			const [operation = "", capabilityId = "", ...extra] = parsed.argument.split(/\s+/);
 			if (!(["claim", "renew", "release", "status"] as const).includes(operation as "claim" | "renew" | "release" | "status")) {
 				const message = `A lead operation is required. ${USAGE.lead}`;
 				ctx.ui.notify(message);
 				return emptyReport("lead", [refusal(message)]);
 			}
+			if (extra.length > 0) {
+				const message = `A lead operation takes at most one capability id. ${USAGE.lead}`;
+				ctx.ui.notify(message);
+				return emptyReport("lead", [refusal(message)]);
+			}
+			// One route for every claim. Without a capability id the target is the lead role, which is
+			// what this route has always claimed; with one it is that capability, which is the claim
+			// `worktree provision` requires and no route could create. The id is checked against the
+			// artifact first, because the claim store is map-independent: a claim on a typo would
+			// otherwise satisfy the worktree precondition for a capability that cannot exist.
+			if (capabilityId.length > 0) {
+				const read = readProjectMapFile(artifactPath);
+				if (read.map === null) {
+					const message = `A capability claim needs a readable Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`;
+					ctx.ui.notify(`${message}\n${describeDiagnostics(read.diagnostics)}`);
+					return emptyReport("lead", [refusal(message, "$.capabilities"), ...read.diagnostics]);
+				}
+				const declared = read.map.capabilities.map((capability) => capability.id);
+				if (!declared.includes(capabilityId)) {
+					const message = `No capability named "${capabilityId}" is declared; this map declares: ${declared.join(", ") || "none"}.`;
+					ctx.ui.notify(message);
+					return emptyReport("lead", [refusal(message, "$.capabilities")]);
+				}
+			}
+			const target = capabilityId.length > 0 ? capabilityId : PROJECT_MAP_LEAD_CAPABILITY_ID;
+			const label = capabilityId.length > 0 ? `claim for ${capabilityId}` : "lead claim";
 			if (operation === "status") {
-				const state = readProjectMapCoordinationState({ root: root.root, mapPath: artifactPath, now: instant });
-				const lead = state.lead;
-				ctx.ui.notify(lead.status === "free"
-					? `Lead is free (${PROJECT_MAP_LEAD_CAPABILITY_ID}).`
-					: `Lead is ${lead.status}: ${lead.sessionId ?? "unknown"}; renewal after ${lead.lease?.renewal_after ?? "unknown"}, renew by ${lead.lease?.renew_by ?? "unknown"}.`);
-				return { action: "lead", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: state.diagnostics };
+				if (capabilityId.length === 0) {
+					const state = readProjectMapCoordinationState({ root: root.root, mapPath: artifactPath, now: instant });
+					const lead = state.lead;
+					ctx.ui.notify(lead.status === "free"
+						? `Lead is free (${PROJECT_MAP_LEAD_CAPABILITY_ID}).`
+						: `Lead is ${lead.status}: ${lead.sessionId ?? "unknown"}; renewal after ${lead.lease?.renewal_after ?? "unknown"}, renew by ${lead.lease?.renew_by ?? "unknown"}.`);
+					return { action: "lead", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: state.diagnostics };
+				}
+				const claim = readProjectMapClaim({ root: root.root, capabilityId, now: instant });
+				ctx.ui.notify(claim.status === "free"
+					? `Claim for ${capabilityId} is free.`
+					: `Claim for ${capabilityId} is ${claim.status}: ${claim.claim?.session_id ?? "unknown"}; renewal after ${claim.claim?.lease.renewal_after ?? "unknown"}, renew by ${claim.claim?.lease.renew_by ?? "unknown"}.`);
+				return { action: "lead", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: claim.diagnostics };
 			}
 			if (sessionId.length === 0) {
 				const message = "Lead operations require this session's identity; nothing was written.";
@@ -772,15 +805,15 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 			// happened" while the store had changed hands. Success is the operation's own effect, so
 			// the report cannot disagree with the store.
 			const outcome = operation === "claim"
-				? (() => { const claim = acquireProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: claim.claim !== null, diagnostics: claim.diagnostics }; })()
+				? (() => { const claim = acquireProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: claim.claim !== null, diagnostics: claim.diagnostics }; })()
 				: operation === "renew"
-					? (() => { const renewed = renewProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: renewed.claim !== null, diagnostics: renewed.diagnostics }; })()
-					: (() => { const released = releaseProjectMapClaim({ root: root.root, capabilityId: PROJECT_MAP_LEAD_CAPABILITY_ID, sessionId, now: instant }); return { effect: released.released === true, diagnostics: released.diagnostics }; })();
+					? (() => { const renewed = renewProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: renewed.claim !== null, diagnostics: renewed.diagnostics }; })()
+					: (() => { const released = releaseProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: released.released === true, diagnostics: released.diagnostics }; })();
 			if (!outcome.effect || outcome.diagnostics.some((entry) => entry.severity === "error")) {
-				ctx.ui.notify(`Lead ${operation} was refused.\n${describeDiagnostics(outcome.diagnostics)}`);
+				ctx.ui.notify(`${capabilityId.length > 0 ? `The claim for ${capabilityId}` : `Lead ${operation}`} was refused.\n${describeDiagnostics(outcome.diagnostics)}`);
 				return emptyReport("lead", outcome.diagnostics);
 			}
-			ctx.ui.notify(operation === "release" ? "Released the Project Map lead claim." : `${operation === "claim" ? "Claimed" : "Renewed"} the Project Map lead claim for ${sessionId}.`);
+			ctx.ui.notify(operation === "release" ? `Released the Project Map ${label}.` : `${operation === "claim" ? "Claimed" : "Renewed"} the Project Map ${label} for ${sessionId}.`);
 			if (outcome.diagnostics.length > 0) ctx.ui.notify(describeDiagnostics(outcome.diagnostics));
 			return { action: "lead", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: outcome.diagnostics };
 		}

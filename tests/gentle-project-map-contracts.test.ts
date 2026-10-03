@@ -14,8 +14,10 @@ import {
 import { PROJECT_MAP_EXECUTABLE_ENV } from "../lib/shell-project-map-gate.ts";
 import { PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
 import { readProjectMapContract } from "../lib/project-map-store-contracts.ts";
+import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES } from "../lib/project-map-store-schema.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
+import { planProjectMapWorktree } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
 
 const NOW = new Date("2026-09-26T12:00:00.000Z");
@@ -85,6 +87,10 @@ function claimPath(store: string): string {
 	return join(store, "claims", `${createHash("sha256").update(PROJECT_MAP_LEAD_CAPABILITY_ID).digest("hex")}.json`);
 }
 
+function capabilityClaimPath(store: string, capabilityId: string): string {
+	return join(store, "claims", `${createHash("sha256").update(capabilityId).digest("hex")}.json`);
+}
+
 function hasCode(messages: string[], code: string): boolean {
 	return messages.some((message) => message.includes(code));
 }
@@ -93,6 +99,8 @@ test("parser accepts lead and contract while still rejecting an unknown sub-acti
 	assert.ok(PROJECT_MAP_SUB_ACTIONS.includes("lead"));
 	assert.ok(PROJECT_MAP_SUB_ACTIONS.includes("contract"));
 	assert.equal(parseProjectMapSubAction("lead claim").action, "lead");
+	assert.equal(parseProjectMapSubAction("lead claim catalog").action, "lead");
+	assert.equal(parseProjectMapSubAction("lead claim catalog").argument, "claim catalog");
 	assert.equal(parseProjectMapSubAction("contract list").action, "contract");
 	assert.equal(parseProjectMapSubAction("unknown").ok, false);
 });
@@ -162,6 +170,55 @@ test("lead renew enforces cadence and release makes it free", async () => {
 		const status = harness(cwd, "session-b");
 		await runProjectMapCommand("lead status", status.ctx, { now: () => LATER });
 		assert.ok(status.notified.some((message) => message.includes("free")));
+	});
+});
+
+test("lead claim accepts a capability id and writes that capability's claim", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		const probe = harness(cwd, "session-a");
+		const claimed = await runProjectMapCommand("lead claim catalog", probe.ctx, { now: () => NOW });
+		assert.equal(claimed.wrote, true, "a capability claim is a durable store record");
+		assert.equal((JSON.parse(readFileSync(capabilityClaimPath(store, "catalog"), "utf8")) as { session_id: string }).session_id, "session-a");
+		assert.ok(probe.notified.some((message) => message.includes("catalog")), probe.notified.join("\n"));
+	});
+});
+
+test("lead claim refuses a capability the map does not declare, without writing", async () => {
+	await withFixture(async ({ cwd, store }) => {
+		const probe = harness(cwd, "session-a");
+		const report = await runProjectMapCommand("lead claim ghost", probe.ctx, { now: () => NOW });
+		assert.equal(report.wrote, false);
+		assert.ok(report.diagnostics.some((entry) => entry.severity === "error"));
+		assert.ok(probe.notified.some((message) => message.includes("catalog")), "the refusal names what the map does declare");
+		assert.equal(existsSync(capabilityClaimPath(store, "ghost")), false);
+	});
+});
+
+test("a capability claim belongs to one session, and status and release see the same record", async () => {
+	await withFixture(async ({ cwd }) => {
+		await runProjectMapCommand("lead claim catalog", harness(cwd, "session-a").ctx, { now: () => NOW });
+		const other = harness(cwd, "session-b");
+		const held = await runProjectMapCommand("lead claim catalog", other.ctx, { now: () => LATER });
+		assert.equal(held.wrote, false, "a refused claim changes nothing");
+		assert.ok(hasCode(other.notified, PROJECT_MAP_STORE_DIAGNOSTIC_CODES.CLAIM_HELD));
+		const live = harness(cwd, "session-b");
+		await runProjectMapCommand("lead status catalog", live.ctx, { now: () => LATER });
+		assert.ok(live.notified.some((message) => message.includes("catalog") && message.includes("session-a")), live.notified.join("\n"));
+		const released = await runProjectMapCommand("lead release catalog", harness(cwd, "session-a").ctx, { now: () => LATER });
+		assert.equal(released.wrote, true, "releasing removes the record, which is a change too");
+		const free = harness(cwd, "session-b");
+		await runProjectMapCommand("lead status catalog", free.ctx, { now: () => LATER });
+		assert.ok(free.notified.some((message) => message.includes("catalog") && message.includes("free")), free.notified.join("\n"));
+	});
+});
+
+test("the capability claim is what unblocks the worktree plan's claim precondition", async () => {
+	await withFixture(async ({ cwd }) => {
+		const before = planProjectMapWorktree({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW.toISOString() });
+		assert.ok(before.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED), "before the claim, provisioning refuses for exactly this reason");
+		await runProjectMapCommand("lead claim catalog", harness(cwd, "session-a").ctx, { now: () => NOW });
+		const after = planProjectMapWorktree({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW.toISOString() });
+		assert.equal(after.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED), false, "the claim surface is what makes the documented provisioning step reachable");
 	});
 });
 
