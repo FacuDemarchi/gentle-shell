@@ -1,6 +1,6 @@
 # Project Map on the 4.0.0 base, for every project
 
-Status: **authorized 2026-10-05 (D1–D5). PMV-1 committed (`97a0f963`); PMV-2 implemented, audited and gate-green, awaiting its work-unit commit.**
+Status: **authorized 2026-10-05 (D1–D5). PMV-1 (`97a0f963`) and PMV-2 (`147bf1a6`) committed and gate-green; PMV-3 is next.**
 
 Owning worktree: `/home/facundo/projects/project-map-v4` (worktree of the `project-map-preview` clone).
 Branch: `feat/project-map-v4`, based on `feat/fp-format-skill` = release tag `v4.0.0` (`1f35ab1e`) plus three FP-skill commits, tip `5ac56e8c`.
@@ -71,7 +71,7 @@ Never created: `openspec/**`.
   - Reconcile the integration points against 4.0.0's changed shell internals without changing product behavior; report whatever needs a decision instead of inventing one.
   - Observe: the map's focused tests, the full suite, `check-types`, `verify-package-files`, and `git diff --check` by exit code.
 
-- [ ] **PMV-2 — Derive the map in memory for every project.**
+- [x] **PMV-2 — Derive the map in memory for every project.**
   - **Frozen rule (2026-10-05, open to veto): the project declares nothing.** The `FP-N` convention from the FP format is the whole contract — no `project_map.*`, no roadmap pointer, no artifact. Rows are the `FP-N` work units the project writes in its own task documents; a code that continues a row (a Unicode letter or a dot) is that row's sub-element, and a document-level `**Belongs to:**` declaration overrides the deduction for that document. A continuation is **never** a row of its own: `FP-1b` is a sub-element of `FP-1`, and it is never promoted to a row when its parent is absent. A row is exactly the prefix followed by digits and optional dash-separated digits (`FP-0`, `FP-1`, `FP-9`).
   - The artifact path stays as it is: unused by the display half and still read by the gated executable half. No sub-action is removed by this unit.
   - No artifact is written and no `openspec/` is required; the derivation is read-only, per session, in any repository.
@@ -84,6 +84,7 @@ Never created: `openspec/**`.
   - **Gate results on this tree (2026-10-05)**: focused map tests **exit 0 — 775/775**; `check-types` **exit 0 — 187**; `verify-package-files` **exit 0 — 188 files / 69 pinned**; `git diff --check` **exit 0**; `git status` exactly the eight files. The full suite is `exit 1` — 5,359 tests, 5,309 passed, **16 failed**, 34 skipped — and **none of the sixteen is a PMV-2 failure**: they are `tests/gentle-shell.test.ts` (11) and `tests/vim-editor-adapter.test.ts` (5) failing with `Unsupported Pi editor layout/version` at `lib/vim-editor-adapter.ts:178`, and the same file fails identically in two trees that do not contain these changes (the fork at `05fcd55c` and the base at `5ac56e8c`). See the environment obligation below.
   - **Scope corrected before the commit (2026-10-05, user decision A).** The implementation had also gated the orchestrator tabs row (`!projectMapExecutableEnabled(env)`), which D4=a does not authorize and which would have removed a delivered surface whenever the variable is unset; and it had also added a redundant `GENTLE_PI_PROJECT_MAP: "1"` to the shared `mountTabsCard` helper, which `projectMapExtension` already injects by default (`tests/gentle-project-map.test.ts:1079`) — a test change made for a reason other than D2/D3, which this authorization forbids. Both are reverted, and the two documentation sentences that described the tabs as part of the executable half are corrected. The `launchable()` early return is **kept and disclosed**: it is behaviourally equivalent to the base, because `projectMapLaunchableSet` already returns the empty set when `executable` is false (`lib/project-map-launchable.ts:30`), and it spares a store read under the default gate-off state.
   - **Fixture reverted**: the surface-roll-up test's document went back to `[ ] **FP-1 — Catalog**`. No assertion in that test depended on the checkbox, and nothing is adjusted without the expectation that requires it.
+  - Work-unit commit: **`147bf1a6`** `feat(project-map): derive the map from FP task documents without an artifact` — 8 files, +313 / −94, working tree clean, not pushed.
 
 - [ ] **PMV-3 — Make the FP format the contract.**
   - Add `**Allowed edit surfaces:**` to the FP format: skill instructions, template, format rules.
@@ -136,4 +137,4 @@ Native review runs only under the user's switch; the candidate is a work-unit co
 
 ## Next step
 
-PMV-2 is implemented, its assertion audit is recovered, and every gate is green except the environment incident recorded above; the work-unit commit awaits the user's explicit go. PMV-3 follows: make the FP format the contract (`**Allowed edit surfaces:**`), restore the explanation test's real percentages, and give a 4.0.0 project one declared home for its test command.
+PMV-2 is committed (`147bf1a6`) and its gates are green except the environment incident recorded above, so the unit is closed. PMV-3 follows: make the FP format the contract (`**Allowed edit surfaces:**`), restore the explanation test's real percentages, and give a 4.0.0 project one declared home for its test command.
