@@ -118,7 +118,7 @@ test("parses a known sub-action and rejects everything else", () => {
 	}
 	const empty = parseProjectMapSubAction("");
 	assert.equal(empty.ok, true);
-	assert.equal(empty.action, "ensure", "the bare command is the feature's own gesture, not a usage error");
+	assert.equal(empty.action, "show", "the bare command displays derived data without an artifact workflow");
 });
 
 test("explaining a capability opens the overlay with what its document says", async () => {
@@ -138,7 +138,7 @@ test("explaining a capability opens the overlay with what its document says", as
 		assert.ok(body.includes(id), "the overlay names the capability");
 		assert.ok(body.includes("The body line the document carries."), "the overlay shows the document's own words");
 		assert.ok(body.includes("Lo que dice el documento:"), "and labels them as the document's, in Spanish");
-	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+	}, { task: "- [ ] **FP-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
 test("every capability explanation carries the whole map's surface roll-up without writing the artifact", async () => {
@@ -161,7 +161,9 @@ test("every capability explanation carries the whole map's surface roll-up witho
 		for (const capability of map.capabilities) await explainProjectMapCapability(probe.ctx, capability.id);
 		assert.equal(opened.length, 2);
 		for (const body of opened) {
-			const ordered = ["Product/UX —", `Web 50% (1/2): ${map.capabilities[0]!.id} ✓, ${map.capabilities[1]!.id} ✕`, `API 0% (0/1): ${map.capabilities[1]!.id} ✕`, "Data —", "Security —", "Ops —", "Tests —"];
+			// PMV-3 owns restoring real percentages once FP documents declare surfaces.
+			const ordered = ["Product/UX —", "Web —", "API —", "Data —", "Security —", "Ops —", "Tests —"];
+			assert.doesNotMatch(body, /Web 50%|API 0%|✕/, "artifact-owned coverage and blocked state are ignored");
 			assert.ok(body.includes("Este es el resumen del mapa completo, no de esta capability."));
 			for (const line of ordered) assert.ok(body.includes(line), line);
 			for (let index = 1; index < ordered.length; index++) assert.ok(body.indexOf(ordered[index]!) > body.indexOf(ordered[index - 1]!));
@@ -254,7 +256,7 @@ test("the help overlay reserves the rail when the fullscreen sidebar owns it", a
 		await explainProjectMapCapability(probe.ctx, id, 50);
 		assert.equal(opened[1]?.overlayOptions?.anchor, "left-center", "rail active: the overlay anchors left, never over the rail");
 		assert.deepEqual(opened[1]?.overlayOptions?.margin, { left: 2, right: 52 }, "and reserves the rail's columns plus the frame gap");
-	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n" });
+	}, { task: "- [ ] **FP-2 — Add draft generation and human plan approval**\n" });
 });
 
 test("the explanation shows a current translation, and says why it is not translated otherwise", async () => {
@@ -288,17 +290,17 @@ test("the explanation shows a current translation, and says why it is not transl
 		await explainProjectMapCapability(probe.ctx, id);
 		const translated = opened.join("\n");
 		assert.ok(translated.includes("La línea de cuerpo que el documento trae."));
-		assert.ok(translated.includes("Resultado: PM-2 — Agregar generación de borrador"), "the translated title preserves the functional-point prefix");
+		assert.ok(translated.includes("Resultado: FP-2 — Agregar generación de borrador"), "the translated title preserves the functional-point prefix");
 		assert.equal(translated.includes("Traducción:"), false, "and no note is shown");
 		assert.equal(translated.includes("The body line the document carries."), false, "the original body is not shown next to it");
 
 		// A translated title that already has the functional-point head must not receive it twice.
 		opened.length = 0;
-		write(hashProjectMapDescription(["The body line the document carries."]), "PM-2 — Agregar generación de borrador y aprobación humana del plan");
+		write(hashProjectMapDescription(["The body line the document carries."]), "FP-2 — Agregar generación de borrador y aprobación humana del plan");
 		await explainProjectMapCapability(probe.ctx, id);
 		const alreadyPrefixed = opened.join("\n");
-		assert.equal((alreadyPrefixed.match(/Resultado: PM-2 — Agregar generación de borrador/g) ?? []).length, 1);
-		assert.equal(alreadyPrefixed.includes("PM-2 — PM-2 —"), false);
+		assert.equal((alreadyPrefixed.match(/Resultado: FP-2 — Agregar generación de borrador/g) ?? []).length, 1);
+		assert.equal(alreadyPrefixed.includes("FP-2 — FP-2 —"), false);
 
 		// A body that moved invalidates its translation instead of showing a stale one.
 		opened.length = 0;
@@ -307,7 +309,7 @@ test("the explanation shows a current translation, and says why it is not transl
 		const stale = opened.join("\n");
 		assert.ok(stale.includes("Traducción: desactualizada"), "staleness is named");
 		assert.ok(stale.includes("The body line the document carries."), "and the current words are shown");
-	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+	}, { task: "- [ ] **FP-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
 test("the explanation preserves an unspaced functional-point prefix in a translated title", async () => {
@@ -442,11 +444,11 @@ test("generating the plan asks through the confirmation dialog and writes only w
 	});
 });
 
-test("the bare command ensures a map, shows it, and leaves an existing one alone", async () => {
+test("explicit ensure creates a map, shows it, and leaves an existing one alone", async () => {
 	await withRepository(async (directory) => {
 		let shown = 0;
 		const first = harness(directory, [true]);
-		const generated = await runProjectMapCommand("", first.ctx, { now: () => NOW, onShow: () => { shown += 1; } });
+		const generated = await runProjectMapCommand("ensure", first.ctx, { now: () => NOW, onShow: () => { shown += 1; } });
 		assert.equal(generated.action, "ensure");
 		assert.equal(generated.wrote, true);
 		assert.equal(first.confirmations, 1);
@@ -477,7 +479,7 @@ test("ensure refresh reports canonical source changes before the generation conf
 			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": state planned → done.'));
 			return false;
 		};
-		const report = await runProjectMapCommand("", probe.ctx);
+		const report = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(report.wrote, false);
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
 		assert.deepEqual(report.map, readProjectMapFile(artifactPath(directory)).map);
@@ -495,7 +497,7 @@ test("ensure preserves human surfaces without staleness and carries only those s
 		const id = draft.map!.capabilities[0]!.id;
 		await runProjectMapCommand(`declare ${id} web`, harness(directory).ctx);
 		const unchanged = harness(directory);
-		const kept = await runProjectMapCommand("", unchanged.ctx);
+		const kept = await runProjectMapCommand("ensure", unchanged.ctx);
 		assert.equal(unchanged.confirmations, 0);
 		assert.equal(kept.wrote, false);
 		assert.deepEqual(kept.map!.capabilities[0]!.surfaces, ["web"]);
@@ -504,7 +506,7 @@ test("ensure preserves human surfaces without staleness and carries only those s
 
 		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
 		const accepted = harness(directory, [true]);
-		const refreshed = await runProjectMapCommand("", accepted.ctx);
+		const refreshed = await runProjectMapCommand("ensure", accepted.ctx);
 		assert.equal(accepted.confirmations, 1);
 		assert.equal(refreshed.wrote, true);
 		assert.deepEqual(refreshed.map!.capabilities[0]!.surfaces, ["web"]);
@@ -525,7 +527,7 @@ test("ensure ignores approval alone, reports outcome changes, and warns that an 
 		await runProjectMapCommand("declare keep web", harness(directory).ctx);
 		await runProjectMapCommand("approve maintainer", harness(directory).ctx, { now: () => NOW });
 		const unchanged = harness(directory);
-		const kept = await runProjectMapCommand("", unchanged.ctx);
+		const kept = await runProjectMapCommand("ensure", unchanged.ctx);
 		assert.equal(kept.map!.approval.state, "approved");
 		assert.equal(unchanged.confirmations, 0);
 		assert.equal(kept.wrote, false);
@@ -539,7 +541,7 @@ test("ensure ignores approval alone, reports outcome changes, and warns that an 
 			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": outcome PM-2 — Keep → PM-3 — Keep.'));
 			return true;
 		};
-		const refreshed = await runProjectMapCommand("", probe.ctx);
+		const refreshed = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(confirmations, 1);
 		assert.equal(refreshed.wrote, true);
 		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map!.approval, { state: "draft" });
@@ -551,7 +553,7 @@ test("ensure reports and replaces document-declared surfaces", async () => {
 		await runProjectMapCommand("draft", harness(directory).ctx);
 		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **PM-2 — Keep**\n  **Allowed edit surfaces:** `api/keep.ts`\n");
 		const probe = harness(directory);
-		const refreshed = await runProjectMapCommand("", probe.ctx);
+		const refreshed = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(refreshed.wrote, true);
 		assert.equal(probe.confirmations, 1);
 		assert.ok(probe.notified.some((message) => message.includes('Capability "keep": surfaces ["web"] → ["api"].')));
@@ -572,7 +574,7 @@ test("ensure refuses a refresh when the artifact moves during confirmation and t
 			writeFileSync(artifactPath(directory), moved);
 			return true;
 		};
-		const report = await runProjectMapCommand("", probe.ctx);
+		const report = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(report.wrote, false);
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), moved);
 		assert.ok(report.diagnostics.some((diagnostic) => diagnostic.message.includes("changed while the decision was pending")));
@@ -589,7 +591,7 @@ test("ensure never asks or refreshes without a UI even when the sources moved", 
 		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
 		const probe = harness(directory);
 		probe.ctx.hasUI = false;
-		const report = await runProjectMapCommand("", probe.ctx);
+		const report = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(report.wrote, false);
 		assert.equal(probe.confirmations, 0);
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
@@ -606,7 +608,7 @@ test("ensure keeps the stored map and reports omissions when project identity ca
 		const before = readFileSync(artifactPath(directory), "utf8");
 		writeFileSync(join(directory, "package.json"), "{}");
 		const probe = harness(directory);
-		const report = await runProjectMapCommand("", probe.ctx);
+		const report = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(report.wrote, false);
 		assert.equal(probe.confirmations, 0);
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
@@ -621,7 +623,7 @@ test("ensure keeps the stored map and reports omissions when project identity ca
 test("ensure with current translations stays quiet, and first-run ensure also hands over the shared report", async () => {
 	await withRepository(async (directory) => {
 		const first = harness(directory);
-		const drafted = await runProjectMapCommand("", first.ctx);
+		const drafted = await runProjectMapCommand("ensure", first.ctx);
 		const translate = harness(directory);
 		await runProjectMapCommand("translate", translate.ctx);
 		assert.equal(first.notified.at(-1), translate.notified[0]);
@@ -630,7 +632,7 @@ test("ensure with current translations stays quiet, and first-run ensure also ha
 			capabilities: { [drafted.map!.capabilities[0]!.id]: { source: "odd/tasks/roadmap.md", sourceHash: hashProjectMapDescription(["Body."]), lines: ["Cuerpo."] } },
 		}));
 		const probe = harness(directory);
-		const report = await runProjectMapCommand("", probe.ctx);
+		const report = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(report.wrote, false);
 		assert.equal(probe.confirmations, 0);
 		assert.equal(probe.notified.length, 2);
@@ -638,12 +640,12 @@ test("ensure with current translations stays quiet, and first-run ensure also ha
 	}, { task: "- [ ] **PM-2 — Keep**\n  Body.\n" });
 });
 
-test("the bare command replaces an unusable artifact only after saying so", async () => {
+test("explicit ensure replaces an unusable artifact only after saying so", async () => {
 	await withRepository(async (directory) => {
 		mkdirSync(join(directory, "openspec"), { recursive: true });
 		writeFileSync(artifactPath(directory), "{ not json", "utf8");
 		const probe = harness(directory, [true]);
-		const report = await runProjectMapCommand("", probe.ctx, { now: () => NOW });
+		const report = await runProjectMapCommand("ensure", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, true);
 		assert.ok(probe.notified.some((message) => message.includes("not a usable map")));
 		assert.deepEqual(readProjectMapFile(artifactPath(directory)).diagnostics, []);
@@ -1099,7 +1101,14 @@ function widgetContext(cwd: string, id: string) {
 	return { ctx, widgets, calls, notified };
 }
 
+function writeDisplayDocuments(directory: string, text = "- [x] **FP-1 — Catalog**\n"): void {
+	mkdirSync(join(directory, "odd", "tasks"), { recursive: true });
+	writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), text, "utf8");
+	writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "example-shop", scripts: { test: "pnpm test" } }), "utf8");
+}
+
 function writeReadyArtifact(directory: string): void {
+	writeDisplayDocuments(directory);
 	mkdirSync(join(directory, "openspec"), { recursive: true });
 	writeFileSync(artifactPath(directory), JSON.stringify({
 		version: "gentle-shell.project-map/v1",
@@ -1219,6 +1228,7 @@ test("the contribution paints nothing when no session holds a capability the map
 
 test("the card marks a launchable capability and its marker runs the open plan", async () => {
 	await withGitRepository(async (directory, store, agentHome) => {
+		writeDisplayDocuments(directory, "- [ ] **FP-1 — Catalog**\n");
 		// An approved map whose only capability can still be worked on, plus the binding the
 		// launchable projection reads. The real worktree does not exist, so the plan the marker
 		// runs refuses — which is the point: the marker is a hint and the click re-verifies.
@@ -1250,6 +1260,7 @@ test("the card marks a launchable capability and its marker runs the open plan",
 
 test("the card leaves an unlaunchable capability unmarked", async () => {
 	await withGitRepository(async (directory, _store, agentHome) => {
+		writeDisplayDocuments(directory, "- [ ] **FP-1 — Catalog**\n");
 		// The same approved map with no worktree binding: the projection has nothing to back.
 		mkdirSync(join(directory, "openspec"), { recursive: true });
 		writeFileSync(artifactPath(directory), JSON.stringify({
@@ -1413,9 +1424,9 @@ test("the card part receives a session toggle that changes only the clicked grou
 		rail.handleMouse?.({ type: "click", button: "left", x: 2, y: header, screenX: 2, screenY: header, width: 80, height: lines.length, shift: false, alt: false, ctrl: false });
 		const body = rail.render(80).join("\n");
 		assert.match(body, /▸ Foundations 1\/1/);
-		assert.equal(body.includes("✓ tooling"), false);
+		assert.equal(body.includes("✓ repository-tooling"), false);
 		assert.match(body, /▾ Product capabilities 1\/1/);
-		assert.ok(body.includes("✓ Catalog"));
+		assert.ok(body.includes("✓ FP-1 — Catalog"));
 	});
 });
 
@@ -1428,6 +1439,7 @@ test("selection shortcuts clamp, expand capabilities, and reset at session shutd
 			{ id: "beta", outcome: "Beta", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" },
 		];
 		writeFileSync(artifactPath(directory), JSON.stringify(artifact), "utf8");
+		writeDisplayDocuments(directory, "- [x] **FP-1 — Alpha**\n- [ ] **FP-2 — Beta**\n");
 		const extension = projectMapExtension();
 		const probe = widgetContext(directory, "selection");
 		await extension.fire("session_start", probe.ctx);
@@ -1435,15 +1447,15 @@ test("selection shortcuts clamp, expand capabilities, and reset at session shutd
 		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
 		const body = () => sidebarState(tui).parts.get("project-map")!.render(80).join("\n");
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ Alpha/);
+		assert.match(body(), /▸ \? ✓ FP-1 — Alpha/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ○ Beta/);
+		assert.match(body(), /▸ \? ○ FP-2 — Beta/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ○ Beta/, "next clamps at the end");
+		assert.match(body(), /▸ \? ○ FP-2 — Beta/, "next clamps at the end");
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ Alpha/);
+		assert.match(body(), /▸ \? ✓ FP-1 — Alpha/);
 		await extension.shortcuts.get("alt+k")!.handler(probe.ctx);
-		assert.match(body(), /▸ \? ✓ Alpha/, "previous clamps at the start");
+		assert.match(body(), /▸ \? ✓ FP-1 — Alpha/, "previous clamps at the start");
 		await extension.shortcuts.get("alt+m")!.handler(probe.ctx);
 		assert.match(body(), /▸ Product capabilities/);
 		await extension.shortcuts.get("alt+j")!.handler(probe.ctx);
@@ -1485,7 +1497,7 @@ test("show and hide mount only for this session and do not write the artifact", 
 		const command = extension.commands.get(PROJECT_MAP_COMMAND_NAME)!;
 		const before = readdirSync(directory).sort();
 		await extension.fire("session_start", probe.ctx);
-		assert.equal(probe.widgets.has("gentle-project-map"), false, "a missing map stays hidden by default");
+		assert.equal(probe.widgets.has("gentle-project-map"), true, "the derived display mounts without an artifact");
 
 		await command.handler("show", probe.ctx);
 		assert.deepEqual(probe.calls.at(-1)?.[2], { placement: "belowEditor" });
@@ -1506,7 +1518,7 @@ test("show and hide mount only for this session and do not write the artifact", 
 	});
 });
 
-test("effective visibility follows the artifact until an explicit session choice", async () => {
+test("effective visibility is independent of the artifact until an explicit session choice", async () => {
 	await withRepository(async (directory) => {
 		const extension = projectMapExtension();
 		const ready = widgetContext(directory, "ready");
@@ -1519,7 +1531,7 @@ test("effective visibility follows the artifact until an explicit session choice
 			writeFileSync(artifactPath(invalidDirectory), "{", "utf8");
 			const invalid = widgetContext(invalidDirectory, "invalid");
 			await extension.fire("session_start", invalid.ctx);
-			assert.equal(invalid.widgets.has("gentle-project-map"), false, "an invalid map stays hidden by default");
+			assert.equal(invalid.widgets.has("gentle-project-map"), true, "an invalid artifact cannot hide the derived display");
 			await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("show", invalid.ctx);
 			assert.ok(invalid.widgets.has("gentle-project-map"), "show overrides invalid visibility for this session");
 		} finally {
@@ -1545,8 +1557,119 @@ test("session shutdown drops an explicit visibility choice", async () => {
 
 		const resumed = widgetContext(directory, "same-session");
 		await extension.fire("session_start", resumed.ctx);
-		assert.equal(resumed.widgets.has("gentle-project-map"), false, "the missing artifact is not shown after the choice is dropped");
+		assert.equal(resumed.widgets.has("gentle-project-map"), true, "the derived display mounts after the visibility choice is dropped");
 	});
+});
+
+test("the bare display derives FP rows without declarations, openspec, or writes", async () => {
+	await withRepository(async (directory) => {
+		const before = readdirSync(directory).sort();
+		const probe = harness(directory);
+		let shown = 0;
+		const report = await runProjectMapCommand("", probe.ctx, { onShow: () => { shown += 1; } });
+		assert.equal(report.action, "show");
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.equal(shown, 1);
+		assert.equal(report.map?.project.name, "example-shop");
+		assert.deepEqual(report.map?.capabilities.map((row) => row.outcome).sort(), ["FP-0 — Zero", "FP-1 — One", "FP-1-2 — Separate row", "FP-9 — Nine"].sort());
+		assert.deepEqual(readdirSync(directory).sort(), before);
+		assert.equal(readdirSync(directory).includes("openspec"), false);
+		assert.equal(probe.notified.some((line) => /ensure|draft|declare|approve/.test(line)), false);
+	}, { config: null, task: "- [x] **FP-0 — Zero**\n- [~] **FP-1 — One**\n- [ ] **FP-1-2 — Separate row**\n- [ ] **FP-9 — Nine**\n- [ ] **FP-1b — A continuation**\n- [ ] **FP-77b — An orphan**\n- [ ] **PM-2 — Not a row**\n" });
+});
+
+test("distinct FP codes with the same title remain distinct, explainable rows", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory);
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.map?.capabilities.length, 2);
+		assert.equal(new Set(report.map?.capabilities.map((row) => row.id)).size, 2);
+		let body = "";
+		probe.ctx.ui.custom = async (factory) => {
+			body = factory({ terminal: { rows: 100 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {}).render(120).join("\n");
+			return {} as never;
+		};
+		for (const row of report.map!.capabilities) {
+			await explainProjectMapCapability(probe.ctx, row.id);
+			assert.ok(body.includes(row.outcome));
+			assert.ok(body.includes("Same body."));
+		}
+	}, { config: null, task: "- [x] **FP-1 — Same**\n  Same body.\n- [ ] **FP-2 — Same**\n  Same body.\n" });
+});
+
+test("display ignores conflicting map configuration, roadmap pointers, and artifact rows", async () => {
+	await withRepository(async (directory) => {
+		writeFileSync(join(directory, "openspec/config.yaml"), "project_map:\n  delegable: PM-\n  roadmap: docs/other.md\n  surfaces:\n    web: web/\n");
+		mkdirSync(join(directory, "docs"));
+		writeFileSync(join(directory, "docs/other.md"), "- [x] **FP-9 — Outside tasks**\n");
+		writeFileSync(artifactPath(directory), JSON.stringify({ version: "gentle-shell.project-map/v1", project: { id: "other", name: "Other" }, capabilities: [{ id: "artifact-only", outcome: "Artifact only", state: "done", surfaces: ["web"] }] }));
+		const before = readFileSync(artifactPath(directory), "utf8");
+		const probe = harness(directory);
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.deepEqual(report.map?.capabilities.map((row) => row.outcome), ["FP-1 — One"]);
+		assert.deepEqual(report.map?.capabilities[0]?.surfaces, []);
+		assert.equal(report.map?.project.name, "example-shop");
+		assert.equal(probe.confirmations, 0);
+		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
+	}, { task: "- [ ] **FP-1 — One**\n  **Allowed edit surfaces:** `web/one.ts`\n" });
+});
+
+test("artifact-free sessions render derived data and preserve git status", async () => {
+	await withGitRepository(async (directory, _store, agentHome) => {
+		mkdirSync(join(directory, "odd", "tasks"), { recursive: true });
+		writeFileSync(join(directory, "odd", "tasks", "points.md"), "- [x] **FP-1 — One**\n- [~] **FP-9 — Nine**\n");
+		const before = execFileSync("git", ["-C", directory, "status", "--porcelain"], { encoding: "utf8" });
+		const { tui } = await mountTabsCard(directory, agentHome, "derived");
+		const body = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(80).join("\n");
+		assert.match(body, /✓ FP-1 — One/);
+		assert.match(body, /◉ FP-9 — Nine/);
+		assert.doesNotMatch(body, /ensure|draft|declare|approve|openspec/);
+		assert.equal(execFileSync("git", ["-C", directory, "status", "--porcelain"], { encoding: "utf8" }), before);
+		assert.equal(readdirSync(directory).includes("openspec"), false);
+	});
+});
+
+test("document-only explanations deduce Unicode and dotted steps and honor declared parents", async () => {
+	await withRepository(async (directory) => {
+		writeFileSync(join(directory, "odd/tasks/cuts.md"), "- [~] **FP-1é — Accent**\n- [x] **FP-1𐐀 — Astral letter**\n- [ ] **FP-1.2 — Dot**\n- [ ] **FP-10a — Other row**\n- [ ] **FP-77b — Orphan**\n");
+		writeFileSync(join(directory, "odd/tasks/override.md"), "**Belongs to:** `FP-9`\n- [x] **FP-1b — Reparented**\n- [ ] **CUT-1 — Other family**\n");
+		const probe = harness(directory);
+		let body = "";
+		probe.ctx.ui.custom = async (factory) => {
+			body = factory({ terminal: { rows: 100 } } as unknown as TUI, { fg: (_role: string, text: string) => text }, {}, () => {}).render(120).join("\n");
+			return {} as never;
+		};
+		await explainProjectMapCapability(probe.ctx, "one");
+		assert.match(body, /FP-1é — Accent/);
+		assert.match(body, /FP-1𐐀 — Astral letter/);
+		assert.match(body, /FP-1\.2 — Dot/);
+		assert.doesNotMatch(body, /Reparented|Other family|Orphan|Other row/);
+		await explainProjectMapCapability(probe.ctx, "nine");
+		assert.match(body, /FP-1b — Reparented/);
+		assert.match(body, /CUT-1 — Other family/);
+		assert.doesNotMatch(body, /Accent|Astral letter|Dot|Orphan/);
+		assert.equal(readdirSync(directory).includes("openspec"), false);
+	}, { config: null, task: "- [ ] **FP-1 — One**\n- [ ] **FP-9 — Nine**\n" });
+});
+
+test("a project without FP rows reports their absence instead of an empty map", async () => {
+	await withRepository(async (directory) => {
+		const probe = harness(directory);
+		const report = await runProjectMapCommand("", probe.ctx);
+		assert.equal(report.map, null);
+		assert.equal(report.wrote, false);
+		assert.equal(probe.confirmations, 0);
+		assert.match(probe.notified.join("\n"), /No FP work units/);
+		const extension = projectMapExtension();
+		const widget = widgetContext(directory, "no-fp");
+		await extension.fire("session_start", widget.ctx);
+		const tui = { terminal: {} } as unknown as TUI;
+		widget.widgets.get("gentle-project-map")!(tui, { fg: (_role: string, text: string) => text });
+		const body = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(80).join("\n");
+		assert.match(body, /No FP work units/);
+		assert.doesNotMatch(body, /Product capabilities 0\/0|generate|ensure|draft|approve/);
+	}, { config: null, task: "- [ ] **FP-77b — Orphan**\n- [ ] **PM-2 — Not FP**\n" });
 });
 
 // PM9-1: the executable half sits behind an explicit opt-in. These cases pin the refusal,

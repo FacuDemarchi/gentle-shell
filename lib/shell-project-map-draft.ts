@@ -149,7 +149,7 @@ export function collectProjectMapSteps(documents: readonly { path: string; text:
 			// D2 says a letter or a dot, and it means any letter: `\p{L}` with the unicode flag, so an
 			// accented continuation is a continuation too. The row rule stays ASCII by nature, because
 			// what it accepts is digits and hyphens.
-			const extendsCode = unitCode.startsWith(code) && unitCode.length > code.length && /[\p{L}.]/u.test(unitCode[code.length]!);
+			const extendsCode = unitCode.startsWith(code) && unitCode.length > code.length && /^[\p{L}.]/u.test(unitCode.slice(code.length));
 			if (!extendsCode || seen.has(unitCode)) continue;
 			seen.add(unitCode);
 			steps.push({ code: unitCode, title: split.title, state: projectMapStateFromCheckbox(match[2]!), path: document.path });
@@ -165,14 +165,16 @@ export function collectProjectMapSteps(documents: readonly { path: string; text:
  * work unit, and its list marker is removed. This remains deliberately more tolerant than the
  * top-level generator, because descriptions may explain nested work units.
  */
-export function readProjectMapWorkUnit(documentText: string, capabilityId: string): ProjectMapDescription | null {
+export function readProjectMapWorkUnit(documentText: string, capabilityId: string, rowCode?: string): ProjectMapDescription | null {
 	if (capabilityId.trim().length === 0) return null;
 	const lines = documentText.split("\n");
 	for (let index = 0; index < lines.length; index += 1) {
 		const match = DESCRIPTION_WORK_UNIT.exec(lines[index]!.replace(/\r$/, ""));
 		if (match === null) continue;
-		const { title } = splitWorkUnitLabel(match[3]!.trim());
-		if (normalizeIdentifier(title) !== capabilityId) continue;
+		const label = match[3]!.trim();
+		const { title, head } = splitWorkUnitLabel(label);
+		const code = (head.length === 0 ? label : head.replace(/—\s*$/, "")).trim();
+		if (rowCode === undefined ? normalizeIdentifier(title) !== capabilityId : code !== rowCode) continue;
 		return { title, lines: readWorkUnitBody(lines, index + 1, match[1]!.length) };
 	}
 	return null;
@@ -525,6 +527,51 @@ export function projectMapSourceChanges(stored: ProjectMapV1, generated: Project
 		true,
 	);
 	return changes;
+}
+
+/** The display contract is fixed by the harness, never by a project's configuration. */
+export function deriveProjectMap(sources: Pick<ProjectMapDraftSources, "packageJson" | "oddTaskDocuments">, fallbackName: string): ProjectMapDraftResult {
+	const omissions: string[] = [];
+	const manifest = isRecord(sources.packageJson) ? sources.packageJson : null;
+	const name = typeof manifest?.name === "string" && manifest.name.trim().length > 0 ? manifest.name.trim() : fallbackName;
+	const projectId = normalizeIdentifier(name) ?? "project";
+	const capabilities: ProjectMapCapabilityV1[] = [];
+	const seen = new Set<string>();
+	const identifiers = new Set<string>();
+	for (const document of [...(sources.oddTaskDocuments ?? [])].sort((a, b) => comparePaths(a.path, b.path))) {
+		if (!/^odd\/tasks\/[^/]+\.md$/.test(document.path) || !isSafeFeatureDocumentPath(document.path)) continue;
+		for (const { capability } of extractWorkUnits(document.path, document.text, omissions, "FP-").capabilities) {
+			const label = splitWorkUnitLabel(capability.outcome);
+			const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
+			if (seen.has(code)) continue;
+			seen.add(code);
+			// Titles are presentation, not row identity. A collision must not erase another FP.
+			if (identifiers.has(capability.id)) {
+				const base = normalizeIdentifier(`${label.title} ${code}`) ?? normalizeIdentifier(code)!;
+				capability.id = base;
+				let suffix = 2;
+				while (identifiers.has(capability.id)) capability.id = `${base.slice(0, 54)}-${suffix++}`;
+			}
+			identifiers.add(capability.id);
+			capabilities.push(capability);
+		}
+	}
+	if (capabilities.length === 0) {
+		omissions.push("No FP work units were found in odd/tasks/*.md.");
+		return { map: null, assumptions: [], omissions };
+	}
+	const scripts = manifest?.scripts;
+	const hasTooling = isRecord(scripts) && Object.values(scripts).some((command) => typeof command === "string" && command.trim().length > 0);
+	const foundations: ProjectMapFoundationV1[] = manifest === null ? [] : [{
+		id: "repository-tooling",
+		outcome: "The repository and its declared tooling are present and consistent.",
+		state: hasTooling ? "done" : "planned",
+		...(hasTooling ? { evidence: ["package.json"] } : {}),
+	}];
+	return {
+		map: canonicalizeProjectMap({ version: PROJECT_MAP_SCHEMA_V1, project: { id: projectId, name }, approval: { state: "draft" }, foundations, capabilities }),
+		assumptions: [], omissions,
+	};
 }
 
 export function generateProjectMapDraft(sources: ProjectMapDraftSources): ProjectMapDraftResult {

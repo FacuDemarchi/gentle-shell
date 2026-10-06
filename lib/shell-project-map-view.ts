@@ -88,9 +88,10 @@ export interface ProjectMapCoverageEntry {
 }
 
 export type ProjectMapCardState =
+	| { kind: "no-fp"; path: string; overlay: ProjectMapOverlay }
 	| { kind: "empty"; path: string; overlay: ProjectMapOverlay }
 	| { kind: "invalid"; path: string; diagnostics: ProjectMapDiagnostic[]; overlay: ProjectMapOverlay }
-	| { kind: "ready"; path: string; map: ProjectMapV1; coverage: ProjectMapCoverageEntry[]; overlay: ProjectMapOverlay };
+	| { kind: "ready"; path: string; map: ProjectMapV1; coverage: ProjectMapCoverageEntry[]; overlay: ProjectMapOverlay; derived?: boolean };
 
 export type ProjectMapSelection = string | undefined;
 
@@ -316,6 +317,10 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 		body.lines.push(line);
 		return index;
 	};
+	if (state.kind === "no-fp") {
+		add("No FP work units were found in odd/tasks/*.md.");
+		return body;
+	}
 	if (state.kind === "empty") {
 		add(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`);
 		add("Run /gentle:project-map to generate one.");
@@ -350,11 +355,12 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 
 export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
 	const body = projectMapCardBody(state, collapse, selection, innerWidth, launchable, paint).lines;
+	if (state.kind === "no-fp") return { title: "Project Map", subtitle: "no functional points", tone: "info", body };
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
 		title: "Project Map",
-		subtitle: `${state.map.project.name} · ${state.map.approval.state}`,
+		subtitle: `${state.map.project.name} · ${state.derived ? "derived" : state.map.approval.state}`,
 		// The frame is the theme's card frame, the same rose look Status and Todos paint; the
 		// approval state is already in the subtitle, so the tone must not encode it again.
 		tone: "info",

@@ -79,7 +79,7 @@ export interface ProjectMapCardDetail {
 	digest(): string;
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort, readState: () => ProjectMapCardState = () => state(artifactPath)): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
 	const capabilityLines = new Map<number, { id: string; help: number; launch?: number }>();
 	const capabilityStarts = new Map<string, number>();
@@ -89,7 +89,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		headerLines.clear();
 		capabilityLines.clear();
 		capabilityStarts.clear();
-		const current = state(artifactPath);
+		const current = readState();
 		const launchable = launch?.launchable();
 		// The marker is painted with the theme's own role, so the row still follows the configured
 		// theme; the descriptor and the hit map must be built from the same call.
@@ -135,7 +135,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 	return {
 		render,
-		digest: () => `${cardStyle()}|${projectMapCardDigest(state(artifactPath), session.collapse(), session.selection(), launch?.launchable())}|${detail?.digest() ?? ""}`,
+		digest: () => `${cardStyle()}|${projectMapCardDigest(readState(), session.collapse(), session.selection(), launch?.launchable())}|${detail?.digest() ?? ""}`,
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -162,10 +162,10 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 }
 
-export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Component {
+export function projectMapCardBottom(artifactPath: string, theme: CardTheme, readState: () => ProjectMapCardState = () => state(artifactPath)): Component {
 	return {
 		render: (width) => {
-			const current = state(artifactPath);
+			const current = readState();
 			const descriptor = projectMapCardDescriptor(current, undefined, undefined, panelInnerWidth(theme, width));
 			const body = current.kind === "ready" ? [projectMapSummaryLine(current.map)] : descriptor.body;
 			return renderCard({ ...descriptor, body }, theme, width, { expanded: false, panel: true });
@@ -174,8 +174,8 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme): Co
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort): Component {
-	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme), projectMapCardRail(
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort, readState: () => ProjectMapCardState = () => state(artifactPath)): Component {
+	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme, readState), projectMapCardRail(
 		artifactPath,
 		theme,
 		session,
@@ -184,6 +184,7 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		detail,
 		onExplain,
 		launch,
+		readState,
 	));
 }
 

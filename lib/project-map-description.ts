@@ -15,7 +15,7 @@ export type { ProjectMapDescription } from "./shell-project-map-draft.ts";
  * rather than `null`, because "this document says nothing more" and "this document does not
  * declare it" are different answers.
  */
-export function readCapabilityDescription(documentText: string, capabilityId: string): ProjectMapDescription | null {
+export function readCapabilityDescription(documentText: string, capabilityId: string, rowCode?: string): ProjectMapDescription | null {
 	if (capabilityId.trim().length === 0) return null;
-	return readProjectMapWorkUnit(documentText, capabilityId);
+	return readProjectMapWorkUnit(documentText, capabilityId, rowCode);
 }

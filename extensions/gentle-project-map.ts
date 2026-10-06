@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
 import { acquireProjectMapClaim, readProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
@@ -16,7 +16,7 @@ import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.
 import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableEnabled, projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
-import { collectProjectMapSteps, generateProjectMapDraft, projectMapSourceChanges, readProjectMapDelegablePrefix, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
+import { collectProjectMapSteps, deriveProjectMap, generateProjectMapDraft, projectMapSourceChanges, readProjectMapRoadmapPath, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import { projectMapLaunchableSet } from "../lib/project-map-launchable.ts";
 import {
@@ -27,7 +27,7 @@ import {
 	readProjectMapTranslations,
 } from "../lib/project-map-translations.ts";
 import { buildProjectMapHelpContent, ProjectMapHelpModal, type ProjectMapHelpResult } from "../lib/project-map-help-modal.ts";
-import { projectMapCardPart, projectMapCardVisible, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
+import { projectMapCardPart, projectMapOpenPiHostOnce } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
 import { listPresence } from "../lib/orchestrator-presence.ts";
 import { sidebarHeaderContributor, sidebarState } from "../lib/shell-sidebar.ts";
@@ -49,6 +49,8 @@ import {
 } from "../lib/shell-project-map-schema.ts";
 import {
 	PROJECT_MAP_EXPANDED,
+	PROJECT_MAP_OVERLAY_UNAVAILABLE,
+	type ProjectMapCardState,
 	projectMapCoverage,
 	projectMapCoverageLines,
 	projectMapStaticBlockers,
@@ -202,9 +204,8 @@ export interface ProjectMapSubActionParse {
 
 export function parseProjectMapSubAction(args: string): ProjectMapSubActionParse {
 	const [head = "", ...rest] = args.trim().split(/\s+/);
-	// The bare command is the gesture the feature is named after, so it is the default rather
-	// than an error: it ensures a map exists and shows it. `ensure` is also typeable by name.
-	if (head.length === 0) return { ok: true, action: "ensure", argument: "", message: "" };
+	// Display is read-only; artifact generation remains an explicit sub-action.
+	if (head.length === 0) return { ok: true, action: "show", argument: "", message: "" };
 	if (!PROJECT_MAP_SUB_ACTIONS.includes(head as ProjectMapSubAction)) {
 		return { ok: false, action: null, argument: "", message: `Unknown sub-action "${head}". ${USAGE.command}` };
 	}
@@ -396,11 +397,11 @@ function readSource(path: string): SourceRead {
  * made once by an agent and stored next to the map.
  */
 export async function explainProjectMapCapability(ctx: ProjectMapCommandContext, capabilityId: string, railColumns = 0): Promise<void> {
-	const read = readProjectMapFile(join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH));
-	const map = read.map;
+	const repository = readProjectMapDisplay(ctx.cwd);
+	const map = repository.map;
 	const capability = map?.capabilities.find((entry) => entry.id === capabilityId);
 	if (map === null || capability === undefined) {
-		ctx.ui.notify(`No capability named "${capabilityId}" is declared in ${PROJECT_MAP_ARTIFACT_PATH}.`);
+		ctx.ui.notify(`No FP work unit named "${capabilityId}" was found in odd/tasks/*.md.`);
 		return;
 	}
 	if (!ctx.hasUI || ctx.ui.custom === undefined) {
@@ -409,12 +410,11 @@ export async function explainProjectMapCapability(ctx: ProjectMapCommandContext,
 	}
 	const document = capability.featureDocs[0];
 	const source = document === undefined ? null : readSource(join(ctx.cwd, document));
-	const description = source !== null && source.ok ? readCapabilityDescription(source.text, capabilityId) : null;
-	const translated = translatedExplanation(ctx.cwd, capability, description);
 	const label = splitWorkUnitLabel(capability.outcome);
 	const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
-	const repository = readRepositorySources(ctx.cwd);
-	const steps = collectProjectMapSteps(repository.sources.oddTaskDocuments ?? [], code, readProjectMapDelegablePrefix(repository.sources.openspecConfig));
+	const description = source !== null && source.ok ? readCapabilityDescription(source.text, capabilityId, code) : null;
+	const translated = translatedExplanation(ctx.cwd, capability, description);
+	const steps = collectProjectMapSteps(repository.sources.oddTaskDocuments ?? [], code, "FP-");
 	// The static blockers are the one fact the retired Inspector alone carried, so they travel
 	// with the explanation instead of disappearing with it.
 	const content = buildProjectMapHelpContent(
@@ -510,7 +510,7 @@ function unreadableArtifactRefusal(path: string): ProjectMapDiagnostic | null {
 	return refusal(`The artifact at ${path} exists but could not be read, so nothing was written; writing blind would replace a file this command cannot inspect.`, "$");
 }
 
-export function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
+export function readRepositorySources(cwd: string, displayOnly = false): { sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
 	const omissions: string[] = [];
 	const sources: { packageJson?: unknown; openspecConfig?: string; oddTaskDocuments?: { path: string; text: string }[] } = {};
 	const manifest = readSource(join(cwd, "package.json"));
@@ -523,9 +523,11 @@ export function readRepositorySources(cwd: string): { sources: { packageJson?: u
 	} else if (manifest.reason === "unreadable") {
 		omissions.push("package.json exists but could not be read, so the project identity could not be derived from it.");
 	}
-	const config = readSource(join(cwd, "openspec", "config.yaml"));
-	if (config.ok) sources.openspecConfig = config.text;
-	else if (config.reason === "unreadable") omissions.push("openspec/config.yaml exists but could not be read, so no quality gate could be derived from it.");
+	if (!displayOnly) {
+		const config = readSource(join(cwd, "openspec", "config.yaml"));
+		if (config.ok) sources.openspecConfig = config.text;
+		else if (config.reason === "unreadable") omissions.push("openspec/config.yaml exists but could not be read, so no quality gate could be derived from it.");
+	}
 	const tasksRoot = join(cwd, "odd", "tasks");
 	const documents: { path: string; text: string }[] = [];
 	const attemptedDocuments = new Set<string>();
@@ -549,6 +551,18 @@ export function readRepositorySources(cwd: string): { sources: { packageJson?: u
 	}
 	if (hasTasksRoot || documents.length > 0) sources.oddTaskDocuments = documents;
 	return { sources, omissions };
+}
+
+export function readProjectMapDisplay(cwd: string) {
+	const repository = readRepositorySources(cwd, true);
+	const derived = deriveProjectMap(repository.sources, basename(resolve(cwd)) || "project");
+	return { ...derived, sources: repository.sources, omissions: [...repository.omissions, ...derived.omissions] };
+}
+
+function displayCardState(cwd: string): ProjectMapCardState {
+	const { map } = readProjectMapDisplay(cwd);
+	const overlay = PROJECT_MAP_OVERLAY_UNAVAILABLE;
+	return map === null ? { kind: "no-fp", path: cwd, overlay } : { kind: "ready", path: cwd, map, coverage: projectMapCoverage(map), overlay, derived: true };
 }
 
 function describe(map: ProjectMapV1): string {
@@ -923,9 +937,10 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	}
 
 	if (parsed.action === "show") {
+		const derived = readProjectMapDisplay(ctx.cwd);
 		options.onShow?.();
-		ctx.ui.notify("Project Map card shown for this session.");
-		return emptyReport("show");
+		ctx.ui.notify(derived.map === null ? "Project Map card shown for this session.\nNo FP work units were found in odd/tasks/*.md." : `Project Map card shown for this session.\nProject: ${derived.map.project.name}\n${derived.map.capabilities.map((row) => row.outcome).join("\n")}`);
+		return { action: "show", wrote: false, map: derived.map, assumptions: derived.assumptions, omissions: derived.omissions, diagnostics: [] };
 	}
 
 	if (parsed.action === "hide") {
@@ -1361,7 +1376,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 		return created;
 	};
 	const artifactPath = (ctx: ProjectMapCommandContext) => join(ctx.cwd, PROJECT_MAP_ARTIFACT_PATH);
-	const effectiveVisibility = (ctx: ProjectMapCommandContext) => record(ctx).visibility ?? projectMapCardVisible(artifactPath(ctx));
+	const effectiveVisibility = (ctx: ProjectMapCommandContext) => record(ctx).visibility ?? true;
 	const refresh = (ctx: ProjectMapCommandContext) => {
 		const current = mounted.get(sessionKey(ctx));
 		if (!current) return;
@@ -1423,6 +1438,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				digest: () => `tabs:${orchestratorSessionTabsDigest(tabs.read(), record(ctx).tabsSelection)}`,
 			}, (capabilityId) => { void explainProjectMapCapability(ctx, capabilityId, sidebarState(tui).active ? RAIL_WIDTH : 0); }, {
 				launchable: () => {
+					if (!projectMapExecutableEnabled(env)) return new Set<string>();
 					const now = Date.now();
 					if (now - launchableCache.at < PROJECT_MAP_LAUNCHABLE_REFRESH_MS) return launchableCache.set;
 					launchableCache.at = now;
@@ -1448,7 +1464,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 				// The card reports the click; the command the product already has decides, shows the
 				// plan, asks once and launches. There is no second launch path to keep in sync.
 				open: (capabilityId: string) => { void runProjectMapCommand(`open ${capabilityId}`, ctx, { env }); },
-			});
+			}, () => displayCardState(ctx.cwd));
 			const disposeTabs = tabs === undefined ? undefined : sidebarHeaderContributor(tui, PROJECT_MAP_TABS_CONTRIBUTOR_KEY, orchestratorSessionTabsRail({
 				read: () => tabs.read(),
 				selection: {
@@ -1506,7 +1522,7 @@ export default function gentleProjectMap(pi: ExtensionAPI, env: NodeJS.ProcessEn
 			commandCtx.ui.notify("Project Map card is hidden for this session.");
 			return;
 		}
-		const map = readProjectMapFile(artifactPath(commandCtx)).map;
+		const map = readProjectMapDisplay(commandCtx.cwd).map;
 		const capabilities = map?.capabilities ?? [];
 		const current = record(commandCtx);
 		if (capabilities.length > 0) {
