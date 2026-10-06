@@ -43,7 +43,7 @@ export interface ProjectMapIntegrationCandidate {
 	openBlockers: number;
 	proposedContracts: number;
 	nextSafeAction: string | null;
-	verification: { command: string | null; source: "openspec-config" | "not-declared" };
+	verification: { command: string | null; source: "manifest" | "not-declared" };
 	review: { lineages: number };
 	tasks: { path: string; done: number; total: number } | null;
 	/** The paths this candidate shares with another, as reported by the overlap reader. */
@@ -91,7 +91,7 @@ export interface ProjectMapIntegrationInput {
 		conflicts: readonly { code: string; capabilityId?: string; sessionId?: string; message: string }[];
 	};
 	worktreeBindings: readonly { capabilityId: string; sessionId: string; branch: string; worktreeRoot: string; baseCommit: string }[];
-	/** The project's own test command, read from `openspec/config.yaml`; null when undeclared. */
+	/** The project's own test command, read from package.json scripts.test; null when undeclared. */
 	verification: { testCommand: string | null };
 	/** The branch integration would land on, or null when it could not be resolved. */
 	target: string | null;
@@ -156,7 +156,7 @@ export function deriveProjectMapIntegrationReadiness(input: ProjectMapIntegratio
 	const projected = new Map(input.coordination.capabilities.map((capability) => [capability.capabilityId, capability]));
 	const verification = input.verification.testCommand === null
 		? { command: null, source: "not-declared" as const }
-		: { command: input.verification.testCommand, source: "openspec-config" as const };
+		: { command: input.verification.testCommand, source: "manifest" as const };
 
 	const candidates = orderCandidates(input.map.capabilities.filter((capability) => capability.state !== "done"), diagnostics).map((capability) => {
 		const coverage = projected.get(capability.id);

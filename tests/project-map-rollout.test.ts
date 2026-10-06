@@ -103,7 +103,7 @@ test("a project that already has a config, feature documents and docs keeps ever
 	const root = project({
 		"package.json": JSON.stringify({ name: "example-shop", version: "1.0.0" }),
 		"openspec/config.yaml": "apply:\n  test_command: node --test\n",
-		"odd/tasks/example.md": "- [ ] **Example — ships something**\n",
+		"odd/tasks/example.md": "- [ ] **FP-1 — ships something**\n",
 		"docs/keep.md": "documentation that must survive\n",
 	});
 	try {
@@ -126,7 +126,7 @@ test("a project that already has a config, feature documents and docs keeps ever
 test("the declare and approve loop rewrites the artifact and nothing else", async () => {
 	const root = project({
 		"package.json": JSON.stringify({ name: "example-shop", version: "1.0.0" }),
-		"odd/tasks/example.md": "- [ ] **Example — ships something**\n",
+		"odd/tasks/example.md": "- [ ] **FP-1 — ships something**\n",
 	});
 	try {
 		await run("draft", harness(root).ctx);
@@ -151,11 +151,11 @@ test("the declare and approve loop rewrites the artifact and nothing else", asyn
 test("regenerating the draft replaces the artifact and disturbs nothing else", async () => {
 	const root = project({
 		"package.json": JSON.stringify({ name: "example-shop", version: "1.0.0" }),
-		"odd/tasks/example.md": "- [ ] **Example — ships something**\n",
+		"odd/tasks/example.md": "- [ ] **FP-1 — ships something**\n",
 	});
 	try {
 		await run("draft", harness(root).ctx);
-		writeFileSync(join(root, "odd", "tasks", "example.md"), "- [ ] **Example — ships something**\n- [ ] **Checkout — takes money**\n", "utf8");
+		writeFileSync(join(root, "odd", "tasks", "example.md"), "- [ ] **FP-1 — ships something**\n- [ ] **FP-2 — takes money**\n", "utf8");
 		const before = snapshot(root);
 		const report = await run("draft", harness(root).ctx);
 		assert.equal(report.wrote, true);

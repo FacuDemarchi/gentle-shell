@@ -1,10 +1,9 @@
-import { readConfigTestCommand, readSimpleConfigEntries } from "./shell-project-map-draft.ts";
 import type { ProjectMapIntegrationCheck } from "./project-map-integration.ts";
 import type { ProjectMapState } from "./shell-project-map-schema.ts";
 
 /**
  * The document-facing half of integration readiness: what the feature documents say, and
- * what the project's own config declares.
+ * what the project's package manifest declares.
  *
  * Everything here is a pure function over text a caller already read, so the module
  * performs no I/O. Drift between the map and a feature document is **reported and never
@@ -61,13 +60,17 @@ export function checkProjectMapIntegrationTasks(options: {
 	return { check: "verified" };
 }
 
-/**
- * The project's own verification requirement, taken from `openspec/config.yaml` rather
- * than added to the map, so the two cannot disagree. Both shapes a project may declare are
- * accepted, most specific first — see `readConfigTestCommand`. An absent, unreadable or blank
- * command declares nothing, and nothing is never read as a requirement.
- */
+/** The package.json scripts.test requirement, or null for absent, unreadable or blank input. */
 export function readProjectMapTestCommand(text: string | null): string | null {
 	if (text === null) return null;
-	return readConfigTestCommand(readSimpleConfigEntries(text));
+	try {
+		const manifest: unknown = JSON.parse(text);
+		if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return null;
+		const scripts = (manifest as Record<string, unknown>).scripts;
+		if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) return null;
+		const command = (scripts as Record<string, unknown>).test;
+		return typeof command === "string" && command.trim().length > 0 ? command : null;
+	} catch {
+		return null;
+	}
 }

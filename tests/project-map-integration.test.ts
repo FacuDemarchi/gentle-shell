@@ -181,7 +181,7 @@ test("coverage and review are reported but never gate, and the gating set says s
 
 test("the verification requirement is the project's own test command, and an undeclared one blocks ready", () => {
 	const declared = deriveProjectMapIntegrationReadiness(input()).candidates[0]!;
-	assert.deepEqual(declared.verification, { command: "pnpm test", source: "openspec-config" });
+	assert.deepEqual(declared.verification, { command: "pnpm test", source: "manifest" });
 	assert.equal(declared.checks.verification, "verified");
 	const undeclared = deriveProjectMapIntegrationReadiness(input({ verification: { testCommand: null } })).candidates[0]!;
 	assert.deepEqual(undeclared.verification, { command: null, source: "not-declared" });

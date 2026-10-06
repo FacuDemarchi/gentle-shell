@@ -81,7 +81,7 @@ function repository(overrides: { manifest?: unknown; config?: string | null; tas
 	}
 	if (overrides.task !== null) {
 		mkdirSync(join(directory, "odd", "tasks"), { recursive: true });
-		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), overrides.task ?? "- [ ] **PM-2 — Add draft generation and human plan approval**\n", "utf8");
+		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), overrides.task ?? "- [ ] **FP-2 — Add draft generation and human plan approval**\n", "utf8");
 	}
 	return directory;
 }
@@ -373,7 +373,7 @@ test("the translate command lists what needs a pass, with the hash to copy and t
 		assert.ok(message.includes(id!), "the capability is listed");
 		assert.ok(message.includes(hashProjectMapDescription(["The body line the document carries."])), "the hash the writer must copy is printed");
 		assert.ok(message.includes("gentle-pi.project-map-translations/v1"), "and the exact shape to write");
-	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
+	}, { task: "- [ ] **FP-2 — Add draft generation and human plan approval**\n  - The body line the document carries.\n" });
 });
 
 test("the translate command refuses when there is no map to translate", async () => {
@@ -382,7 +382,7 @@ test("the translate command refuses when there is no map to translate", async ()
 		const report = await runProjectMapCommand("translate", probe.ctx, { now: () => NOW });
 		assert.equal(report.wrote, false);
 		assert.ok(probe.notified.join("\n").includes("nothing to translate"));
-	}, { task: "- [ ] **PM-2 — Add draft generation and human plan approval**\n" });
+	}, { task: "- [ ] **FP-2 — Add draft generation and human plan approval**\n" });
 });
 
 test("explaining an unknown capability says so instead of opening an empty overlay", async () => {
@@ -471,7 +471,7 @@ test("ensure refresh reports canonical source changes before the generation conf
 	await withRepository(async (directory) => {
 		await runProjectMapCommand("draft", harness(directory).ctx);
 		const before = readFileSync(artifactPath(directory), "utf8");
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n- [ ] **PM-4 — Added**\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **FP-2 — Keep**\n- [ ] **FP-4 — Added**\n");
 		const probe = harness(directory);
 		probe.ctx.ui.confirm = async (title, message) => {
 			assert.equal(title, "Write the Project Map draft?");
@@ -488,7 +488,7 @@ test("ensure refresh reports canonical source changes before the generation conf
 		const translate = harness(directory);
 		await runProjectMapCommand("translate", translate.ctx);
 		assert.equal(probe.notified.at(-1), translate.notified[0], "the kept map feeds the identical translation report");
-	}, { task: "- [ ] **PM-2 — Keep**\n- [ ] **PM-3 — Removed**\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n- [ ] **FP-3 — Removed**\n" });
 });
 
 test("ensure preserves human surfaces without staleness and carries only those surfaces through an accepted refresh", async () => {
@@ -504,7 +504,7 @@ test("ensure preserves human surfaces without staleness and carries only those s
 		assert.equal(unchanged.notified.length, 2, "only the card and shared report are printed");
 		assert.equal(unchanged.notified.some((message) => message.includes("sources changed")), false);
 
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **FP-2 — Keep**\n");
 		const accepted = harness(directory, [true]);
 		const refreshed = await runProjectMapCommand("ensure", accepted.ctx);
 		assert.equal(accepted.confirmations, 1);
@@ -518,7 +518,7 @@ test("ensure preserves human surfaces without staleness and carries only those s
 		const translate = harness(directory);
 		await runProjectMapCommand("translate", translate.ctx);
 		assert.equal(accepted.notified.at(-1), translate.notified[0]);
-	}, { task: "- [ ] **PM-2 — Keep**\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n" });
 });
 
 test("ensure ignores approval alone, reports outcome changes, and warns that an accepted approved refresh returns to draft", async () => {
@@ -531,40 +531,40 @@ test("ensure ignores approval alone, reports outcome changes, and warns that an 
 		assert.equal(kept.map!.approval.state, "approved");
 		assert.equal(unchanged.confirmations, 0);
 		assert.equal(kept.wrote, false);
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **PM-3 — Keep**\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **FP-3 — Keep**\n");
 		const probe = harness(directory);
 		let confirmations = 0;
 		probe.ctx.ui.confirm = async (title, message) => {
 			confirmations += 1;
 			assert.equal(title, "Write the Project Map draft?");
 			assert.ok(message.includes("returns the approved map to draft"));
-			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": outcome PM-2 — Keep → PM-3 — Keep.'));
+			assert.ok(probe.notified.at(-1)?.includes('Capability "keep": outcome FP-2 — Keep → FP-3 — Keep.'));
 			return true;
 		};
 		const refreshed = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(confirmations, 1);
 		assert.equal(refreshed.wrote, true);
 		assert.deepEqual(readProjectMapFile(artifactPath(directory)).map!.approval, { state: "draft" });
-	}, { task: "- [ ] **PM-2 — Keep**\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n" });
 });
 
 test("ensure reports and replaces document-declared surfaces", async () => {
 	await withRepository(async (directory) => {
 		await runProjectMapCommand("draft", harness(directory).ctx);
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **PM-2 — Keep**\n  **Allowed edit surfaces:** `api/keep.ts`\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [ ] **FP-2 — Keep**\n  **Allowed edit surfaces:** `api/keep.ts`\n");
 		const probe = harness(directory);
 		const refreshed = await runProjectMapCommand("ensure", probe.ctx);
 		assert.equal(refreshed.wrote, true);
 		assert.equal(probe.confirmations, 1);
 		assert.ok(probe.notified.some((message) => message.includes('Capability "keep": surfaces ["web"] → ["api"].')));
 		assert.deepEqual(refreshed.map!.capabilities[0]!.surfaces, ["api"]);
-	}, { config: "project_map:\n  surfaces:\n    web: web/\n    api: api/\n", task: "- [ ] **PM-2 — Keep**\n  **Allowed edit surfaces:** `web/keep.ts`\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n  **Allowed edit surfaces:** `web/keep.ts`\n" });
 });
 
 test("ensure refuses a refresh when the artifact moves during confirmation and translates the settled artifact", async () => {
 	await withRepository(async (directory) => {
 		await runProjectMapCommand("draft", harness(directory).ctx);
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **FP-2 — Keep**\n");
 		const probe = harness(directory);
 		let moved = "";
 		probe.ctx.ui.confirm = async () => {
@@ -581,14 +581,14 @@ test("ensure refuses a refresh when the artifact moves during confirmation and t
 		const translate = harness(directory);
 		await runProjectMapCommand("translate", translate.ctx);
 		assert.equal(probe.notified.at(-1), translate.notified[0]);
-	}, { task: "- [ ] **PM-2 — Keep**\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n" });
 });
 
 test("ensure never asks or refreshes without a UI even when the sources moved", async () => {
 	await withRepository(async (directory) => {
 		await runProjectMapCommand("draft", harness(directory).ctx);
 		const before = readFileSync(artifactPath(directory), "utf8");
-		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **PM-2 — Keep**\n");
+		writeFileSync(join(directory, "odd/tasks/roadmap.md"), "- [x] **FP-2 — Keep**\n");
 		const probe = harness(directory);
 		probe.ctx.hasUI = false;
 		const report = await runProjectMapCommand("ensure", probe.ctx);
@@ -599,7 +599,7 @@ test("ensure never asks or refreshes without a UI even when the sources moved", 
 		const translate = harness(directory);
 		await runProjectMapCommand("translate", translate.ctx);
 		assert.equal(probe.notified.at(-1), translate.notified[0]);
-	}, { task: "- [ ] **PM-2 — Keep**\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n" });
 });
 
 test("ensure keeps the stored map and reports omissions when project identity cannot be regenerated", async () => {
@@ -637,7 +637,7 @@ test("ensure with current translations stays quiet, and first-run ensure also ha
 		assert.equal(probe.confirmations, 0);
 		assert.equal(probe.notified.length, 2);
 		assert.ok(probe.notified[1]!.includes("Every capability the map declares with a document is translated and current."));
-	}, { task: "- [ ] **PM-2 — Keep**\n  Body.\n" });
+	}, { task: "- [ ] **FP-2 — Keep**\n  Body.\n" });
 });
 
 test("explicit ensure replaces an unusable artifact only after saying so", async () => {
@@ -1350,7 +1350,7 @@ test("integrate names the next safe integration action and issues a receipt for 
 		mkdirSync(join(directory, "odd", "tasks"), { recursive: true });
 		writeFileSync(join(directory, "odd", "tasks", "catalog.md"), "- [x] one\n- [ ] two\n", "utf8");
 		mkdirSync(join(directory, "openspec"), { recursive: true });
-		writeFileSync(join(directory, "openspec", "config.yaml"), 'schema: spec-driven\napply:\n  test_command: "pnpm test"\n', "utf8");
+		writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "example-shop", scripts: { test: "pnpm test" } }), "utf8");
 		writeFileSync(artifactPath(directory), JSON.stringify({
 			version: "gentle-shell.project-map/v1",
 			project: { id: "example-shop", name: "Example Shop" },
@@ -1579,6 +1579,25 @@ test("the bare display derives FP rows without declarations, openspec, or writes
 	}, { config: null, task: "- [x] **FP-0 — Zero**\n- [~] **FP-1 — One**\n- [ ] **FP-1-2 — Separate row**\n- [ ] **FP-9 — Nine**\n- [ ] **FP-1b — A continuation**\n- [ ] **FP-77b — An orphan**\n- [ ] **PM-2 — Not a row**\n" });
 });
 
+test("display maps document declarations without creating openspec", async () => {
+	await withRepository(async (directory) => {
+		const before = readdirSync(directory).sort();
+		const report = await runProjectMapCommand("", harness(directory).ctx);
+		assert.deepEqual(report.map?.capabilities[0]?.surfaces, ["web"]);
+		assert.deepEqual(readdirSync(directory).sort(), before);
+		assert.equal(readdirSync(directory).includes("openspec"), false);
+	}, { config: null, task: "- [ ] **FP-1 — One**\n  **Allowed edit surfaces:** `web/one.ts`\n" });
+});
+
+test("display names unmappable declared paths", async () => {
+	await withRepository(async (directory) => {
+		const report = await runProjectMapCommand("", harness(directory).ctx);
+		assert.deepEqual(report.map?.capabilities[0]?.surfaces, []);
+		assert.match(report.omissions.join("\n"), /one.*odd\/tasks\/roadmap\.md.*src\/one\.ts/);
+		assert.equal(readdirSync(directory).includes("openspec"), false);
+	}, { config: null, task: "- [ ] **FP-1 — One**\n  **Allowed edit surfaces:** `src/one.ts`\n" });
+});
+
 test("distinct FP codes with the same title remain distinct, explainable rows", async () => {
 	await withRepository(async (directory) => {
 		const probe = harness(directory);
@@ -1608,7 +1627,7 @@ test("display ignores conflicting map configuration, roadmap pointers, and artif
 		const probe = harness(directory);
 		const report = await runProjectMapCommand("", probe.ctx);
 		assert.deepEqual(report.map?.capabilities.map((row) => row.outcome), ["FP-1 — One"]);
-		assert.deepEqual(report.map?.capabilities[0]?.surfaces, []);
+		assert.deepEqual(report.map?.capabilities[0]?.surfaces, ["web"]);
 		assert.equal(report.map?.project.name, "example-shop");
 		assert.equal(probe.confirmations, 0);
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
@@ -1745,40 +1764,12 @@ test("the Open Pi offer is withdrawn while the gate is off, and the switch is na
 	assert.equal(projectMapOpenPiDecision(readiness, GATE_ON), readiness, "an enabled gate changes nothing");
 });
 
-test("draft reads a declared roadmap outside odd/tasks", async () => {
+test("draft reads each ODD task document once", async () => {
 	await withRepository(async (directory) => {
-		mkdirSync(join(directory, "roadmaps"), { recursive: true });
-		writeFileSync(join(directory, "roadmaps", "launch.md"), "- [ ] **Launch — External roadmap capability**\n", "utf8");
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/launch.md\n", "utf8");
-		const report = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
-		assert.deepEqual(report.map?.capabilities.map((capability) => capability.id), ["external-roadmap-capability"]);
-		assert.equal(report.map?.capabilities.some((capability) => capability.id === "add-draft-generation-and-human-plan-approval"), false);
-	});
-});
-
-test("draft does not read a declared odd task roadmap twice", async () => {
-	await withRepository(async (directory) => {
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: odd/tasks/roadmap.md\n", "utf8");
-		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), "- [ ] **One — First capability**\n- [ ] **Two — Second capability**\n", "utf8");
+		writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), "- [ ] **FP-1 — First capability**\n- [ ] **FP-2 — Second capability**\n", "utf8");
 		const report = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
 		assert.deepEqual(report.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
 		assert.equal(report.omissions.some((omission) => omission.includes("declared twice in odd/tasks/roadmap.md")), false);
-	});
-});
-
-test("repository sources normalize roadmap aliases without duplicate entries", async () => {
-	for (const config of ["project_map:\n  roadmap: odd/./tasks/a.md\n", "project_map.roadmap: odd/./tasks/a.md\n"]) {
-		await withRepository(async (directory) => {
-			writeFileSync(join(directory, "openspec", "config.yaml"), config, "utf8");
-			writeFileSync(join(directory, "odd", "tasks", "roadmap.md"), "- [ ] **A — Canonical capability**\n", "utf8");
-			const result = readRepositorySources(directory);
-			assert.deepEqual(result.sources.oddTaskDocuments, [{ path: "odd/tasks/roadmap.md", text: "- [ ] **A — Canonical capability**\n" }]);
-		});
-	}
-	await withRepository(async (directory) => {
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: ../outside.md\n", "utf8");
-		const result = readRepositorySources(directory);
-		assert.equal(result.sources.oddTaskDocuments?.some((document) => document.path === "../outside.md"), false);
 	});
 });
 
@@ -1798,33 +1789,15 @@ async function recordReads<T>(path: string, run: () => Promise<T>): Promise<{ re
 	}
 }
 
-test("draft reports absent and unreadable declared roadmaps with one read per path", async () => {
-	await withRepository(async (directory) => {
-		mkdirSync(join(directory, "roadmaps", "unreadable.md"), { recursive: true });
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/missing.md\n", "utf8");
-		const absent = await runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW });
-		assert.deepEqual(absent.omissions.filter((omission) => omission.includes("roadmaps/missing.md")), ["openspec/config.yaml declares the roadmap \"roadmaps/missing.md\", but no document with that path could be read, so no capability could be extracted from it."]);
-
-		const externalPath = join(directory, "roadmaps", "unreadable.md");
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: roadmaps/unreadable.md\n", "utf8");
-		const external = await recordReads(externalPath, () => runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW }));
-		assert.deepEqual(external.reads, [externalPath]);
-		assert.deepEqual(external.result.omissions.filter((omission) => omission.includes("roadmaps/unreadable.md")), [
-			"roadmaps/unreadable.md exists but could not be read, so it contributed no capability.",
-			"openspec/config.yaml declares the roadmap \"roadmaps/unreadable.md\", but no document with that path could be read, so no capability could be extracted from it.",
-		]);
-	});
-
+test("draft reports an unreadable ODD task document with one read per path", async () => {
 	await withRepository(async (directory) => {
 		const internalPath = join(directory, "odd", "tasks", "roadmap.md");
 		rmSync(internalPath);
 		mkdirSync(internalPath);
-		writeFileSync(join(directory, "openspec", "config.yaml"), "project_map:\n  roadmap: odd/tasks/roadmap.md\n", "utf8");
 		const internal = await recordReads(internalPath, () => runProjectMapCommand("draft", harness(directory, [true]).ctx, { now: () => NOW }));
 		assert.deepEqual(internal.reads, [internalPath]);
 		assert.deepEqual(internal.result.omissions.filter((omission) => omission.includes("odd/tasks/roadmap.md")), [
 			"odd/tasks/roadmap.md exists but could not be read, so it contributed no capability.",
-			"openspec/config.yaml declares the roadmap \"odd/tasks/roadmap.md\", but no document with that path could be read, so no capability could be extracted from it.",
 		]);
 	});
 });

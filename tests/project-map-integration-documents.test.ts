@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -73,58 +73,35 @@ test("a capability that declares no feature document leaves the check unverified
 	assert.match(result.reason!, /declares no feature document/);
 });
 
-test("the verification requirement is read from the project's own config", () => {
-	assert.equal(readProjectMapTestCommand('schema: spec-driven\napply:\n  test_command: "pnpm test"\n'), "pnpm test");
+test("the verification requirement is read from package.json scripts.test", () => {
+	assert.equal(readProjectMapTestCommand(JSON.stringify({ scripts: { test: "pnpm test" } })), "pnpm test");
 });
 
-// The shape this repository's own `sdd-init` writes. Every fixture used to declare a flat
-// top-level `apply:`, so the suite agreed with the reader instead of with the writer and this
-// nesting went unread on a config the product had just produced.
-test("the verification requirement is read from the nested OpenSpec rule block", () => {
-	const written = [
-		"schema: spec-driven",
-		"rules:",
-		"  proposal:",
-		"    require_problem_statement: true",
-		"  apply:",
-		'    test_command: "pnpm test"',
-		"  verify:",
-		'    test_command: "pnpm test"',
-		"testing:",
-		'  detected: "2026-07-10"',
-		"",
-	].join("\n");
-	assert.equal(readProjectMapTestCommand(written), "pnpm test");
-});
-
-// Exercise the legacy config reader in a disposable repository. The declaration's
-// home on the 4.0.0 base remains a PMV-3 decision, not a requirement on this checkout.
-test("the repository's own config declares the command the map reads", (t) => {
-	const repository = mkdtempSync(join(tmpdir(), "project-map-config-"));
+test("the repository's own manifest declares the command the map reads", (t) => {
+	const repository = mkdtempSync(join(tmpdir(), "project-map-manifest-"));
 	t.after(() => rmSync(repository, { recursive: true, force: true }));
-	mkdirSync(join(repository, "openspec"));
-	const configPath = join(repository, "openspec", "config.yaml");
-	writeFileSync(configPath, 'schema: spec-driven\nrules:\n  apply:\n    test_command: "pnpm test"\n');
-	const config = readFileSync(configPath, "utf8");
-	assert.equal(readProjectMapTestCommand(config), "pnpm test");
+	const manifestPath = join(repository, "package.json");
+	writeFileSync(manifestPath, JSON.stringify({ scripts: { test: "pnpm test" } }));
+	const manifest = readFileSync(manifestPath, "utf8");
+	assert.equal(readProjectMapTestCommand(manifest), "pnpm test");
 });
 
-test("the nested declaration wins over a flat one, and neither comes from a block scalar", () => {
-	const both = ["rules:", "  apply:", '    test_command: "nested"', "apply:", '  test_command: "flat"', ""].join("\n");
-	assert.equal(readProjectMapTestCommand(both), "nested");
-	const scalar = ["context: |", "  apply:", '    test_command: "nested"', ""].join("\n");
-	assert.equal(readProjectMapTestCommand(scalar), null);
+test("a manifest without a test command declares none", () => {
+	assert.equal(readProjectMapTestCommand(JSON.stringify({ name: "example" })), null);
 });
 
-test("a config without a test command declares none", () => {
-	assert.equal(readProjectMapTestCommand("schema: spec-driven\n"), null);
-});
-
-test("an absent or unreadable config declares no test command", () => {
+test("an absent or unreadable manifest declares no test command", () => {
 	assert.equal(readProjectMapTestCommand(null), null);
 	assert.equal(readProjectMapTestCommand(""), null);
 });
 
 test("a test command that is present but blank is not a requirement", () => {
-	assert.equal(readProjectMapTestCommand('apply:\n  test_command: ""\n'), null);
+	assert.equal(readProjectMapTestCommand(JSON.stringify({ scripts: { test: "" } })), null);
+});
+
+test("malformed manifests and non-string or whitespace test scripts declare no command", () => {
+	for (const text of ["not JSON", "null", "[]", "42", ...[undefined, null, [], "test", {}, { test: 42 }, { test: null }, { test: "  " }].map((scripts) => JSON.stringify({ scripts }))]) {
+		assert.equal(readProjectMapTestCommand(text), null, text);
+	}
+	assert.equal(readProjectMapTestCommand(JSON.stringify({ scripts: { test: " pnpm test " } })), " pnpm test ");
 });

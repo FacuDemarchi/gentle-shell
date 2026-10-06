@@ -10,9 +10,11 @@ import {
 	type ProjectMapV1,
 } from "./shell-project-map-schema.ts";
 
+import { surfaceForDeclaredPath } from "./project-map-surface-table.ts";
+import { readProjectMapTestCommand } from "./project-map-integration-documents.ts";
+
 export interface ProjectMapDraftSources {
 	packageJson?: unknown;
-	openspecConfig?: string;
 	oddTaskDocuments?: { path: string; text: string }[];
 }
 
@@ -24,10 +26,6 @@ export interface ProjectMapDraftResult {
 
 const IDENTIFIER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const IDENTIFIER_MAX_LENGTH = 64;
-// A bare key is a parent: widening this HEAD-compatible class reparents children other readers
-// resolve. Uppercase is allowed only for valued keys, so camel-cased `productUx` can carry one.
-const CONFIG_BARE_KEY = /^([a-z][a-z0-9_]*):\s*$/;
-const CONFIG_VALUED_ENTRY = /^([A-Za-z][A-Za-z0-9_.]*):\s*(\S.*)$/;
 const WORK_UNIT = /^-\s+\[([ xX~])\]\s*\*\*(.+?)\*\*(.*)$/;
 const UNREADABLE_WORK_UNIT = /^-\s+\[([^\]]*)\]\s*\*\*(.+)/;
 const DESCRIPTION_WORK_UNIT = /^(\s*)-\s+\[([ xX~])\]\s*\*\*(.+?)\*\*(.*)$/;
@@ -37,8 +35,6 @@ const BULLET = /^(?:[-*+]|\d+[.)])\s+/;
 const ALLOWED_EDIT_SURFACES_MARKER = /^\*\*Allowed edit surfaces:?\*\*:?[\t ]*/;
 // Like allowed edit surfaces, the colon may sit inside or immediately after the bold marker.
 const BELONGS_TO_MARKER = /^\*\*Belongs to:?\*\*:?[\t ]*/;
-// The trailing dot excludes structural parents such as `project_map.surfaces` from surface reports.
-const PROJECT_MAP_SURFACES_PREFIX = "project_map.surfaces.";
 
 type RecordValue = Record<string, unknown>;
 
@@ -192,162 +188,6 @@ function readWorkUnitBody(lines: string[], start: number, indentation: number): 
 	return body;
 }
 
-function unquote(value: string): string {
-	const trimmed = value.trim();
-	if (trimmed.length >= 2 && ((trimmed.startsWith("\"") && trimmed.endsWith("\"")) || (trimmed.startsWith("'") && trimmed.endsWith("'")))) {
-		return trimmed.slice(1, -1);
-	}
-	return trimmed;
-}
-
-/** Whether a value is a YAML block-scalar marker (`|` or `>`, each with an optional chomping indicator). */
-function isBlockScalarMarker(value: string): boolean {
-	return /^[|>][+-]?$/.test(value.trim());
-}
-
-/**
- * The simple key/value entries a configuration declares, keyed by their full dotted path.
- *
- * Exported because the integration-readiness report needs the project's own test command, and a
- * second copy of this parser is how two readers of the same file drift apart. It interprets no
- * YAML construct: a value keeps the literal text its line wrote, including a list, an anchor or a
- * trailing comment, while a block-scalar body is skipped, and so is a line whose shape this
- * reader does not recognise.
- *
- * The path is tracked by indentation rather than by a fixed depth, because the shape this
- * repository writes nests three levels deep: `rules.apply.test_command` is a bare key
- * (`rules:`), a bare key (`apply:`) and a valued key. A reader that stopped at two levels
- * dropped the middle key and produced `rules.test_command`, so a caller looking for the
- * documented `apply.test_command` found nothing on a config the project had just written.
- */
-type SimpleConfigDeclaration = { path: string; value: string | null };
-
-/**
- * The one indentation-aware config scan shared by the value-only and declaration-preserving
- * views. A `null` value records a recognised key that carried no usable value, while preserving
- * the old value-only reader's treatment of it as absent.
- */
-function scanSimpleConfigDeclarations(text: string): SimpleConfigDeclaration[] {
-	const declarations: SimpleConfigDeclaration[] = [];
-	/** The bare keys open at this point, with the indentation each one was declared at. */
-	const openKeys: { indentation: number; key: string }[] = [];
-	let blockScalarIndent: number | null = null;
-	for (const rawLine of text.split("\n")) {
-		const line = rawLine.replace(/\r$/, "");
-		if (line.trim().length === 0) continue;
-		const indentation = line.length - line.trimStart().length;
-		if (blockScalarIndent !== null) {
-			if (indentation > blockScalarIndent) continue;
-			blockScalarIndent = null;
-		}
-		const content = line.trim();
-		if (content.startsWith("#")) continue;
-		const bare = CONFIG_BARE_KEY.exec(content);
-		if (bare !== null) {
-			while (openKeys.length > 0 && openKeys[openKeys.length - 1]!.indentation >= indentation) openKeys.pop();
-			const path = [...openKeys.filter((open) => open.indentation < indentation).map((open) => open.key), bare[1]].join(".");
-			declarations.push({ path, value: null });
-			openKeys.push({ indentation, key: bare[1] });
-			continue;
-		}
-		const valued = CONFIG_VALUED_ENTRY.exec(content);
-		if (valued === null) continue;
-		const path = [...openKeys.filter((open) => open.indentation < indentation).map((open) => open.key), valued[1]].join(".");
-		if (isBlockScalarMarker(valued[2])) {
-			declarations.push({ path, value: null });
-			blockScalarIndent = indentation;
-			continue;
-		}
-		const value = unquote(valued[2]);
-		declarations.push({ path, value: value.length === 0 ? null : value });
-	}
-	return declarations;
-}
-
-/** Every recognised config key, preserving a missing or empty value as `null`. */
-export function readSimpleConfigDeclarations(text: string): Map<string, string | null> {
-	const declarations = new Map<string, string | null>();
-	for (const declaration of scanSimpleConfigDeclarations(text)) declarations.set(declaration.path, declaration.value);
-	return declarations;
-}
-
-export function readSimpleConfigEntries(text: string): Map<string, string> {
-	const entries = new Map<string, string>();
-	for (const declaration of scanSimpleConfigDeclarations(text)) {
-		if (declaration.value !== null) entries.set(declaration.path, declaration.value);
-	}
-	return entries;
-}
-
-function normalizeProjectMapRoadmapPath(path: string): string {
-	const leadingSlash = path.startsWith("/");
-	const normalized = path.split("/").filter((segment) => segment.length > 0 && segment !== ".").join("/");
-	return normalized.length === 0 ? path : leadingSlash ? `/${normalized}` : normalized;
-}
-
-/** The roadmap document a project declares with `project_map.roadmap`, or `null` when it declares none. */
-export function readProjectMapRoadmapPath(configText: string | undefined): string | null {
-	if (typeof configText !== "string") return null;
-	const value = readSimpleConfigEntries(configText).get("project_map.roadmap");
-	return value === undefined || value.trim().length === 0 ? null : normalizeProjectMapRoadmapPath(value.trim());
-}
-
-export function readProjectMapDelegablePrefix(configText: string | undefined): string | null {
-	if (typeof configText !== "string") return null;
-	const value = readSimpleConfigEntries(configText).get("project_map.delegable");
-	return value === undefined || value.trim().length === 0 ? null : value.trim();
-}
-
-/** The path-prefix mapping a project declares for deriving capability surfaces. */
-export function readProjectMapSurfaceMap(configText: string | undefined): {
-	surfaces: Map<ProjectMapSurface, string[]>;
-	unusableKeys: string[];
-	blankSurfaces: ProjectMapSurface[];
-} {
-	const surfaces = new Map<ProjectMapSurface, string[]>();
-	const unusableKeys: string[] = [];
-	const blankSurfaces: ProjectMapSurface[] = [];
-	if (typeof configText !== "string") return { surfaces, unusableKeys, blankSurfaces };
-
-	const declarations = readSimpleConfigDeclarations(configText);
-	const entries = readSimpleConfigEntries(configText);
-	for (const [key] of declarations) {
-		if (!key.startsWith(PROJECT_MAP_SURFACES_PREFIX)) continue;
-		const surface = key.slice(PROJECT_MAP_SURFACES_PREFIX.length);
-		if (!PROJECT_MAP_SURFACES.includes(surface as ProjectMapSurface)) unusableKeys.push(key);
-	}
-	unusableKeys.sort(comparePaths);
-
-	for (const surface of PROJECT_MAP_SURFACES) {
-		const key = `${PROJECT_MAP_SURFACES_PREFIX}${surface}`;
-		if (!declarations.has(key)) continue;
-		const value = entries.get(key);
-		const prefixes = value === undefined ? [] : value.split(",").map((prefix) => prefix.trim()).filter((prefix) => prefix.length > 0);
-		if (prefixes.length === 0) {
-			blankSurfaces.push(surface);
-			continue;
-		}
-		surfaces.set(surface, prefixes);
-	}
-	return { surfaces, unusableKeys, blankSurfaces };
-}
-
-/**
- * The verification command a project declares, or `null` when it declares none.
- *
- * Two shapes are accepted, most specific first: the OpenSpec rule block this repository's own
- * `sdd-init` writes (`rules.apply.test_command`), and a flat top-level `apply.test_command`,
- * which the reference documents and a project may declare directly. An absent or blank command
- * declares nothing, and nothing is never read as a requirement.
- */
-export function readConfigTestCommand(entries: Map<string, string>): string | null {
-	for (const key of ["rules.apply.test_command", "apply.test_command"]) {
-		const value = entries.get(key);
-		if (value !== undefined && value.trim().length > 0) return value;
-	}
-	return null;
-}
-
 function comparePaths(left: string, right: string): number {
 	if (left === right) return 0;
 	return left < right ? -1 : 1;
@@ -433,8 +273,8 @@ function extractWorkUnits(path: string, text: string, omissions: string[], deleg
 	return { capabilities, stepCount };
 }
 
-function declaredEditSurfacePaths(documentText: string, capabilityId: string): string[] {
-	const description = readProjectMapWorkUnit(documentText, capabilityId);
+function declaredEditSurfacePaths(documentText: string, capabilityId: string, rowCode?: string): string[] {
+	const description = readProjectMapWorkUnit(documentText, capabilityId, rowCode);
 	// Guard only: a generated capability cannot reach it because extraction and lookup share one
 	// document, label parser, and identifier normalization, but this primitive accepts any id.
 	if (description === null) return [];
@@ -443,28 +283,20 @@ function declaredEditSurfacePaths(documentText: string, capabilityId: string): s
 	return [...declaration.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
 }
 
-function deriveCapabilitySurfaces(documentText: string, capability: ProjectMapCapabilityV1, surfaceMap: Map<ProjectMapSurface, string[]>): ProjectMapSurface[] {
+function deriveCapabilitySurfaces(document: { path: string; text: string }, capability: ProjectMapCapabilityV1, omissions: string[]): ProjectMapSurface[] {
 	const matched = new Set<ProjectMapSurface>();
-	for (const path of declaredEditSurfacePaths(documentText, capability.id)) {
-		let selected: ProjectMapSurface | null = null;
-		let longestPrefix = -1;
-		for (const surface of PROJECT_MAP_SURFACES) {
-			for (const prefix of surfaceMap.get(surface) ?? []) {
-				if (path.startsWith(prefix) && prefix.length > longestPrefix) {
-					selected = surface;
-					longestPrefix = prefix.length;
-				}
-			}
-		}
-		if (selected !== null) matched.add(selected);
+	const unmatched: string[] = [];
+	const label = splitWorkUnitLabel(capability.outcome);
+	const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
+	for (const path of declaredEditSurfacePaths(document.text, capability.id, code)) {
+		const surface = surfaceForDeclaredPath(path);
+		if (surface === null) unmatched.push(path);
+		else matched.add(surface);
+	}
+	if (unmatched.length > 0) {
+		omissions.push(`The capability "${capability.id}" declared by ${document.path} has paths that matched no canonical surface prefix: ${unmatched.join(", ")}.`);
 	}
 	return PROJECT_MAP_SURFACES.filter((surface) => matched.has(surface)) as ProjectMapSurface[];
-}
-
-function unmatchedDeclaredEditSurfacePaths(documentText: string, capability: ProjectMapCapabilityV1, surfaceMap: Map<ProjectMapSurface, string[]>): string[] {
-	return declaredEditSurfacePaths(documentText, capability.id).filter(
-		(path) => ![...surfaceMap.values()].flat().some((prefix) => path.startsWith(prefix)),
-	);
 }
 
 /**
@@ -553,6 +385,7 @@ export function deriveProjectMap(sources: Pick<ProjectMapDraftSources, "packageJ
 				while (identifiers.has(capability.id)) capability.id = `${base.slice(0, 54)}-${suffix++}`;
 			}
 			identifiers.add(capability.id);
+			capability.surfaces = deriveCapabilitySurfaces(document, capability, omissions);
 			capabilities.push(capability);
 		}
 	}
@@ -596,13 +429,6 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 		}
 	}
 
-	let openspecConfig: string | null = null;
-	if (typeof sources.openspecConfig !== "string") {
-		omissions.push("openspec/config.yaml is absent, so no quality gate could be derived.");
-	} else {
-		openspecConfig = sources.openspecConfig;
-	}
-
 	const foundations: ProjectMapFoundationV1[] = [];
 	if (isRecord(packageJson) && projectName !== null) {
 		const scripts = packageJson.scripts;
@@ -617,35 +443,21 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 		if (!declaresTooling) omissions.push("package.json declares no usable script command, so the repository tooling foundation stays planned.");
 	}
 
-	if (openspecConfig !== null) {
-		const entries = readSimpleConfigEntries(openspecConfig);
-		const testCommand = readConfigTestCommand(entries);
-		const declaresGate = testCommand !== null;
+	if (isRecord(packageJson)) {
+		const declaresGate = readProjectMapTestCommand(JSON.stringify(packageJson)) !== null;
 		foundations.push({
 			id: "quality-gates",
 			outcome: "The project declares the automated gates that guard a change.",
 			state: declaresGate ? "done" : "planned",
-			...(declaresGate ? { evidence: ["openspec/config.yaml"] } : {}),
+			...(declaresGate ? { evidence: ["package.json"] } : {}),
 		});
-		if (entries.size === 0 && openspecConfig.trim().length > 0) {
-			omissions.push("openspec/config.yaml carries no simple key/value entry this generator can interpret.");
-		}
-		if (!declaresGate) omissions.push("openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.");
+		if (!declaresGate) omissions.push("package.json declares no usable scripts.test, so the quality gates foundation stays planned.");
 	}
 
 	omissions.push("No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.");
-	const declaredSurfaceMap = readProjectMapSurfaceMap(openspecConfig ?? undefined);
-	for (const key of declaredSurfaceMap.unusableKeys) {
-		omissions.push(`openspec/config.yaml declares unsupported surface key "${key}", so project_map.surfaces cannot honour it.`);
-	}
-	for (const surface of declaredSurfaceMap.blankSurfaces) {
-		omissions.push(`openspec/config.yaml declares project_map.surfaces.${surface}, but its value names no path prefix, so it cannot map declared edit surfaces.`);
-	}
-	const derivesSurfaces = declaredSurfaceMap.surfaces.size > 0;
 	const capabilities: ProjectMapCapabilityV1[] = [];
 	const declaredBy = new Map<string, { path: string; line: string }>();
-	const declaredRoadmapPath = readProjectMapRoadmapPath(openspecConfig ?? undefined);
-	const declaredDelegablePrefix = readProjectMapDelegablePrefix(openspecConfig ?? undefined);
+	const declaredDelegablePrefix = "FP-";
 	const documents = Array.isArray(sources.oddTaskDocuments)
 		? sources.oddTaskDocuments
 			.filter(
@@ -654,9 +466,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			)
 			.filter((document) => {
 				if (isSafeFeatureDocumentPath(document.path)) return true;
-				if (document.path !== declaredRoadmapPath) {
-					omissions.push(`${document.path} is not a safe repository-relative path, so it was skipped rather than recorded as a feature document.`);
-				}
+				omissions.push(`${document.path} is not a safe repository-relative path, so it was skipped rather than recorded as a feature document.`);
 				return false;
 			})
 			.sort((left, right) => comparePaths(left.path, right.path))
@@ -664,26 +474,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	if (!Array.isArray(sources.oddTaskDocuments)) {
 		omissions.push("No ODD task documents were supplied, so no capability could be extracted from work units.");
 	}
-	let capabilityDocuments = documents;
-	if (declaredRoadmapPath === null) {
-		assumptions.push(
-			declaredDelegablePrefix === null
-				? "No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed."
-				: `No project_map.roadmap is declared, so units whose codes do not match the declared "${declaredDelegablePrefix}" convention were read as steps rather than capabilities.`,
-		);
-	} else if (!isSafeFeatureDocumentPath(declaredRoadmapPath)) {
-		omissions.push(`openspec/config.yaml declares the roadmap "${declaredRoadmapPath}", but it is not a safe repository-relative path, so no capability could be extracted from it.`);
-		capabilityDocuments = [];
-	} else {
-		const roadmap = documents.find((document) => document.path === declaredRoadmapPath);
-		if (roadmap === undefined) {
-			omissions.push(`openspec/config.yaml declares the roadmap "${declaredRoadmapPath}", but no document with that path could be read, so no capability could be extracted from it.`);
-			capabilityDocuments = [];
-		} else {
-			capabilityDocuments = [roadmap];
-			assumptions.push(`openspec/config.yaml declares "${declaredRoadmapPath}" as the roadmap, so only it contributes capabilities; ${documents.length - 1} other supplied document${documents.length === 2 ? "" : "s"} contributed none.`);
-		}
-	}
+	const capabilityDocuments = documents.filter((document) => /^odd\/tasks\/[^/]+\.md$/.test(document.path));
 
 	let stepCount = 0;
 	for (const document of capabilityDocuments) {
@@ -704,13 +495,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 				continue;
 			}
 			declaredBy.set(capability.id, { path: document.path, line });
-			if (derivesSurfaces) {
-				capability.surfaces = deriveCapabilitySurfaces(document.text, capability, declaredSurfaceMap.surfaces);
-				const unmatched = unmatchedDeclaredEditSurfacePaths(document.text, capability, declaredSurfaceMap.surfaces);
-				if (unmatched.length > 0) {
-					omissions.push(`The capability "${capability.id}" declared by ${document.path} has paths that matched no project_map.surfaces prefix: ${unmatched.join(", ")}.`);
-				}
-			}
+			capability.surfaces = deriveCapabilitySurfaces(document, capability, omissions);
 			capabilities.push(capability);
 		}
 	}
@@ -722,22 +507,18 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	for (const document of documents) {
 		const declared = readDeclaredProjectMapParent(document.text);
 		if (!declared.hasDeclaration) continue;
-		const usable = declared.code !== null && declaredDelegablePrefix !== null
+		const usable = declared.code !== null
 			&& isDelegableWorkUnitCode(declared.code, declaredDelegablePrefix) && rowCodes.has(declared.code);
 		if (!usable) {
-			const reason = declared.code === null ? ""
-				: declaredDelegablePrefix === null ? ": the project declares no project_map.delegable convention"
-				: `: "${declared.code}" is not a functional point this map declares`;
+			const reason = declared.code === null ? "" : `: "${declared.code}" is not a functional point this map declares`;
 			omissions.push(`${document.path} declares an unusable **Belongs to:** declaration${reason}, so its work units were associated with no functional-point row.`);
 		} else if (declared.hasUnreadableDeclaration) {
 			omissions.push(`${document.path} has an unreadable **Belongs to:** marker that was ignored; the readable declaration "${declared.code}" was used instead.`);
 		}
 	}
-	if (declaredDelegablePrefix !== null) {
-		assumptions.push(
-			`${stepCount} work unit${stepCount === 1 ? " was" : "s were"} read as steps instead of capabilities because their codes do not match the declared "${declaredDelegablePrefix}" convention.`,
-		);
-	}
+	assumptions.push(
+		`${stepCount} work unit${stepCount === 1 ? " was" : "s were"} read as steps instead of capabilities because their codes do not match the fixed "${declaredDelegablePrefix}" convention.`,
+	);
 	if (capabilities.length === 0) {
 		omissions.push("No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.");
 	}
@@ -747,11 +528,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	assumptions.push("Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.");
 	assumptions.push("Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.");
 	assumptions.push("An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.");
-	assumptions.push(
-		derivesSurfaces
-			? "Generated capability surfaces were derived from the capability's own declared edit surfaces through project_map.surfaces; a capability without that line remains undeclared."
-			: "A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.",
-	);
+	assumptions.push("Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table; a capability without that line remains undeclared.");
 
 	if (projectId === null || projectName === null) {
 		return { map: null, assumptions, omissions };

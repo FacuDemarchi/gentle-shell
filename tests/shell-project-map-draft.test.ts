@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import test from "node:test";
 import {
 	PROJECT_MAP_ARTIFACT_PATH,
@@ -13,12 +11,6 @@ import {
 	generateProjectMapDraft,
 	projectMapSourceChanges,
 	normalizeIdentifier,
-	readConfigTestCommand,
-	readProjectMapDelegablePrefix,
-	readProjectMapRoadmapPath,
-	readProjectMapSurfaceMap,
-	readSimpleConfigDeclarations,
-	readSimpleConfigEntries,
 } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription } from "../lib/project-map-description.ts";
 
@@ -30,21 +22,6 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 		...overrides,
 	};
 }
-
-const config = [
-	"schema: spec-driven",
-	"strict_tdd: true",
-	"context: |",
-	"  This block is a scalar and must not be interpreted.",
-	"rules:",
-	"  proposal:",
-	"    require_problem_statement: true",
-	"testing:",
-	"  detected: \"2026-07-10\"",
-	"apply:",
-	"  test_command: \"pnpm test\"",
-	"",
-].join("\n");
 
 function joined(values: string[]): string {
 	return values.join("\n");
@@ -58,7 +35,7 @@ function sources(text: string) {
 }
 
 test("derives project identity and the repository foundation from a manifest", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const result = generateProjectMapDraft({ packageJson: manifest() });
 	assert.ok(result.map);
 	assert.equal(result.map.version, PROJECT_MAP_SCHEMA_V1);
 	assert.deepEqual(result.map.project, { id: "example-shop", name: "example-shop" });
@@ -96,40 +73,25 @@ test("marks a foundation done only when its source carries a well-formed declara
 });
 
 test("derives the quality gates foundation from a declared test command", () => {
-	const declared = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const declared = generateProjectMapDraft({ packageJson: manifest() });
 	const foundation = declared.map?.foundations.find((entry) => entry.id === "quality-gates");
 	assert.ok(foundation);
 	assert.equal(foundation.state, "done");
-	assert.deepEqual(foundation.evidence, ["openspec/config.yaml"]);
+	assert.deepEqual(foundation.evidence, ["package.json"]);
 
-	const absent = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "schema: spec-driven\n" });
+	const absent = generateProjectMapDraft({ packageJson: manifest({ scripts: {} }) });
 	assert.equal(absent.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "planned");
 });
 
-test("ignores configuration it cannot interpret and records the gap", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "just a sentence\nwith no keys\n" });
-	assert.ok(result.map);
-	assert.ok(joined(result.omissions).includes("openspec/config.yaml"));
-	assert.equal(result.map.foundations.find((entry) => entry.id === "quality-gates")?.state, "planned");
-});
-
-test("never interprets a block scalar as configuration", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: ["apply:", "  test_command: |", "    pnpm test", ""].join("\n"),
-	});
-	assert.equal(result.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "planned");
-});
-
 test("produces no capabilities and reports the gap", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const result = generateProjectMapDraft({ packageJson: manifest() });
 	assert.ok(result.map);
 	assert.deepEqual(result.map.capabilities, []);
 	assert.ok(joined(result.omissions).toLowerCase().includes("capabilit"));
 });
 
 test("always produces a draft map that is never approved", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const result = generateProjectMapDraft({ packageJson: manifest() });
 	assert.deepEqual(result.map?.approval, { state: "draft" });
 	assert.ok(joined(result.assumptions).includes("draft"));
 });
@@ -142,10 +104,9 @@ test("records every absent source as an omission", () => {
 });
 
 test("is deterministic regardless of input key order", () => {
-	const first = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const first = generateProjectMapDraft({ packageJson: manifest() });
 	const second = generateProjectMapDraft({
 		packageJson: { scripts: { test: "node --test tests/*.test.ts" }, description: "An example shop.", name: "example-shop" },
-		openspecConfig: config,
 	});
 	assert.ok(first.map);
 	assert.ok(second.map);
@@ -160,15 +121,15 @@ test("never throws on malformed input", () => {
 		{ packageJson: null },
 		{ packageJson: [] },
 		{ packageJson: "text" },
-		{ packageJson: manifest(), openspecConfig: 42 as unknown as string },
-		{ packageJson: manifest(), openspecConfig: "\u0000\n\t" },
+		{ packageJson: manifest({ scripts: 42 }) },
+		{ packageJson: manifest({ scripts: "\u0000\n\t" }) },
 	]) {
 		assert.doesNotThrow(() => generateProjectMapDraft(sources));
 	}
 });
 
 test("produces a draft that the schema validates with no diagnostics", () => {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config });
+	const result = generateProjectMapDraft({ packageJson: manifest() });
 	assert.ok(result.map);
 	const validated = validateProjectMap(result.map);
 	assert.deepEqual(validated.diagnostics, []);
@@ -187,9 +148,9 @@ const roadmap = [
 	"",
 	"## Work units",
 	"",
-	"- [x] **PM-1 — Define and validate the versioned Project Map**",
+	"- [x] **FP-1 — Define and validate the versioned Project Map**",
 	"  - Specify capability identifiers and outcomes.",
-	"- [ ] **PM-2 — Add draft generation and human plan approval**",
+	"- [ ] **FP-2 — Add draft generation and human plan approval**",
 	"  - Persist explicit draft and approved transitions.",
 	"",
 ].join("\n");
@@ -199,8 +160,8 @@ const unitDocument = [
 	"",
 	"## Tasks",
 	"",
-	"- [ ] **PM3-1 — Replace static demo data**",
-	"- [x] **PM3-2 — Preserve the card order**",
+	"- [ ] **FP-3-1 — Replace static demo data**",
+	"- [x] **FP-3-2 — Preserve the card order**",
 	"",
 ].join("\n");
 
@@ -223,7 +184,7 @@ test("points every capability at the document that declared it", () => {
 test("keeps the written work-unit label as the outcome and leaves surfaces undetermined", () => {
 	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }] });
 	const capability = result.map?.capabilities.find((entry) => entry.id === "add-draft-generation-and-human-plan-approval");
-	assert.equal(capability?.outcome, "PM-2 — Add draft generation and human plan approval");
+	assert.equal(capability?.outcome, "FP-2 — Add draft generation and human plan approval");
 	assert.deepEqual(capability?.surfaces, []);
 	assert.deepEqual(capability?.foundationRefs, []);
 });
@@ -251,8 +212,8 @@ test("reads work units from several documents in a stable order", () => {
 });
 
 test("deduplicates cross-document capability identifiers and names both source lines", () => {
-	const firstLine = "- [ ] **PM-9 — Shared title**";
-	const secondLine = "- [ ] **PM-8 — Shared title**";
+	const firstLine = "- [ ] **FP-9 — Shared title**";
+	const secondLine = "- [ ] **FP-8 — Shared title**";
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
 		oddTaskDocuments: [
@@ -272,8 +233,8 @@ test("deduplicates cross-document capability identifiers and names both source l
 });
 
 test("deduplicates a capability declared twice in one document and names both source lines", () => {
-	const firstLine = "- [ ] **PM-9 — Shared title**";
-	const secondLine = "- [ ] **PM-8 — Shared title**";
+	const firstLine = "- [ ] **FP-9 — Shared title**";
+	const secondLine = "- [ ] **FP-8 — Shared title**";
 	const result = generateProjectMapDraft(sources(`${firstLine}\n${secondLine}\n`));
 	assert.equal(result.map?.capabilities.filter((capability) => capability.id === "shared-title").length, 1);
 	const omissions = joined(result.omissions);
@@ -292,14 +253,14 @@ test("reports a document that yields no work units as an omission", () => {
 test("ignores prose and checklists that are not work units", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		oddTaskDocuments: [{ path: "odd/tasks/mixed.md", text: "- [ ] a plain checklist item\n- [x] another one\n- [ ] **PM-1 — Real unit**\n" }],
+		oddTaskDocuments: [{ path: "odd/tasks/mixed.md", text: "- [ ] a plain checklist item\n- [x] another one\n- [ ] **FP-1 — Real unit**\n" }],
 	});
 	assert.ok(result.map);
 	assert.deepEqual(result.map.capabilities.map((capability) => capability.id), ["real-unit"]);
 });
 
 test("reports an invalid work-unit title with its source line", () => {
-	for (const line of ["- [ ] **PM-1 — !!!**", "- [ ] **FP — !!!** trailing"]) {
+	for (const line of ["- [ ] **FP-1 — !!!**", "- [ ] **FP — !!!** trailing"]) {
 		const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: [{ path: "odd/tasks/odd.md", text: `${line}\n` }] });
 		assert.ok(result.map);
 		assert.deepEqual(result.map.capabilities, []);
@@ -323,7 +284,6 @@ test("never throws on malformed document entries", () => {
 test("produces extracted capabilities that the schema accepts as a draft", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: config,
 		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: roadmap }],
 	});
 	assert.ok(result.map);
@@ -333,32 +293,10 @@ test("produces extracted capabilities that the schema accepts as a draft", () =>
 	assert.deepEqual(validated.map, result.map);
 });
 
-test("does not read a block scalar body as configuration", () => {
-	// A block scalar body that WOULD be read as a nested entry if the skip were missing. The
-	// omission about an uninterpretable configuration is the observable proof: without the
-	// indentation skip the body yields an entry, so the omission never fires.
-	const onlyScalar = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: ["section:", "  notes: |", "    fake: value", ""].join("\n"),
-	});
-	assert.ok(onlyScalar.map);
-	assert.ok(joined(onlyScalar.omissions).includes("carries no simple key/value entry"));
-
-	// The same skip must not swallow real configuration that follows the scalar.
-	const afterScalar = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: ["context: |", "  apply: not a section", "  test_command: not a command", "apply:", "  test_command: \"pnpm test\"", ""].join("\n"),
-	});
-	assert.equal(afterScalar.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
-});
-
-test("reads the quality gate from the nested OpenSpec rule block the repository writes", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: ["schema: spec-driven", "rules:", "  apply:", '    test_command: "pnpm test"', ""].join("\n"),
-	});
+test("reads the quality gate from the package manifest test script", () => {
+	const result = generateProjectMapDraft({ packageJson: manifest({ scripts: { test: "pnpm test" } }) });
 	assert.equal(result.map?.foundations.find((entry) => entry.id === "quality-gates")?.state, "done");
-	assert.ok(!joined(result.omissions).includes("declares no apply.test_command"));
+	assert.ok(!joined(result.omissions).includes("declares no usable scripts.test"));
 });
 
 test("requires a usable script command, not merely a key", () => {
@@ -378,10 +316,10 @@ test("skips a document whose path is not repository-relative", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
 		oddTaskDocuments: [
-			{ path: "/etc/absolute.md", text: "- [ ] **PM-1 — Absolute**\n" },
-			{ path: "../outside.md", text: "- [ ] **PM-2 — Outside**\n" },
-			{ path: "C:drive.md", text: "- [ ] **PM-3 — Drive**\n" },
-			{ path: "odd/tasks/inside.md", text: "- [ ] **PM-4 — Inside**\n" },
+			{ path: "/etc/absolute.md", text: "- [ ] **FP-1 — Absolute**\n" },
+			{ path: "../outside.md", text: "- [ ] **FP-2 — Outside**\n" },
+			{ path: "C:drive.md", text: "- [ ] **FP-3 — Drive**\n" },
+			{ path: "odd/tasks/inside.md", text: "- [ ] **FP-4 — Inside**\n" },
 		],
 	});
 	assert.ok(result.map);
@@ -395,18 +333,18 @@ test("skips a document whose path is not repository-relative", () => {
 test("produces a draft that the schema accepts even when a document is skipped", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		oddTaskDocuments: [{ path: "odd/tasks/inside.md", text: "- [ ] **PM-4 — Inside**\n" }],
+		oddTaskDocuments: [{ path: "odd/tasks/inside.md", text: "- [ ] **FP-4 — Inside**\n" }],
 	});
 	assert.ok(result.map);
 	assert.deepEqual(validateProjectMap(result.map).diagnostics, []);
 });
 
 test("reads a work unit that carries text after its closing bold label", () => {
-	const result = generateProjectMapDraft(sources("- [ ] **FP-1b — Provisioning** (blocked on accounts): the projects\n"));
+	const result = generateProjectMapDraft(sources("- [ ] **FP-1 — Provisioning** (blocked on accounts): the projects\n"));
 	assert.deepEqual(result.map?.capabilities, [
 		{
 			id: "provisioning",
-			outcome: "FP-1b — Provisioning",
+			outcome: "FP-1 — Provisioning",
 			foundationRefs: [],
 			dependsOn: [],
 			contracts: [],
@@ -430,10 +368,10 @@ test("maps an active work-unit marker to active and keeps it explainable", () =>
 });
 
 test("keeps the whole written label as the outcome while the id uses its title", () => {
-	const result = generateProjectMapDraft(sources("- [x] **PM-2 — Add draft generation** — **delivered**: notes\n"));
+	const result = generateProjectMapDraft(sources("- [x] **FP-2 — Add draft generation** — **delivered**: notes\n"));
 	assert.deepEqual(result.map?.capabilities[0], {
 		id: "add-draft-generation",
-		outcome: "PM-2 — Add draft generation",
+		outcome: "FP-2 — Add draft generation",
 		foundationRefs: [],
 		dependsOn: [],
 		contracts: [],
@@ -444,7 +382,7 @@ test("keeps the whole written label as the outcome while the id uses its title",
 });
 
 test("truncates a long work-unit title while its description still resolves", () => {
-	const documentText = "- [ ] **FP-0b — Local dev service-worker freshness (small, found by the prototype acceptance)**\n  The browser keeps the service worker current.\n";
+	const documentText = "- [ ] **FP-0 — Local dev service-worker freshness (small, found by the prototype acceptance)**\n  The browser keeps the service worker current.\n";
 	const result = generateProjectMapDraft(sources(documentText));
 	const capability = result.map?.capabilities[0];
 	assert.ok(capability);
@@ -467,7 +405,7 @@ test("reports unreadable top-level work units instead of silently dropping them"
 });
 
 test("reads runs of whitespace around a work-unit marker", () => {
-	const result = generateProjectMapDraft(sources("-  [ ] **X**\n-\t[ ] **Tab**\n- [ ]  **FP-5 — Two spaces**\n"));
+	const result = generateProjectMapDraft(sources("-  [ ] **FP-1 — X**\n-\t[ ] **FP-2 — Tab**\n- [ ]  **FP-5 — Two spaces**\n"));
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["tab", "two-spaces", "x"]);
 	assert.equal(result.map?.capabilities[1]?.outcome, "FP-5 — Two spaces");
 });
@@ -499,149 +437,37 @@ test("does not read an indented work unit", () => {
 });
 
 test("keeps a plain work unit working", () => {
-	const result = generateProjectMapDraft(sources("- [ ] **Do the thing**\n"));
-	assert.equal(result.map?.capabilities[0]?.outcome, "Do the thing");
+	const result = generateProjectMapDraft(sources("- [ ] **FP-1 — Do the thing**\n"));
+	assert.equal(result.map?.capabilities[0]?.outcome, "FP-1 — Do the thing");
 	assert.equal(result.map?.capabilities[0]?.id, "do-the-thing");
 });
 
 test("documents that bold text inside a label stops at the first closing emphasis", () => {
-	const result = generateProjectMapDraft(sources("- [ ] **Add **dual** support**\n"));
-	assert.equal(result.map?.capabilities[0]?.outcome, "Add");
+	const result = generateProjectMapDraft(sources("- [ ] **FP-1 — Add **dual** support**\n"));
+	assert.equal(result.map?.capabilities[0]?.outcome, "FP-1 — Add");
 	assert.equal(result.map?.capabilities[0]?.id, "add");
 });
 
-test("reads nested and dotted declared roadmap paths from simple config entries", () => {
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: roadmaps/launch.md\n"), "roadmaps/launch.md");
-	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/a.md\n"), "odd/tasks/a.md");
-	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/first.md\nproject_map:\n  roadmap: odd/tasks/later.md\n"), "odd/tasks/later.md");
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: odd/tasks/first.md\nproject_map.roadmap: odd/tasks/later.md\n"), "odd/tasks/later.md");
-	assert.equal(readProjectMapRoadmapPath("project_map.roadmap: odd/tasks/first.md\nproject_map.roadmap: \"\"\n"), "odd/tasks/first.md");
-	assert.equal(readConfigTestCommand(readSimpleConfigEntries("apply.test_command: pnpm test\n")), "pnpm test");
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  other: value\n"), null);
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap:    \n"), null);
-	assert.equal(readProjectMapRoadmapPath(42 as unknown as string), null);
-});
-
-test("documents that blank repetitions leave the earlier usable roadmap declaration standing", () => {
-	const documentation = readFileSync(join(import.meta.dirname, "..", "docs", "project-map.md"), "utf8");
-	assert.ok(documentation.includes("the last usable declaration wins, and a blank value leaves an earlier declaration standing"));
-});
-
-test("normalizes declared roadmap aliases without correcting unsafe parent paths", () => {
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: odd//./tasks/a.md\n"), "odd/tasks/a.md");
-	assert.equal(readProjectMapRoadmapPath("project_map:\n  roadmap: ../odd/./tasks/a.md\n"), "../odd/tasks/a.md");
-});
-
-test("uses a dotted roadmap declaration as the sole capability source", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map.roadmap: odd/tasks/declared.md\n",
-		oddTaskDocuments: [
-			{ path: "odd/tasks/declared.md", text: "- [ ] **Declared — Shipped capability**\n" },
-			{ path: "odd/tasks/reference.md", text: "- [ ] **Reference — Must not contribute**\n" },
-		],
-	});
-	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["shipped-capability"]);
-});
-
-test("uses only the declared roadmap as a capability source", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  roadmap: odd/tasks/declared.md\n",
-		oddTaskDocuments: [
-			{ path: "odd/tasks/declared.md", text: "- [ ] **Declared — Shipped capability**\n" },
-			{ path: "odd/tasks/reference.md", text: "# Reference only\n" },
-		],
-	});
-	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["shipped-capability"]);
-	assert.ok(joined(result.assumptions).includes("odd/tasks/declared.md"));
-	assert.equal(joined(result.omissions).includes("odd/tasks/reference.md declares no work unit"), false);
-});
-
-test("keeps every supplied document as a source when no roadmap is declared", () => {
+test("keeps every supplied ODD task document as a source under the fixed FP convention", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
 		oddTaskDocuments: [
-			{ path: "odd/tasks/one.md", text: "- [ ] **One — First capability**\n" },
-			{ path: "odd/tasks/two.md", text: "- [ ] **Two — Second capability**\n" },
+			{ path: "odd/tasks/one.md", text: "- [ ] **FP-1 — First capability**\n" },
+			{ path: "odd/tasks/two.md", text: "- [ ] **FP-2 — Second capability**\n" },
 		],
 	});
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
-	assert.ok(joined(result.assumptions).toLowerCase().includes("no project_map.roadmap is declared"));
-});
-
-test("reports a declared roadmap whose document could not be read", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  roadmap: roadmaps/missing.md\n",
-		oddTaskDocuments: [{ path: "odd/tasks/other.md", text: "- [ ] **Other — Not selected**\n" }],
-	});
-	assert.deepEqual(result.map?.capabilities, []);
-	assert.deepEqual(
-		result.omissions.filter((omission) => omission.includes("roadmaps/missing.md")),
-		["openspec/config.yaml declares the roadmap \"roadmaps/missing.md\", but no document with that path could be read, so no capability could be extracted from it."],
-	);
-});
-
-test("reports an unsafe declared roadmap without reading it", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  roadmap: ../outside.md\n",
-		oddTaskDocuments: [{ path: "odd/tasks/other.md", text: "- [ ] **Other — Not selected**\n" }],
-	});
-	assert.deepEqual(result.map?.capabilities, []);
-	assert.ok(joined(result.omissions).includes("../outside.md"));
-	assert.ok(joined(result.omissions).includes("not a safe repository-relative path"));
-});
-
-test("treats a blank roadmap declaration as no declaration", () => {
-	const result = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  roadmap:    \n",
-		oddTaskDocuments: [
-			{ path: "odd/tasks/one.md", text: "- [ ] **One — First capability**\n" },
-			{ path: "odd/tasks/two.md", text: "- [ ] **Two — Second capability**\n" },
-		],
-	});
-	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
-	assert.ok(joined(result.assumptions).toLowerCase().includes("no project_map.roadmap is declared"));
-});
-
-test("reads declared surface prefixes and reports only blank and unsupported declarations", () => {
-	const parsed = readProjectMapSurfaceMap([
-		"project_map:",
-		"  surfaces:",
-		"    web: apps/web/, packages/web/",
-		"    api: apps/api/",
-		"    data: , ,",
-		"    mobile: apps/mobile/",
-		"",
-	].join("\n"));
-	assert.deepEqual([...parsed.surfaces], [
-		["web", ["apps/web/", "packages/web/"]],
-		["api", ["apps/api/"]],
-	]);
-	assert.deepEqual(parsed.blankSurfaces, ["data"]);
-	assert.deepEqual(parsed.unusableKeys, ["project_map.surfaces.mobile"]);
-	assert.deepEqual(readProjectMapSurfaceMap(undefined), { surfaces: new Map(), unusableKeys: [], blankSurfaces: [] });
+	assert.ok(joined(result.assumptions).includes('fixed "FP-" convention'));
 });
 
 test("derives surfaces from only backticked declared paths using the longest matching prefix", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: [
-			"project_map:",
-			"  surfaces:",
-			"    api: packages/",
-			"    data: packages/database/",
-			"    web: apps/web/",
-			"",
-		].join("\n"),
 		oddTaskDocuments: [{
 			path: "odd/tasks/roadmap.md",
 			text: [
 				"- [ ] **FP-1 — Catalog**",
-				"  **Allowed edit surfaces:** prose packages/ignored and `packages/database/query.ts` plus `apps/web/page.ts`.",
+				"  **Allowed edit surfaces:** prose packages/ignored and `database/query.ts` plus `web/page.ts`.",
 				"",
 			].join("\n"),
 		}],
@@ -653,7 +479,6 @@ test("derives surfaces from only backticked declared paths using the longest mat
 test("reports all unmatched declared paths in one omission per capability", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n",
 		oddTaskDocuments: [{
 			path: "odd/tasks/roadmap.md",
 			text: [
@@ -663,147 +488,57 @@ test("reports all unmatched declared paths in one omission per capability", () =
 			].join("\n"),
 		}],
 	});
-	const unmatched = result.omissions.filter((omission) => omission.includes("matched no project_map.surfaces prefix"));
+	const unmatched = result.omissions.filter((omission) => omission.includes("matched no canonical surface prefix"));
 	assert.deepEqual(unmatched, [
-		"The capability \"catalog\" declared by odd/tasks/roadmap.md has paths that matched no project_map.surfaces prefix: packages/catalog/, docs/catalog.md.",
+		"The capability \"catalog\" declared by odd/tasks/roadmap.md has paths that matched no canonical surface prefix: packages/catalog/, docs/catalog.md.",
 	]);
 });
 
 test("keeps surfaces empty when a capability or its document declares no allowed-edit-surfaces line", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n",
 		oddTaskDocuments: [
 			{ path: "odd/tasks/one.md", text: "- [ ] **FP-1 — No line**\n  Body only.\n" },
 			{ path: "odd/tasks/two.md", text: "- [ ] **FP-2 — Another no line**\n" },
 		],
 	});
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.surfaces), [[], []]);
-	assert.equal(result.omissions.some((omission) => omission.includes("matched no project_map.surfaces prefix")), false);
+	assert.equal(result.omissions.some((omission) => omission.includes("matched no canonical surface prefix")), false);
 });
 
-test("switches the surface assumption and reports unusable surface declarations when a mapping is declared", () => {
-	const mapped = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  surfaces:\n    web: apps/web/\n    api: ,\n    mobile: apps/mobile/\n",
-		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n" }],
-	});
+test("derives declared web surfaces through the canonical table without configuration", () => {
+	const mapped = generateProjectMapDraft(sources("- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `web/page.ts`\n"));
 	assert.deepEqual(mapped.map?.capabilities[0]?.surfaces, ["web"]);
-	assert.ok(joined(mapped.assumptions).includes("capability's own declared edit surfaces through project_map.surfaces"));
+	assert.ok(joined(mapped.assumptions).includes("capability's own declared edit surfaces through the canonical surface table"));
 	assert.equal(joined(mapped.assumptions).includes("leaves its surface list empty"), false);
-	assert.ok(joined(mapped.omissions).includes("project_map.surfaces.api"));
-	assert.ok(joined(mapped.omissions).includes("project_map.surfaces.mobile"));
-
 	const unmapped = generateProjectMapDraft(sources("- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n"));
 	assert.deepEqual(unmapped.map?.capabilities[0]?.surfaces, []);
-	assert.ok(joined(unmapped.assumptions).includes("leaves its surface list empty"));
-	assert.equal(joined(unmapped.omissions).includes("matched no project_map.surfaces prefix"), false);
+	assert.ok(joined(unmapped.assumptions).includes("a capability without that line remains undeclared"));
+	assert.equal(joined(unmapped.omissions).includes("matched no canonical surface prefix"), true);
 });
 
-test("reads camel-cased productUx surface declarations in nested and dotted forms", () => {
-	for (const configText of [
-		"project_map:\n  surfaces:\n    productUx: apps/web/ux/\n",
-		"project_map.surfaces.productUx: apps/web/ux/\n",
-	]) {
-		assert.deepEqual(readProjectMapSurfaceMap(configText), {
-			surfaces: new Map([["productUx", ["apps/web/ux/"]]]),
-			unusableKeys: [],
-			blankSurfaces: [],
-		});
-		const result = generateProjectMapDraft({
-			packageJson: manifest(),
-			openspecConfig: configText,
-			oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/web/ux/menu.ts`\n" }],
-		});
+test("derives camel-cased productUx from either declaration marker colon form", () => {
+	for (const marker of ["**Allowed edit surfaces:**", "**Allowed edit surfaces**:"]) {
+		const result = generateProjectMapDraft(sources(`- [ ] **FP-1 — Catalog**\n  ${marker} \`ui/menu.ts\`\n`));
 		assert.deepEqual(result.map?.capabilities[0]?.surfaces, ["productUx"]);
-		assert.equal(result.omissions.some((omission) => omission.includes("project_map.surfaces")), false);
+		assert.equal(result.omissions.some((omission) => omission.includes("matched no canonical surface prefix")), false);
 	}
 });
 
-test("reports blank and unsupported surface declarations with or without values", () => {
-	const nested = "project_map:\n  surfaces:\n    web:\n    api: \"\"\n    alien:\n    mobile: apps/mobile/\n";
-	assert.deepEqual(readProjectMapSurfaceMap(nested), {
-		surfaces: new Map(),
-		unusableKeys: ["project_map.surfaces.alien", "project_map.surfaces.mobile"],
-		blankSurfaces: ["web", "api"],
-	});
-
-	const shadowedBlank = readProjectMapSurfaceMap("project_map:\n  surfaces:\n    api: apps/api/\n    web:\n");
-	assert.deepEqual([...shadowedBlank.surfaces], [["api", ["apps/api/"]]]);
-	assert.deepEqual(shadowedBlank.blankSurfaces, ["web"]);
-	assert.equal(readSimpleConfigDeclarations("project_map:\n  surfaces:\n    web:\n").get("project_map.surfaces.web"), null);
-
-	const generated = generateProjectMapDraft({
-		packageJson: manifest(),
-		openspecConfig: "project_map:\n  surfaces:\n    api: apps/api/\n    web:\n    alien:\n",
-		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `apps/api/catalog.ts`\n" }],
-	});
+test("a fully mapped API document declaration produces no surface omission", () => {
+	const generated = generateProjectMapDraft(sources("- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** `api/catalog.ts`\n"));
 	assert.deepEqual(generated.map?.capabilities[0]?.surfaces, ["api"]);
-	assert.ok(joined(generated.omissions).includes("project_map.surfaces.web"));
-	assert.ok(joined(generated.omissions).includes("project_map.surfaces.alien"));
-	assert.equal(generated.omissions.some((omission) => omission.includes("matched no project_map.surfaces prefix")), false);
+	assert.equal(generated.omissions.some((omission) => omission.includes("matched no canonical surface prefix")), false);
 });
 
-test("requires a value for a camel-cased surface name but still reports its empty value", () => {
-	// A bare `productUx` is a parent to the shared configuration reader, not a surface declaration.
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    productUx:\n"), {
-		surfaces: new Map(),
-		unusableKeys: [],
-		blankSurfaces: [],
-	});
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    productUx: \"\"\n"), {
-		surfaces: new Map(),
-		unusableKeys: [],
-		blankSurfaces: ["productUx"],
-	});
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    web: \"\"\n"), {
-		surfaces: new Map(),
-		unusableKeys: [],
-		blankSurfaces: ["web"],
-	});
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    alien:\n"), {
-		surfaces: new Map(),
-		unusableKeys: ["project_map.surfaces.alien"],
-		blankSurfaces: [],
-	});
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    alien: x\n"), {
-		surfaces: new Map(),
-		unusableKeys: ["project_map.surfaces.alien"],
-		blankSurfaces: [],
-	});
-});
-
-test("keeps uppercase bare parents from reparenting a shared test command", () => {
-	const configText = "rules:\n  apply:\n    Upper:\n      test_command: npm test\n";
-	// HEAD output: [["rules.apply.test_command", "npm test"]].
-	assert.deepEqual([...readSimpleConfigEntries(configText)], [["rules.apply.test_command", "npm test"]]);
-	assert.equal(readConfigTestCommand(readSimpleConfigEntries(configText)), "npm test");
-});
-
-test("keeps dotted bare parents from becoming a shared test-command path", () => {
-	const configText = "rules.apply:\n  test_command: npm test\n";
-	// HEAD output: [["test_command", "npm test"]].
-	assert.deepEqual([...readSimpleConfigEntries(configText)], [["test_command", "npm test"]]);
-	assert.equal(readConfigTestCommand(readSimpleConfigEntries(configText)), null);
-});
-
-test("uses the last usable surface value without also reporting it blank", () => {
-	for (const configText of [
-		"project_map.surfaces.web: apps/web/\nproject_map.surfaces.web:\n",
-		"project_map:\n  surfaces:\n    web: apps/web/\n    web:\n",
-		"project_map:\n  surfaces:\n    web:\n    web: apps/web/\n",
-	]) {
-		assert.deepEqual(readProjectMapSurfaceMap(configText), {
-			surfaces: new Map([["web", ["apps/web/"]]]),
-			unusableKeys: [],
-			blankSurfaces: [],
-		});
-	}
-	assert.deepEqual(readProjectMapSurfaceMap("project_map:\n  surfaces:\n    web:\n    web: \"\"\n"), {
-		surfaces: new Map(),
-		unusableKeys: [],
-		blankSurfaces: ["web"],
-	});
+test("canonical table gap: apps/web/page.ts is named, never guessed, alongside a mapped declaration", () => {
+	// This expectation flips if the table ever gains document-declared surfaces.
+	const result = generateProjectMapDraft(sources("- [ ] **FP-1 — Gap**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n- [ ] **FP-2 — Canonical**\n  **Allowed edit surfaces:** `web/page.ts`\n"));
+	assert.deepEqual(result.map?.capabilities.find((row) => row.id === "gap")?.surfaces, []);
+	assert.deepEqual(result.map?.capabilities.find((row) => row.id === "canonical")?.surfaces, ["web"]);
+	assert.deepEqual(result.omissions.filter((line) => line.includes("matched no canonical surface prefix")), [
+		'The capability "gap" declared by odd/tasks/roadmap.md has paths that matched no canonical surface prefix: apps/web/page.ts.',
+	]);
 });
 
 const delegableUnits = [
@@ -820,26 +555,16 @@ const delegableUnits = [
 	"",
 ].join("\n");
 
-function delegableSources(openspecConfig: string) {
+function delegableSources() {
 	return {
 		packageJson: manifest(),
-		openspecConfig,
 		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: delegableUnits }],
 	};
 }
 
-test("reads a delegable prefix from nested and dotted declarations", () => {
-	assert.equal(readProjectMapDelegablePrefix("project_map:\n  delegable: FP-\n"), "FP-");
-	assert.equal(readProjectMapDelegablePrefix("project_map.delegable: FP-\n"), "FP-");
-	for (const configText of [undefined, "project_map:\n  other: value\n", "project_map:\n  delegable: \"\"\n"]) {
-		assert.equal(readProjectMapDelegablePrefix(configText), null);
-	}
-	assert.equal(readProjectMapDelegablePrefix(42 as unknown as string), null);
-});
-
 test("keeps only numbered, undotted convention codes as capability sources with or without a roadmap", () => {
-	const noRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  delegable: FP-\n"));
-	const withRoadmap = generateProjectMapDraft(delegableSources("project_map:\n  roadmap: odd/tasks/roadmap.md\n  delegable: FP-\n"));
+	const noRoadmap = generateProjectMapDraft(delegableSources());
+	const withRoadmap = generateProjectMapDraft({ ...delegableSources(), oddTaskDocuments: [{ path: "odd/tasks/other.md", text: delegableUnits }] });
 	for (const result of [noRoadmap, withRoadmap]) {
 		assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), [
 			"FP-2 — Catalogue",
@@ -860,7 +585,7 @@ test("makes row and sub-element rules disjoint", () => {
 			"- [x] **FP-1-2 — Hyphenated root**",
 		].join("\n"),
 	}];
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-1-2 — Hyphenated root", "FP-1 — Root"]);
 	assert.deepEqual(collectProjectMapSteps(documents, "FP-1"), [
@@ -876,79 +601,18 @@ test("treats an accented continuation as a continuation, because D2 says a lette
 		text: ["- [ ] **FP-1 — Root**", "- [ ] **FP-1é — Accented continuation**"].join("\n"),
 	}];
 	assert.deepEqual(collectProjectMapSteps(documents, "FP-1").map((step) => step.code), ["FP-1é"]);
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), ["FP-1 — Root"]);
 });
 
-test("switches the no-roadmap assumption only when a delegable convention is declared", () => {
-	const declared = generateProjectMapDraft(delegableSources("project_map:\n  delegable: FP-\n"));
-	assert.ok(joined(declared.assumptions).includes("codes do not match the declared \"FP-\" convention were read as steps"));
-	assert.equal(joined(declared.assumptions).includes("granularity may be mixed"), false);
-
-	const fallback = generateProjectMapDraft(delegableSources("project_map:\n  other: value\n"));
-	assert.ok(joined(fallback.assumptions).includes("every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed"));
-	assert.equal(joined(fallback.assumptions).includes("read as steps instead of capabilities"), false);
-});
-
-test("keeps the generated map, omissions, and assumptions unchanged without a delegable declaration", () => {
+test("pins the complete manifest-backed output under the fixed FP convention", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  other: value\n",
 		oddTaskDocuments: [{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-1 — Catalog**\n" }],
 	});
-	assert.equal(serializeProjectMap(result.map!), [
-		"{",
-		'  "version": "gentle-shell.project-map/v1",',
-		'  "project": {',
-		'    "id": "example-shop",',
-		'    "name": "example-shop"',
-		"  },",
-		'  "approval": {',
-		'    "state": "draft"',
-		"  },",
-		'  "foundations": [',
-		"    {",
-		'      "id": "quality-gates",',
-		'      "outcome": "The project declares the automated gates that guard a change.",',
-		'      "state": "planned"',
-		"    },",
-		"    {",
-		'      "id": "repository-tooling",',
-		'      "outcome": "The repository and its declared tooling are present and consistent.",',
-		'      "state": "done",',
-		'      "evidence": [',
-		'        "package.json"',
-		"      ]",
-		"    }",
-		"  ],",
-		'  "capabilities": [',
-		"    {",
-		'      "id": "catalog",',
-		'      "outcome": "FP-1 — Catalog",',
-		'      "foundationRefs": [],',
-		'      "dependsOn": [],',
-		'      "contracts": [],',
-		'      "featureDocs": [',
-		'        "odd/tasks/roadmap.md"',
-		"      ],",
-		'      "surfaces": [],',
-		'      "state": "planned"',
-		"    }",
-		"  ]",
-		"}",
-		"",
-	].join("\n"));
-	assert.deepEqual(result.assumptions, [
-		"No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.",
-		"Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.",
-		"A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.",
-		"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
-		"Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.",
-		"An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.",
-		"A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.",
-	]);
+	assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization([expectedHeadCapability("odd/tasks/roadmap.md", "catalog", "FP-1 — Catalog")]));
+	assert.deepEqual(result.assumptions, headFallbackAssumptions);
 	assert.deepEqual(result.omissions, [
-		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
 		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
 	]);
 });
@@ -960,11 +624,10 @@ test("keeps HEAD's no-capability omission unless a convention read the unit as a
 		oddTaskDocuments: [{ path: "odd/tasks/invalid.md", text: document }],
 	});
 	assert.ok(joined(withoutConvention.omissions).includes("cannot be normalized into a capability identifier"));
-	assert.ok(joined(withoutConvention.omissions).includes("odd/tasks/invalid.md declares no work unit this generator can read"));
+	assert.equal(joined(withoutConvention.omissions).includes("odd/tasks/invalid.md declares no work unit this generator can read"), false);
 
 	const withConvention = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n",
 		oddTaskDocuments: [{ path: "odd/tasks/invalid.md", text: document }],
 	});
 	assert.ok(joined(withConvention.omissions).includes("cannot be normalized into a capability identifier"));
@@ -972,10 +635,9 @@ test("keeps HEAD's no-capability omission unless a convention read the unit as a
 	assert.ok(joined(withConvention.assumptions).includes("1 work unit was read as steps instead of capabilities"));
 });
 
-test("uses the whole separator-free label as the code under a delegable convention", () => {
+test("uses the whole separator-free label as the code under the fixed FP convention", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n",
 		oddTaskDocuments: [{
 			path: "odd/tasks/codes.md",
 			text: ["- [ ] **FP-1**", "- [ ] **FP-1b.0**", "- [ ] **F5-1**", "- [ ] **Do the thing**", ""].join("\n"),
@@ -1000,13 +662,13 @@ function expectedHeadCapability(path: string, id: string, outcome: string) {
 }
 
 const headFallbackAssumptions = [
-	"No project_map.roadmap is declared, so every top-level work unit of every supplied ODD task document became a capability source and their granularity may be mixed.",
+	'0 work units were read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.',
 	"Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.",
 	"A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.",
 	"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
 	"Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.",
 	"An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.",
-	"A generated capability leaves its surface list empty, because no structured source states which product surfaces it touches.",
+	"Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table; a capability without that line remains undeclared.",
 ];
 
 function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadCapability>[]) {
@@ -1015,7 +677,7 @@ function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadC
 		project: { id: "example-shop", name: "example-shop" },
 		approval: { state: "draft" },
 		foundations: [
-			{ id: "quality-gates", outcome: "The project declares the automated gates that guard a change.", state: "planned" },
+			{ id: "quality-gates", outcome: "The project declares the automated gates that guard a change.", state: "done", evidence: ["package.json"] },
 			{ id: "repository-tooling", outcome: "The repository and its declared tooling are present and consistent.", state: "done", evidence: ["package.json"] },
 		],
 		capabilities,
@@ -1076,7 +738,7 @@ test("makes numbered roots rows and collects each continuing code under its root
 			"- [x] **FP-1b.8 — Second cut eight**",
 		].join("\n") },
 	];
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.outcome), Array.from({ length: 10 }, (_, number) => `FP-${number} — Root ${number}`));
 	assert.equal(result.map?.capabilities.some((capability) => ["FP-0b", "FP-1a", "FP-1b", "FP-1b.0"].includes(capability.outcome.split(" — ")[0]!)), false, "letters and dots keep cuts out of rows");
@@ -1189,7 +851,6 @@ test("reports each unreadable or unusable declared parent once without falling b
 	];
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n",
 		oddTaskDocuments: documents,
 	});
 
@@ -1217,7 +878,7 @@ test("reports unreadable markers after the winning declaration once while keepin
 				"- [x] **F5-1 — Declared step**",
 			].join("\n"),
 		}];
-		const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "project_map:\n  delegable: FP-\n", oddTaskDocuments: documents });
+		const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 		assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
 			'odd/tasks/declared.md has an unreadable **Belongs to:** marker that was ignored; the readable declaration "FP-5" was used instead.',
 		]);
@@ -1230,9 +891,9 @@ test("reports unreadable markers after the winning declaration once while keepin
 
 test("reports a readable declared parent without a delegable convention as its own cause", () => {
 	const documents = [{ path: "odd/tasks/declared.md", text: "**Belongs to:** `FP-5`\n- [x] **FP-5a — No fallback**" }];
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: "", oddTaskDocuments: documents });
+	const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
-		'odd/tasks/declared.md declares an unusable **Belongs to:** declaration: the project declares no project_map.delegable convention, so its work units were associated with no functional-point row.',
+		'odd/tasks/declared.md declares an unusable **Belongs to:** declaration: "FP-5" is not a functional point this map declares, so its work units were associated with no functional-point row.',
 	]);
 	assert.deepEqual(collectProjectMapSteps(documents, "FP-5", null), []);
 });
@@ -1240,10 +901,9 @@ test("reports a readable declared parent without a delegable convention as its o
 test("reports a well-shaped declared parent absent from the extracted roadmap once", () => {
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n  roadmap: odd/tasks/roadmap.md\n",
 		oddTaskDocuments: [
 			{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-5 — Five**" },
-			{ path: "odd/tasks/missing.md", text: "**Belongs to:** `FP-999`\n- [ ] **FP-999 — Not extracted from this document**\n- [x] **FP-5a — Must not fall back**" },
+			{ path: "odd/tasks/missing.md", text: "**Belongs to:** `FP-999`\n- [ ] **FP-999a — Not extracted from this document**\n- [x] **FP-5a — Must not fall back**" },
 		],
 	});
 	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
@@ -1253,21 +913,15 @@ test("reports a well-shaped declared parent absent from the extracted roadmap on
 });
 
 test("unhonoured declarations report only non-association even after unreadable markers", () => {
-	for (const [config, code] of [
-		["project_map:\n  delegable: FP-\n", "FP-999"],
-		["project_map:\n  delegable: FP-\n", "FP-5x"],
-		["", "FP-5"],
-	] as const) {
+	for (const code of ["FP-999", "FP-5x", "FP-999-1"] as const) {
 		const documents = [
 			{ path: "odd/tasks/roadmap.md", text: "- [ ] **FP-5 — Five**" },
 			{ path: "odd/tasks/declared.md", text: `**Belongs to:**\n**Belongs to:** \`${code}\`\n**Belongs to:** \`FP-5\`\n- [x] **FP-5a — No fallback**` },
 		];
-		assert.deepEqual(collectProjectMapSteps(documents, "FP-5", config ? "FP-" : null), [], "the first readable declaration wins even when unusable");
-		const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig: config, oddTaskDocuments: documents });
+		assert.deepEqual(collectProjectMapSteps(documents, "FP-5", "FP-"), [], "the first readable declaration wins even when unusable");
+		const result = generateProjectMapDraft({ packageJson: manifest(), oddTaskDocuments: documents });
 		assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
-			config
-				? `odd/tasks/declared.md declares an unusable **Belongs to:** declaration: "${code}" is not a functional point this map declares, so its work units were associated with no functional-point row.`
-				: "odd/tasks/declared.md declares an unusable **Belongs to:** declaration: the project declares no project_map.delegable convention, so its work units were associated with no functional-point row.",
+			`odd/tasks/declared.md declares an unusable **Belongs to:** declaration: "${code}" is not a functional point this map declares, so its work units were associated with no functional-point row.`,
 		]);
 	}
 });
@@ -1279,7 +933,6 @@ test("adding an unreadable marker removes a derived step and reports one omissio
 	assert.deepEqual(collectProjectMapSteps([declaring], "FP-5", "FP-"), []);
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n",
 		oddTaskDocuments: [declaring],
 	});
 	assert.deepEqual(result.omissions.filter((omission) => omission.includes("**Belongs to:**")), [
@@ -1371,7 +1024,6 @@ test("keeps the no-declaration collector and generated draft byte-identical", ()
 	}];
 	const result = generateProjectMapDraft({
 		packageJson: manifest(),
-		openspecConfig: "project_map:\n  delegable: FP-\n",
 		oddTaskDocuments: documents,
 	});
 
@@ -1380,12 +1032,10 @@ test("keeps the no-declaration collector and generated draft byte-identical", ()
 	]);
 	assert.deepEqual(result.map?.capabilities, [expectedHeadCapability("odd/tasks/fallback.md", "five", "FP-5 — Five")]);
 	assert.deepEqual(result.omissions, [
-		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
 		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
 	]);
 	assert.deepEqual(result.assumptions, [
-		"No project_map.roadmap is declared, so units whose codes do not match the declared \"FP-\" convention were read as steps rather than capabilities.",
-		"2 work units were read as steps instead of capabilities because their codes do not match the declared \"FP-\" convention.",
+		'2 work units were read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.',
 		...headFallbackAssumptions.slice(1),
 	]);
 	assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization([expectedHeadCapability("odd/tasks/fallback.md", "five", "FP-5 — Five")]));
@@ -1393,7 +1043,6 @@ test("keeps the no-declaration collector and generated draft byte-identical", ()
 
 test("matches HEAD's complete output for synthetic no-convention corpora", () => {
 	const commonOmissions = [
-		"openspec/config.yaml declares no apply.test_command, so the quality gates foundation stays planned.",
 		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
 	];
 	const cases = [
@@ -1404,15 +1053,14 @@ test("matches HEAD's complete output for synthetic no-convention corpora", () =>
 			omissions: [
 				...commonOmissions,
 				'The work unit line "- [ ] **!!!**" in odd/tasks/invalid.md cannot be normalized into a capability identifier.',
-				"odd/tasks/invalid.md declares no work unit this generator can read, so it contributed no capability.",
 				"No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.",
 			],
 		},
 		{
 			name: "a document containing only steps",
 			documents: [{ path: "odd/tasks/steps.md", text: "- [ ] **DEL-1 — Delivery step**\n" }],
-			capabilities: [expectedHeadCapability("odd/tasks/steps.md", "delivery-step", "DEL-1 — Delivery step")],
-			omissions: commonOmissions,
+			capabilities: [],
+			omissions: [...commonOmissions, "No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human."],
 		},
 		{
 			name: "a collision",
@@ -1439,18 +1087,20 @@ test("matches HEAD's complete output for synthetic no-convention corpora", () =>
 	for (const fixture of cases) {
 		const result = generateProjectMapDraft({
 			packageJson: manifest(),
-			openspecConfig: "project_map:\n  other: value\n",
 			oddTaskDocuments: fixture.documents,
 		});
 		assert.deepEqual(result.map?.capabilities, fixture.capabilities, fixture.name);
 		assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization(fixture.capabilities), fixture.name);
 		assert.deepEqual(result.omissions, fixture.omissions, fixture.name);
-		assert.deepEqual(result.assumptions, headFallbackAssumptions, fixture.name);
+		assert.deepEqual(result.assumptions, [
+			`${fixture.name === "an invalid title" || fixture.name === "a document containing only steps" ? "1 work unit was" : "0 work units were"} read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.`,
+			...headFallbackAssumptions.slice(1),
+		], fixture.name);
 	}
 });
 
-function comparisonMap(text = "- [ ] **FP-1 — Checkout**", path = "odd/tasks/roadmap.md", openspecConfig?: string) {
-	const result = generateProjectMapDraft({ packageJson: manifest(), openspecConfig, oddTaskDocuments: [{ path, text }] });
+function comparisonMap(text = "- [ ] **FP-1 — Checkout**", path = "odd/tasks/roadmap.md", scripts: Record<string, unknown> = { test: "node --test" }) {
+	const result = generateProjectMapDraft({ packageJson: manifest({ scripts }), oddTaskDocuments: [{ path, text }] });
 	assert.ok(result.map);
 	return result.map;
 }
@@ -1487,9 +1137,8 @@ for (const [field, value, rendered] of [
 }
 
 test("source changes: document-declared surfaces produce a compact field line", () => {
-	const surfaceConfig = "project_map:\n  surfaces:\n    web: web/\n    api: api/\n";
-	const stored = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`", undefined, surfaceConfig);
-	const generated = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `api/cart.ts`", undefined, surfaceConfig);
+	const stored = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`");
+	const generated = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `api/cart.ts`");
 	assert.deepEqual(projectMapSourceChanges(stored, generated), ['Capability "checkout": surfaces ["web"] → ["api"].']);
 });
 
@@ -1497,8 +1146,8 @@ test("source changes: hand-declared surfaces and removed declarations are ignore
 	const stored = comparisonMap();
 	stored.capabilities[0]!.surfaces = ["web"];
 	assert.deepEqual(projectMapSourceChanges(stored, comparisonMap()), []);
-	const declared = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`", undefined, "project_map:\n  surfaces:\n    web: web/\n");
-	assert.deepEqual(projectMapSourceChanges(declared, comparisonMap(undefined, undefined, "project_map:\n  surfaces:\n    web: web/\n")), []);
+	const declared = comparisonMap("- [ ] **FP-1 — Checkout**\n  **Allowed edit surfaces:** `web/cart.ts`");
+	assert.deepEqual(projectMapSourceChanges(declared, comparisonMap()), []);
 });
 
 test("source changes: approved stored maps with identical sources return no lines", () => {
@@ -1526,11 +1175,13 @@ test("source changes: project id and name produce their identity lines", () => {
 
 test("source changes: foundations added removed and changed are compared by id", () => {
 	const stored = comparisonMap();
-	const withGate = comparisonMap(undefined, undefined, config);
+	stored.foundations = stored.foundations.filter((foundation) => foundation.id !== "quality-gates");
+	const withGate = comparisonMap();
 	assert.deepEqual(projectMapSourceChanges(stored, withGate), ['Foundation "quality-gates" was added.']);
 	assert.deepEqual(projectMapSourceChanges(withGate, stored), ['Foundation "quality-gates" was removed.']);
 	const generated = generateProjectMapDraft({ ...sources("- [ ] **FP-1 — Checkout**"), packageJson: manifest({ scripts: {} }) }).map!;
-	// Foundation outcomes cannot currently be changed through generator inputs.
+	// Foundation membership and outcomes are human-owned; test their comparison directly.
+	generated.foundations = generated.foundations.filter((foundation) => foundation.id !== "quality-gates");
 	generated.foundations[0]!.outcome = "Tooling changed.";
 	assert.deepEqual(projectMapSourceChanges(stored, generated), [
 		'Foundation "repository-tooling": outcome The repository and its declared tooling are present and consistent. → Tooling changed..',
@@ -1586,7 +1237,8 @@ test("source changes: repeated stored ids retain their first position and genera
 
 test("source changes: identity foundations stored capability order and generated-only order are deterministic", () => {
 	const stored = comparisonMap("- [ ] **FP-1 — Zebra**\n- [ ] **FP-2 — Alpha**\n- [ ] **FP-3 — Removed**");
-	const generated = comparisonMap("- [ ] **FP-4 — Aardvark first**\n- [x] **FP-2 — Alpha**\n- [ ] **FP-5 — New second**\n- [x] **FP-1 — Zebra**", undefined, config);
+	stored.foundations = stored.foundations.filter((foundation) => foundation.id !== "quality-gates");
+	const generated = comparisonMap("- [ ] **FP-4 — Aardvark first**\n- [x] **FP-2 — Alpha**\n- [ ] **FP-5 — New second**\n- [x] **FP-1 — Zebra**");
 	generated.project = { id: "new-shop", name: "New shop" };
 	generated.capabilities.find((capability) => capability.id === "zebra")!.outcome = "FP-9 — Zebra";
 	const expected = [

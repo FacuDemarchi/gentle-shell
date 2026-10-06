@@ -88,7 +88,7 @@ function withClone(runScenario: (clone: Clone) => Promise<void> | void): Promise
 	const git = (cwd: string, arguments_: string[]) => String(execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=test", ...arguments_], { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 	git(main, ["init", "--initial-branch=main"]);
 	mkdirSync(join(main, "openspec"), { recursive: true });
-	writeFileSync(join(main, "openspec", "config.yaml"), "apply:\n  test_command: node --test\n", "utf8");
+	writeFileSync(join(main, "package.json"), JSON.stringify({ name: "example-shop", scripts: { test: "node --test" } }), "utf8");
 	const artifact = join(main, "openspec", "project-map.json");
 	writeFileSync(artifact, serializeProjectMap(map()), "utf8");
 	writeFileSync(join(main, "README.md"), "start\n", "utf8");
