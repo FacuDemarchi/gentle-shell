@@ -126,7 +126,6 @@ const requiredPaths = [
   "lib/shell-project-map-card.ts",
   "lib/shell-project-map-display-order.ts",
   "lib/shell-project-map-draft.ts",
-  "lib/shell-project-map-gate.ts",
   "lib/shell-project-map-schema.ts",
   "lib/shell-project-map-tabs.ts",
   "lib/shell-project-map-view.ts",

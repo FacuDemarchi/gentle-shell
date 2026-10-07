@@ -158,7 +158,3 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		readState,
 	));
 }
-
-export function projectMapCardVisible(artifactPath: string): boolean {
-	return state(artifactPath).kind === "ready";
-}

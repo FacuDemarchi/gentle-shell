@@ -10,7 +10,7 @@ import {
 	PROJECT_MAP_TRANSLATIONS_VERSION,
 } from "../lib/project-map-translations.ts";
 
-test("the shared report preserves the translate command's exact worklist text", () => {
+test("the shared report preserves the exact translation worklist text", () => {
 	assert.equal(renderProjectMapTranslationReport({
 		worklist: { fresh: 1, items: [{ capabilityId: "catalog", source: "odd/tasks/a.md", sourceHash: "sha256:copy-me", state: "stale" }], withoutDocument: ["shipping"] },
 		targetExists: false, diagnostics: ["invalid target"],
