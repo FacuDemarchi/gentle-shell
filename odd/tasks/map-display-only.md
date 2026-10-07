@@ -1,6 +1,6 @@
 # Map display-only: the card is a view, and the command is gone
 
-Status: **planned 2026-10-07; MD-1 is next.**
+Status: **closed 2026-10-07. MD-1 (`e1825bdb`), MD-2 (`e9d748ff`), MD-3 (`967d53d8`) and the independent verification's findings (`e0dd9a95`) are committed; the native review, the push and the PR follow.**
 
 Branch: `feat/map-display-only`, stacked on `feat/mapper-persona` (`b466e391`) so this checkout keeps the `mapper` mode that a real project has just had activated. `main` stays at `3f41bdde`, and `feat/mapper-persona` stays untouched.
 
@@ -21,7 +21,7 @@ Provenance: the owner asked, right after the mapper persona landed, whether `/ge
 - **The empty state instructs the user to run the command being deleted**: `No Project Map at …` and `Run /gentle:project-map to generate one.` (`lib/shell-project-map-view.ts:332-336`), subtitle `no map` (`:375`), and the same file renders command prompts at `:335` and `:341` that go stale.
 - **Documentation to correct**: `docs/project-map.md:3`, `:90-105`, `:139`, `:157-161`, `:304-308`; `docs/gentle-shell.md:246-252`.
 - **Dead export to remove while we are here**: `projectMapCardVisible` (`lib/shell-project-map-card.ts:191-193`) has no callers — a PMV-2 obligation that this unit closes.
-- **What the card still needs** (so the deletion does not break the view): `lib/project-map-store-root.ts`, `lib/project-map-coordination-state.ts`, `lib/project-map-store-worktrees.ts`, `lib/project-map-launchable.ts`, `lib/project-map-help-modal.ts`, `lib/project-map-description.ts`, `lib/project-map-translations.ts`, and the card modules themselves — the tabs and the `?` explanation are read-only projections and they stay.
+- **What the card still needs** (so the deletion does not break the view): `lib/project-map-store-root.ts`, `lib/project-map-coordination-state.ts`, `lib/project-map-store-worktrees.ts`, `lib/project-map-launchable.ts`, `lib/project-map-help-modal.ts`, `lib/project-map-description.ts`, `lib/project-map-translations.ts`, and the card modules themselves — the tabs and the `?` explanation are read-only projections and they stay. **One entry of this list was wrong and the verification caught it**: `lib/project-map-launchable.ts` was not needed by the card once the launch gesture went, its only remaining importer was its own test, and it was deleted in `e0dd9a95` along with its package-list entry.
 
 ## Objective
 
@@ -47,20 +47,20 @@ Operating constraints: no push and no commit without an explicit go; single-thre
 
 ## Work units
 
-- [ ] **MD-1 — pin the behaviour before changing it.**
+- [x] **MD-1 — pin the behaviour before changing it.** *(closed `e1825bdb` — two gate-unset tests, proven able to fail by inverting the effective default and restoring the source byte for byte.)*
   - Add the missing coverage: a test that mounts the extension **with `GENTLE_PI_PROJECT_MAP` unset** and asserts the card is rendered and visible, plus the hide path for the session. This is a **characterization** test, not RED/GREEN: it asserts today's behaviour so the deletion cannot silently change it, and it closes the F1 obligation for the visibility decision.
   - Acceptance: the new test fails if the card's default visibility is inverted, and the file's existing tests keep their environment injection untouched.
 
-- [ ] **MD-2 — the map becomes display-only.**
+- [x] **MD-2 — the map becomes display-only.** *(closed `e9d748ff` — 25 files, +479/−7,744; six modules and ten test files deleted, each with its last reference removed.)*
   - Remove the command registration, the dispatch (`:114`) and the thirteen handlers; remove the card's launch gesture; delete every module and test that loses all references; remove `GENTLE_PI_PROJECT_MAP` and its helpers; delete `projectMapCardVisible`.
   - **The orphan list is measured inside this slice, not assumed**: the first exploration could not close it, because the store family has internal dependencies and the extension owns both the command and the card. The slice reports the list it actually deleted, with the last reference for each.
   - Acceptance: no reference to the command or its actions remains in `extensions/`, `lib/`, `tests/` or `scripts/`; the card still renders, its tabs still project and its explanation still opens; the full suite passes with the same pre-existing failures and no new one; `verify-package-files` passes with the pack list updated.
 
-- [ ] **MD-3 — the view tells the truth.**
+- [x] **MD-3 — the view tells the truth.** *(closed `967d53d8`, and corrected by `e0dd9a95`: see the verification section — it blanked the wrong empty state.)*
   - Title-only empty state; the two stale prompts in `lib/shell-project-map-view.ts` corrected; `docs/project-map.md` and `docs/gentle-shell.md` rewritten where they document the command; and the roadmap lines in `odd/tasks/project-map-v4.md` that named the removed surface corrected rather than left silently — including D4=a, which no longer has anything to gate.
   - Acceptance: no doc instructs a user to run a command that does not exist, and no doc claims a gate that is gone.
 
-- [ ] **MD-4 — verification.**
+- [x] **MD-4 — verification.** *(closed by `e0dd9a95`: the independent verification's findings are fixed, and its one blocking item is recorded as a transport limit rather than a defect.)*
   - Independent read-only verification of the final state, and one real RPC session with `GENTLE_PI_PROJECT_MAP` unset showing the card mounted with no command run — the gate-off path measured in a live session, which is what the F1 obligation asked for.
 
 ## Verification plan
@@ -74,6 +74,16 @@ Behaviour changes with runnable deterministic tests use focused RED/GREEN first,
 - **Units that lose their surface**: the port document's D4=a becomes moot, and any roadmap entry that named `worktree`, `open`, `integrate`, `lead` or `contract` as its surface has to be corrected rather than left claiming a surface that no longer exists.
 - **The activation dependency**: the `mapper` mode activated in a real project works because this branch is stacked on the persona branch. If this branch is ever rebased onto `main` alone, that activation breaks silently — the persona file would say `mapper` and a session would behave as `gentleman`.
 
+## Verification and closure
+
+Independent read-only verification ran on the final state. Its three findings and their disposition:
+
+- **High, and it was a real defect of MD-3**: the slice blanked `kind: "empty"`, which is the *artifact*-empty case, while the state a project without functional points actually reaches is `kind: "no-fp"` (`extensions/gentle-project-map.ts:209`, `lib/shell-project-map-view.ts:317-320`) — still rendering a message and an instruction. Both empty states now render the title and nothing else, with no subtitle either, because the owner's decision was title only and the card frame paints a subtitle only when it has one (`lib/shell-card.ts:127`).
+- **Medium**: `lib/project-map-launchable.ts` survived with no production consumer and its only importer being its own test; deleted.
+- **Medium**: "title only with a state subtitle" was a narrower reading than the decision; the subtitle is gone too.
+
+**One blocking item that is a transport limit, not a defect.** A real RPC session against this checkout set the widgets of `btw`, `gentle:yolo`, `gentle-todo` and `gentle-shell-dev-binary`, and never the map's `gentle-project-map`. The verifier found the cause in the installed adapter: RPC **ignores component factories** for widgets (`node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-mode.js:123-136`) and does not support custom overlays (`:152-154`), so a successful mount can produce no RPC widget request at all. The map mounts only on `session_start` (`extensions/gentle-project-map.ts:373`), and that wiring is identical to `3f41bdde` (`:1542`), so this is pre-existing and not caused by this unit. **What settles it is an interactive session in a terminal** — the card, its tabs and the `?` — which is the owner's own observation, and RPC cannot substitute for it.
+
 ## Next step
 
-MD-1, coverage first: the gate-off visibility test that pins the behaviour MD-2 is about to touch.
+MD-1 to MD-4 are closed and the verifier's findings are fixed, so the unit is implemented and gate-green. What remains is delivery: the native review under the owner's switch, the push, the pull request, and the merge if everything is green. Nothing is pushed yet.
