@@ -129,8 +129,11 @@ test("classifies a missing artifact as empty", () => {
 		assert.equal(state.kind, "empty");
 		const descriptor = projectMapCardDescriptor(state);
 		assert.equal(descriptor.tone, "info");
-		assert.ok(descriptor.body.join("\n").includes(PROJECT_MAP_ARTIFACT_PATH));
-		assert.ok(descriptor.body.join("\n").includes("/gentle:project-map to generate one"));
+		assert.equal(descriptor.title, "Project Map");
+		assert.equal(descriptor.subtitle, "no map");
+		assert.deepEqual(descriptor.body, []);
+		assert.deepEqual(projectMapCardBody(state), { lines: [], headers: [], capabilities: [] });
+		assert.doesNotMatch(JSON.stringify(descriptor), /\/gentle:/);
 	});
 });
 
@@ -156,7 +159,7 @@ test("classifies malformed JSON as invalid and renders its diagnostic", () => {
 	});
 });
 
-test("caps invalid diagnostics at three and points to the full report", () => {
+test("caps invalid diagnostics at three without suggesting a command", () => {
 	withArtifact(JSON.stringify({ version: PROJECT_MAP_SCHEMA_V1, claim: "session-42", x: true, project: { name: "" }, foundations: [], capabilities: [] }), (path) => {
 		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);
 		assert.equal(state.kind, "invalid");
@@ -165,9 +168,9 @@ test("caps invalid diagnostics at three and points to the full report", () => {
 		const rendered = state.diagnostics.slice(0, 3).map((diagnostic) => `  ${diagnostic.path}: ${diagnostic.message}`);
 		const fourth = `  ${state.diagnostics[3]!.path}: ${state.diagnostics[3]!.message}`;
 		const descriptor = projectMapCardDescriptor(state);
-		assert.deepEqual(descriptor.body.slice(1, -1), rendered);
+		assert.deepEqual(descriptor.body.slice(1), rendered);
 		assert.equal(descriptor.body.includes(fourth), false);
-		assert.equal(descriptor.body.at(-1), "Run /gentle:project-map status for the full report.");
+		assert.doesNotMatch(descriptor.body.join("\n"), /\/gentle:/);
 	});
 });
 

@@ -319,15 +319,10 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 		add("Declare **Work unit prefix:** with a backticked literal; default: FP-.");
 		return body;
 	}
-	if (state.kind === "empty") {
-		add(`No Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		add("Run /gentle:project-map to generate one.");
-		return body;
-	}
+	if (state.kind === "empty") return body;
 	if (state.kind === "invalid") {
 		add("The Project Map artifact is not valid:");
 		for (const diagnostic of state.diagnostics.slice(0, MAX_DIAGNOSTICS)) add(`  ${diagnostic.path}: ${diagnostic.message}`);
-		add("Run /gentle:project-map status for the full report.");
 		return body;
 	}
 	const { map } = state;
