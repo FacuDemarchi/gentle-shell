@@ -1,6 +1,6 @@
 # Mapper persona: `/gentle:persona` gains a third mode
 
-Status: **planned 2026-10-07; PMV10-A is next.**
+Status: **planned 2026-10-07; PMV10-A is closed with its work-unit commit (`cef0fcc6`) and PMV10-B is next.**
 
 Branch: `feat/mapper-persona`, cut from `3f41bdde` — the published tip of `feat/project-map-v4`, which equals `main` and `origin/main`. Owning worktree: `/home/facundo/projects/project-map-v4`, reused rather than recreated because its `node_modules` resolves and `pnpm` runs, so the gates are live without the sibling-worktree recipe.
 
@@ -66,7 +66,7 @@ Operating constraints: no push and no commit without an explicit go; single-thre
 
 ## Work units
 
-- [ ] **PMV10-A — the third mode, end to end, with an honest role.**
+- [x] **PMV10-A — the third mode, end to end, with an honest role.** *(closed 2026-10-07 with work-unit commit `cef0fcc6` — 7 files, +326/−32, with the independent verification's three findings closed: the reference text lives in this document, the fallback covers the non-string and missing-key cases, and the 16 pre-existing failures were reproduced on a pristine worktree instead of asserted.)*
   - `PersonaMode` and `PERSONA_OPTIONS` gain `mapper` (`:1196`, `:1198`); `readPersonaFile` (`:1898`) recognises it while every unknown value keeps today's `gentleman` fallback byte for byte and `readPersonaMode`'s precedence (`:1909`) is untouched; `handlePersonaCommand` stops rejecting it (`:4659`); `writePersonaMode` (`:1917`) implements the project-scoped policy; the `/reload` advice (`:4668`) is replaced by the measured truth.
   - `buildGentlePrompt("mapper")` gains the mapper's persona text — the mode line, the Rioplatense language rule, and the role in three lines: its job is the project's map, its value is context economy, and it does not implement source code (the switch back is `/gentle:persona`) — while the identity block, the ODD workflow and the orchestrator asset stay exactly as they are. That is the honest minimum, so the mode never impersonates the gentleman block. The reference text, which the implementation must match line for line — this is the artifact the independent verifier needed and did not have:
 
@@ -116,6 +116,7 @@ Behaviour changes with runnable deterministic tests use focused RED/GREEN first,
 - 2026-10-07, PMV10-A implemented by a delegated writer with TDD (RED observed first: the reader returned `gentleman`, the write went to the global path, the mode list lacked `mapper`, and the mapper clause was missing). Delivered: the enum, the reader with the fallback intact, the handler guard, the project-scoped write, the corrected notice, the mapper persona text verbatim, and the `__testing` exports the new test needs. The writer's own measurement of its change: **195 changed lines**, under the 400 budget. Parent-measured evidence on the final state: focused `tests/persona-mapper.test.ts tests/persona-single-channel.test.ts tests/odd-routing-contract.test.ts` **exit 0 — 46/46**; `pnpm test` **exit 1** with `PASS provider-contract`, `PASS runtime-harness` and `FAIL unit-tests` at 5,376 tests / 5,326 pass / **16 fail** / 34 skip; `pnpm run typecheck` exit 0 with 187 diagnostics; `node scripts/verify-package-files.mjs` exit 0 with 190 files; `git diff --check` exit 0.
   - **The finding the writer surfaced and the parent closed.** The runtime-harness stage failed because its persona block asserted the global write the policy removes. That is a real consequence of the user's decision, not a test artifact: the block is updated to the project-scoped policy, and the stage now passes.
   - **The 16 unit failures are pre-existing, and now reproduced instead of asserted.** A pristine worktree at `3f41bdde` with no diff was measured against this tree: `tests/gentle-shell.test.ts` fails **11** and `tests/vim-editor-adapter.test.ts` fails **5** — **16** in both trees, with the same failing test names and the same counts, and neither file imports the extension or anything persona-related. That is a reproduction on a tree that lacks the diff, which is what this project requires before trusting any red or green. The first attribution written here named the wrong file for eleven of them; the independent verifier caught it and the baseline settled it.
+- 2026-10-07, **PMV10-A closed**: work-unit commit **`cef0fcc6`** `feat(persona): add a mapper mode that builds the project's map` — 7 files, +326/−32: `extensions/gentle-ai.ts`, the new `tests/persona-mapper.test.ts`, the two loop files, `tests/runtime-harness.mjs`, this document and the port's pointer. Independent verification (`gentle-ai-verify`, read-only) ran on the final state and returned three findings, all closed before the commit: the "verbatim" claim had no reference to compare against (fixed by carrying the text in this document), the fallback test missed non-string and missing-key inputs (four cases added), and the 16 failures were not reproduced (settled by the baseline above). It also confirmed what matters most here: **no frozen byte budget was relaxed**, the fourteen loop edits are identical one-line mode-list replacements, and no remaining caller expects the old global write or the `Global config:` notice. Not pushed.
 
 ## Open obligations
 
@@ -127,4 +128,4 @@ Behaviour changes with runnable deterministic tests use focused RED/GREEN first,
 
 ## Next step
 
-PMV10-A, test-first: the RED test that demands `readPersonaFile` return `mapper` for `{"mode":"mapper"}` and that the command accept it, then the enum, the reader, the handler, the write policy and the corrected notice, then the mapper's persona text, then the slice's gates and independent verification.
+PMV10-A is closed with its work-unit commit. **PMV10-B is next**: the mapper's full contract text, grown from the reference block in the PMV10-A entry, with its own measured budget in `tests/persona-mapper.test.ts` — shown to the user before it is committed, because the text is the deliverable. PMV10-C (docs and activation) follows, and the live RPC measurement of the mapper block patched into the `addendum` section belongs there, where activation is judged.
