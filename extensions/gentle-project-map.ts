@@ -47,6 +47,7 @@ import {
 	type ProjectMapDiagnostic,
 	type ProjectMapV1,
 } from "../lib/shell-project-map-schema.ts";
+import { orderCapabilitiesForDisplay } from "../lib/shell-project-map-display-order.ts";
 import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
@@ -542,7 +543,10 @@ export function readRepositorySources(cwd: string): { sources: { packageJson?: u
 export function readProjectMapDisplay(cwd: string) {
 	const repository = readRepositorySources(cwd);
 	const derived = deriveProjectMap(repository.sources, basename(resolve(cwd)) || "project");
-	return { ...derived, sources: repository.sources, omissions: [...repository.omissions, ...derived.omissions] };
+	// The rows the card, the `show` notification and the selection keys read are the functional
+	// points' own order, never the identifier sort the canonical artifact keeps.
+	const map = derived.map === null ? null : orderCapabilitiesForDisplay(derived.map);
+	return { ...derived, map, sources: repository.sources, omissions: [...repository.omissions, ...derived.omissions] };
 }
 
 function displayCardState(cwd: string): ProjectMapCardState {
