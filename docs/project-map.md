@@ -10,7 +10,7 @@ Checkboxes supply the states: `[ ]` planned, `[~]` active, `[x]` or `[X]` done. 
 
 The card mounts by default, independently of artifact existence or validity, and says **No FP work units were found in odd/tasks/*.md.** when there are no rows. Rendering writes nothing. Session-local `hide`, collapse, and selection do not persist. The subtitle says `derived`, not approved.
 
-Display surfaces come from each row's `**Allowed edit surfaces:**` declaration through the harness's canonical surface table. Unmapped paths are named omissions, not guesses. The explanation lists all seven surfaces in canonical order and computes percentages for declared surfaces. PMV3-B still owns the FP skill documentation and the strengthened explanation test. States beyond the checkbox, including `blocked`, are not invented.
+Display surfaces come from each row's `**Allowed edit surfaces:**` declaration: a name heads a group through subsequent unnamed paths until the next name. Canonical group names bypass the table; only paths before any name use the harness's canonical surface table. Unknown names produce an omission per path in their group; unmapped paths before any name are also named omissions, not guesses. The explanation lists all seven surfaces in canonical order and computes percentages for declared surfaces. The FP skill documents this contract with an indented declaration under the work-unit checkbox. States beyond the checkbox, including `blocked`, are not invented.
 
 The executable half remains separate and opt-in. Its launch affordances use the retained artifact-backed runtime path only with `GENTLE_PI_PROJECT_MAP` enabled; artifact lifecycle commands stay explicit. The coordination tabs are reads and remain ungated, as before. None of those is a prerequisite for the derived card.
 
@@ -56,7 +56,7 @@ The generator reads `package.json` for project identity, repository tooling and 
 
 Only `odd/tasks/*.md` supplies capability documents. Rows use the fixed `FP-` convention: digits with optional dash-separated digits. Letter- or dot-continuing codes are sub-elements, never rows. Excluded units remain steps for accounting, counted in an assumption rather than listed individually. There is no per-project roadmap pointer or prefix override.
 
-Both the display and the artifact generator read each row's body for the first line beginning with `**Allowed edit surfaces:**` after an optional list marker is stripped. The colon may be inside or immediately after the closing bold marker. Only backticked spans are declared paths; prose is ignored. The harness-owned `lib/project-map-surface-table.ts` maps them by longest matching prefix, retaining table order for ties. Unique surfaces follow canonical schema order. The table is not configurable:
+Both the display and the artifact generator read each row's body for the first line beginning with `**Allowed edit surfaces:**` after an optional list marker is stripped. The colon may be inside or immediately after the closing bold marker. Each entry is an optional `surface:` immediately followed (allowing whitespace) by exactly one backticked path; prose outside entries is ignored. The parser reads recognized entries, not whole-line syntax validation. Scanning left to right, a name opens a group for its path and subsequent unnamed paths until the next name, valid or not. A canonical name assigns its group that surface without consulting the table. Only paths before any name use the harness-owned `lib/project-map-surface-table.ts` by longest matching prefix, retaining table order for ties. Unique surfaces follow canonical schema order. The table is only the default and is not configurable:
 
 | Surface | Path prefixes |
 | --- | --- |
@@ -68,7 +68,7 @@ Both the display and the artifact generator read each row's body for the first l
 | `operations` | `infra/`, `ops/`, `deploy/`, `scripts/`, `.github/`, `Dockerfile`, `docker-compose.yml`, `Makefile` |
 | `tests` | `tests/`, `test/`, `__tests__/`, `spec/`, `e2e/` |
 
-A bare `src/` deliberately maps to nothing because it is ambiguous. Unmatched paths are reported together in a named omission per capability, including the source document. A capability without a declaration keeps `surfaces: []`; the harness never guesses.
+Before any name opens a group, bare `src/` deliberately maps to nothing because it is ambiguous. Unmatched paths before any name are reported together in a named omission per capability, including the source document. An unknown name poisons its group: each path until the next name reports its own omission naming the capability, source document, offending name and path, receives no surface and never falls back to the table. Omission paths carry the declared span without a surface prefix; the document reader normalizes whitespace before parsing, so runs of spaces or tabs inside a declared path appear collapsed. A capability without a declaration keeps `surfaces: []`; the harness never guesses. A delegation's `## Allowed edit surfaces` block instead requires plain repository-relative paths, one per line: the parent strips surface names when mapping. The gate in `lib/bounded-writer-admission.ts` checks path-line syntax, not surface names; never copy the ordinary ``surface: `path` `` entry into that block, because it is neither bare nor wholly backticked and is rejected.
 
 Two rules keep a generated draft honest:
 
@@ -144,9 +144,9 @@ A capability row carries a `✿` between the `?` and its lifecycle glyph **exact
 
 ### Surface declaration loop
 
-The canonical surface table derives a generated draft's surfaces from its FP declarations. The approval gate requires a non-empty surface list for every capability. Complete any remaining draft gap before approval through the command:
+Explicit canonical names derive a generated draft's surfaces from its FP declarations, with the canonical surface table as the default only for paths before any name opens a group. The approval gate requires a non-empty surface list for every capability. Complete any remaining draft gap before approval through the command:
 
-1. Run `/gentle:project-map` (or `/gentle:project-map draft`) and accept the confirmation.
+1. Run `/gentle:project-map draft` to generate the draft and accept the write confirmation. A bare `/gentle:project-map` only shows the read-only derived display, with no confirmation or artifact generation.
 2. Run `/gentle:project-map declare <capability-id> <surface>...` for every capability, confirm each resulting replacement, and use only the frozen surface vocabulary.
 3. Run `/gentle:project-map approve <actor>` once every capability has a declared surface.
 

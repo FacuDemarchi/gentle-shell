@@ -273,14 +273,15 @@ function extractWorkUnits(path: string, text: string, omissions: string[], deleg
 	return { capabilities, stepCount };
 }
 
-function declaredEditSurfacePaths(documentText: string, capabilityId: string, rowCode?: string): string[] {
+function declaredEditSurfacePaths(documentText: string, capabilityId: string, rowCode?: string): { path: string; surfaceName?: string }[] {
 	const description = readProjectMapWorkUnit(documentText, capabilityId, rowCode);
 	// Guard only: a generated capability cannot reach it because extraction and lookup share one
 	// document, label parser, and identifier normalization, but this primitive accepts any id.
 	if (description === null) return [];
 	const declaration = description.lines.find((line) => ALLOWED_EDIT_SURFACES_MARKER.test(line));
 	if (declaration === undefined) return [];
-	return [...declaration.matchAll(/`([^`]+)`/g)].map((match) => match[1]!);
+	const entries = declaration.replace(ALLOWED_EDIT_SURFACES_MARKER, "");
+	return [...entries.matchAll(/(?:([^\s`,:]+):\s*)?`([^`]+)`/g)].map((match) => ({ path: match[2]!, surfaceName: match[1] }));
 }
 
 function deriveCapabilitySurfaces(document: { path: string; text: string }, capability: ProjectMapCapabilityV1, omissions: string[]): ProjectMapSurface[] {
@@ -288,8 +289,14 @@ function deriveCapabilitySurfaces(document: { path: string; text: string }, capa
 	const unmatched: string[] = [];
 	const label = splitWorkUnitLabel(capability.outcome);
 	const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
-	for (const path of declaredEditSurfacePaths(document.text, capability.id, code)) {
-		const surface = surfaceForDeclaredPath(path);
+	let openName: string | undefined;
+	for (const { path, surfaceName } of declaredEditSurfacePaths(document.text, capability.id, code)) {
+		if (surfaceName !== undefined) openName = surfaceName;
+		if (openName !== undefined && !(PROJECT_MAP_SURFACES as readonly string[]).includes(openName)) {
+			omissions.push(`The capability "${capability.id}" declared by ${document.path} has an unknown canonical surface name "${openName}" for declared path: ${path}.`);
+			continue;
+		}
+		const surface = openName === undefined ? surfaceForDeclaredPath(path) : openName as ProjectMapSurface;
 		if (surface === null) unmatched.push(path);
 		else matched.add(surface);
 	}
@@ -528,7 +535,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	assumptions.push("Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.");
 	assumptions.push("Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.");
 	assumptions.push("An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.");
-	assumptions.push("Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table; a capability without that line remains undeclared.");
+	assumptions.push("Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table by default, with explicit canonical names taking precedence; a capability without that line remains undeclared.");
 
 	if (projectId === null || projectName === null) {
 		return { map: null, assumptions, omissions };

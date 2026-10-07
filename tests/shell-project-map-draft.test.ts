@@ -8,6 +8,7 @@ import {
 } from "../lib/shell-project-map-schema.ts";
 import {
 	collectProjectMapSteps,
+	deriveProjectMap,
 	generateProjectMapDraft,
 	projectMapSourceChanges,
 	normalizeIdentifier,
@@ -517,6 +518,69 @@ test("derives declared web surfaces through the canonical table without configur
 	assert.equal(joined(unmapped.omissions).includes("matched no canonical surface prefix"), true);
 });
 
+for (const [entry, expected] of [
+	["web: `apps/web/**`", ["web"]],
+	["tests: `apps/web/page.test.ts`", ["tests"]],
+	["tests: `web/page.test.ts`", ["tests"]],
+	["`web/one.ts`", ["web"]],
+	["web: `a.ts`, `api/b.ts`", ["web"]],
+	["`api/first.ts`, web: `a.ts`, `b.ts`", ["web", "api"]],
+	["mobile:web: `web/one.ts`", ["web"]],
+	["web: `apps/web/**`, `apps/web/lib/**`, api: `apps/api/catalog.ts`", ["web", "api"]],
+] as const) {
+	test(`explicit surface grammar: ${entry}`, () => {
+		const result = generateProjectMapDraft(sources(`- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** ${entry}\n`));
+		assert.deepEqual(result.map?.capabilities[0]?.surfaces, expected);
+		const surfaceOmissions = result.omissions.filter((line) => line.includes("canonical surface"));
+		assert.deepEqual(surfaceOmissions, []);
+	});
+}
+
+for (const [entry, expected, omittedPaths] of [
+	["mobile: `a.ts`, `b.ts`", [], ["a.ts", "b.ts"]],
+	["mobile: `a.ts`, `web/b.ts`", [], ["a.ts", "web/b.ts"]],
+	["mobile: `a.ts`, web: `web/b.ts`, `c.ts`", ["web"], ["a.ts"]],
+] as const) {
+	test(`explicit surface grammar poisoned group: ${entry}`, () => {
+		const input = sources(`- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** ${entry}\n`);
+		for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example-shop")]) {
+			assert.deepEqual(result.map?.capabilities[0]?.surfaces, expected);
+			assert.deepEqual(result.omissions.filter((line) => line.includes("canonical surface")), omittedPaths.map((path) =>
+				`The capability "catalog" declared by odd/tasks/roadmap.md has an unknown canonical surface name "mobile" for declared path: ${path}.`));
+		}
+	});
+}
+
+test("keeps poisoned surface groups local to their work unit", () => {
+	// Regression guard, not TDD: group state is already local to each derivation,
+	// so no failing RED run is possible for this existing property.
+	const input = sources([
+		"- [ ] **FP-1 — Poisoned**",
+		"  **Allowed edit surfaces:** mobile: `web/one.ts`, `api/two.ts`",
+		"- [ ] **FP-2 — Undeclared**",
+		"  Body only.",
+	].join("\n"));
+	for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example-shop")]) {
+		assert.deepEqual(result.map?.capabilities.find((row) => row.id === "poisoned")?.surfaces, []);
+		assert.deepEqual(result.map?.capabilities.find((row) => row.id === "undeclared")?.surfaces, []);
+		assert.deepEqual(result.omissions.filter((line) => line.includes("canonical surface")), [
+			'The capability "poisoned" declared by odd/tasks/roadmap.md has an unknown canonical surface name "mobile" for declared path: web/one.ts.',
+			'The capability "poisoned" declared by odd/tasks/roadmap.md has an unknown canonical surface name "mobile" for declared path: api/two.ts.',
+		]);
+		assert.equal(result.omissions.some((line) => line.includes('"undeclared"')), false);
+	}
+});
+
+for (const name of ["mobile", "Web", "productux"]) {
+	test(`explicit surface grammar rejects unknown name ${name} without table fallback`, () => {
+		const result = generateProjectMapDraft(sources(`- [ ] **FP-1 — Catalog**\n  **Allowed edit surfaces:** ${name}: \`web/one.ts\`\n`));
+		assert.deepEqual(result.map?.capabilities[0]?.surfaces, []);
+		assert.deepEqual(result.omissions.filter((line) => line.includes("canonical surface")), [
+			`The capability "catalog" declared by odd/tasks/roadmap.md has an unknown canonical surface name "${name}" for declared path: web/one.ts.`,
+		]);
+	});
+}
+
 test("derives camel-cased productUx from either declaration marker colon form", () => {
 	for (const marker of ["**Allowed edit surfaces:**", "**Allowed edit surfaces**:"]) {
 		const result = generateProjectMapDraft(sources(`- [ ] **FP-1 — Catalog**\n  ${marker} \`ui/menu.ts\`\n`));
@@ -532,7 +596,7 @@ test("a fully mapped API document declaration produces no surface omission", () 
 });
 
 test("canonical table gap: apps/web/page.ts is named, never guessed, alongside a mapped declaration", () => {
-	// This expectation flips if the table ever gains document-declared surfaces.
+	// An unprefixed monorepo path stays a gap; explicit names do not extend the table.
 	const result = generateProjectMapDraft(sources("- [ ] **FP-1 — Gap**\n  **Allowed edit surfaces:** `apps/web/page.ts`\n- [ ] **FP-2 — Canonical**\n  **Allowed edit surfaces:** `web/page.ts`\n"));
 	assert.deepEqual(result.map?.capabilities.find((row) => row.id === "gap")?.surfaces, []);
 	assert.deepEqual(result.map?.capabilities.find((row) => row.id === "canonical")?.surfaces, ["web"]);
@@ -668,7 +732,7 @@ const headFallbackAssumptions = [
 	"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
 	"Project identity is derived from the package manifest name, with the scope removed and the remainder normalized to lowercase kebab-case.",
 	"An ODD work unit becomes a capability named after its title, a checked box becomes done and an unchecked box becomes planned, and the declaring document becomes its feature document. The checkbox is a declaration of completion, not verified progress.",
-	"Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table; a capability without that line remains undeclared.",
+	"Generated capability surfaces were derived from the capability's own declared edit surfaces through the canonical surface table by default, with explicit canonical names taking precedence; a capability without that line remains undeclared.",
 ];
 
 function expectedHeadSerialization(capabilities: ReturnType<typeof expectedHeadCapability>[]) {

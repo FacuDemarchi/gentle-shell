@@ -161,8 +161,7 @@ test("every capability explanation carries the whole map's surface roll-up witho
 		for (const capability of map.capabilities) await explainProjectMapCapability(probe.ctx, capability.id);
 		assert.equal(opened.length, 2);
 		for (const body of opened) {
-			// PMV-3 owns restoring real percentages once FP documents declare surfaces.
-			const ordered = ["Product/UX —", "Web —", "API —", "Data —", "Security —", "Ops —", "Tests —"];
+			const ordered = ["Product/UX —", "Web 100% (2/2): catalog ✓, checkout ✓", "API 100% (1/1): checkout ✓", "Data —", "Security —", "Ops —", "Tests —"];
 			assert.doesNotMatch(body, /Web 50%|API 0%|✕/, "artifact-owned coverage and blocked state are ignored");
 			assert.ok(body.includes("Este es el resumen del mapa completo, no de esta capability."));
 			for (const line of ordered) assert.ok(body.includes(line), line);
@@ -171,7 +170,7 @@ test("every capability explanation carries the whole map's surface roll-up witho
 			assert.ok(body.indexOf("Tests —") < body.indexOf("Lo que dice el documento:"));
 		}
 		assert.equal(readFileSync(artifactPath(directory), "utf8"), before);
-	}, { task: "- [ ] **FP-1 — Catalog**\n  Catalog body.\n- [ ] **FP-2 — Checkout**\n  Checkout body.\n" });
+	}, { task: "- [x] **FP-1 — Catalog**\n  **Allowed edit surfaces:** web: `apps/web/catalog.ts`\n  Catalog body.\n- [x] **FP-2 — Checkout**\n  **Allowed edit surfaces:** web: `apps/web/checkout.ts`, api: `apps/api/checkout.ts`\n  Checkout body.\n" });
 });
 
 test("the explanation renders every lettered cut and dotted step inside its functional-point row", async () => {
