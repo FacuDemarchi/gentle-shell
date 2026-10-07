@@ -1225,62 +1225,6 @@ test("the contribution paints nothing when no session holds a capability the map
 	});
 });
 
-test("the card marks a launchable capability and its marker runs the open plan", async () => {
-	await withGitRepository(async (directory, store, agentHome) => {
-		writeDisplayDocuments(directory, "- [ ] **FP-1 — Catalog**\n");
-		// An approved map whose only capability can still be worked on, plus the binding the
-		// launchable projection reads. The real worktree does not exist, so the plan the marker
-		// runs refuses — which is the point: the marker is a hint and the click re-verifies.
-		mkdirSync(join(directory, "openspec"), { recursive: true });
-		writeFileSync(artifactPath(directory), JSON.stringify({
-			version: "gentle-shell.project-map/v1",
-			project: { id: "example-shop", name: "Example Shop" },
-			approval: { state: "approved", approvedAt: new Date().toISOString(), approvedBy: "tester" },
-			foundations: [],
-			capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" }],
-		}), "utf8");
-		assert.ok(bindProjectMapStoreWorktree({ root: store, capabilityId: "catalog", branch: "feat/catalog", worktreeRoot: "/projects/shop-worktrees/catalog", sessionId: "session-launch", baseCommit: "0".repeat(40), now: new Date().toISOString() }).binding);
-
-		const extension = projectMapExtension({ GENTLE_PI_AGENT_HOME: agentHome, GENTLE_PI_PROJECT_MAP: "1" });
-		const probe = widgetContext(directory, "session-launch");
-		await extension.fire("session_start", probe.ctx);
-		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
-		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
-		const rail = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!;
-		const lines = rail.render(56);
-		const row = lines.findIndex((line) => line.includes("✿") && line.includes("Catalog"));
-		assert.ok(row > 0, "the launchable capability carries the marker");
-		// Four body columns in, plus the frame's two.
-		rail.handleMouse?.({ type: "click", button: "left", x: 6, y: row, screenX: 6, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
-		await new Promise((resolve) => setImmediate(resolve));
-		assert.ok(probe.notified.some((message) => message.includes("Open Pi plan")), "the marker runs the product's own open plan");
-	});
-});
-
-test("the card leaves an unlaunchable capability unmarked", async () => {
-	await withGitRepository(async (directory, _store, agentHome) => {
-		writeDisplayDocuments(directory, "- [ ] **FP-1 — Catalog**\n");
-		// The same approved map with no worktree binding: the projection has nothing to back.
-		mkdirSync(join(directory, "openspec"), { recursive: true });
-		writeFileSync(artifactPath(directory), JSON.stringify({
-			version: "gentle-shell.project-map/v1",
-			project: { id: "example-shop", name: "Example Shop" },
-			approval: { state: "approved", approvedAt: new Date().toISOString(), approvedBy: "tester" },
-			foundations: [],
-			capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: [], surfaces: ["web"], state: "planned" }],
-		}), "utf8");
-		const extension = projectMapExtension({ GENTLE_PI_AGENT_HOME: agentHome, GENTLE_PI_PROJECT_MAP: "1" });
-		const probe = widgetContext(directory, "session-plain");
-		await extension.fire("session_start", probe.ctx);
-		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
-		probe.widgets.get("gentle-project-map")!(tui, { fg: (_color: string, text: string) => text });
-		const lines = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(56);
-		const row = lines.findIndex((line) => line.includes("Catalog"));
-		assert.ok(row > 0, "the capability still renders");
-		assert.equal(lines[row]!.includes("✿"), false, "and carries no launch marker");
-	});
-});
-
 test("selecting a tab paints its read-only detail in the card's rail", async () => {
 	await withGitRepository(async (directory, store, agentHome) => {
 		writeGroupedReadyArtifact(directory);

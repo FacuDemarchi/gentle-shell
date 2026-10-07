@@ -11,7 +11,6 @@ import {
 import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_HELP_MARKER,
-	PROJECT_MAP_LAUNCH_MARKER,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
 	PROJECT_MAP_STATE_GLYPH,
 	projectMapCardBody,
@@ -66,7 +65,7 @@ function withArtifact(text: string | null, run: (path: string) => void): void {
 test("capability rows use Todo theme roles without changing marker geometry", () => {
 	const painted: Array<{ role: string; text: string }> = [];
 	const paint = (role: string, text: string) => { painted.push({ role, text }); return text; };
-	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120, new Set(["merchant-catalog"]), paint);
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120, paint);
 	assert.deepEqual(painted.filter(({ text }) => ["✓", "Merchants manage a catalog.", "○", "Shoppers build a cart."].includes(text)), [
 		{ role: "success", text: "✓" },
 		{ role: "dim", text: "Merchants manage a catalog." },
@@ -74,18 +73,17 @@ test("capability rows use Todo theme roles without changing marker geometry", ()
 		{ role: "text", text: "Shoppers build a cart." },
 	]);
 	assert.ok(painted.some(({ role, text }) => role === "muted" && text === "?"));
-	assert.ok(painted.some(({ role, text }) => role === "accent" && text === "✿"));
-	assert.equal(body.lines[3], "▸ ? ✿ ✓ Merchants manage a catalog.");
-	assert.deepEqual(body.capabilities[0], { line: 3, id: "merchant-catalog", height: 1, help: 2, launch: 4 });
+	assert.equal(body.lines[3], "▸ ? ✓ Merchants manage a catalog.");
+	assert.deepEqual(body.capabilities[0], { line: 3, id: "merchant-catalog", height: 1, help: 2 });
 });
 
 test("long capability lists fold done rows and cap open rows exactly like Todos", () => {
 	const capabilities = Array.from({ length: 40 }, (_, index) => ({ ...map().capabilities[0]!, id: `row-${index}`, outcome: `Row ${index}`, state: index < 25 ? "done" as const : index === 25 ? "active" as const : "planned" as const }));
 	const painted: Array<{ role: string; text: string }> = [];
 	const paint = (role: string, text: string) => { painted.push({ role, text }); return text; };
-	const body = projectMapCardBody(ready(map({ capabilities })), PROJECT_MAP_EXPANDED, "row-25", 80, new Set(capabilities.map(({ id }) => id)), paint);
+	const body = projectMapCardBody(ready(map({ capabilities })), PROJECT_MAP_EXPANDED, "row-25", 80, paint);
 	assert.deepEqual({ count: body.lines.length, summary: body.lines[3], firstOpen: body.lines[4], more: body.lines.at(-1) }, {
-		count: 15, summary: "  ✓ 25 done", firstOpen: "▸ ? ✿ ◉ Row 25", more: "  … 5 more",
+		count: 15, summary: "  ✓ 25 done", firstOpen: "▸ ? ◉ Row 25", more: "  … 5 more",
 	}, "foundation header and row, capability header, twelve capability body rows");
 	assert.deepEqual(body.capabilities.map(({ id }) => id), capabilities.slice(25, 35).map(({ id }) => id));
 	assert.equal(body.selected, 4);
@@ -219,12 +217,12 @@ test("structured card body records group headers and the selected capability row
 test("a capability row is one body line, end-truncates a long outcome, and keeps its markers", () => {
 	const id = "repo-production";
 	const outcome = `FP-1a — ${"Repo-side production path ".repeat(3)}(no accounts needed)`;
-	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46, new Set([id]));
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46);
 	const target = body.capabilities[0]!;
 	assert.equal(target.height, 1, "the row is one body line");
 	assert.equal(target.id, id, "the click target remains the identifier");
 	const row = body.lines[target.line]!;
-	assert.match(row, /^  \? ✿ ✓ /, "the row keeps its indent and marker columns");
+	assert.match(row, /^  \? ✓ /, "the row keeps its indent and marker columns");
 	assert.equal(row.includes("· Web"), false, "the row has no surface tail");
 	assert.ok(row.includes("…"), "a row that does not fit truncates its functional-point label");
 	assert.ok(row.endsWith("…"), "the ellipsis lands at the end of the label, not inside it");
@@ -236,14 +234,13 @@ test("a capability row is one body line, end-truncates a long outcome, and keeps
 test("a painted functional-point label keeps selection and click metadata addressed by id", () => {
 	const id = "repo-production";
 	const outcome = "FP-1a — Repo-side production path (no accounts needed)";
-	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, id, 80, new Set([id]));
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, id, outcome }] })), PROJECT_MAP_EXPANDED, id, 80);
 	const target = body.capabilities[0]!;
 	assert.equal(target.id, id, "click metadata carries the identifier, not the painted label");
 	assert.equal(body.selected, target.line, "selection matches the identifier");
 	assert.equal(target.help, 2, "the help marker keeps its column");
-	assert.ok(target.launch !== undefined, "the launch marker stays available by identifier");
 	const row = body.lines[target.line]!;
-	assert.match(row, /^▸ \? ✿ ✓ FP-1a — Repo-side production path \(no accounts needed\)$/);
+	assert.match(row, /^▸ \? ✓ FP-1a — Repo-side production path \(no accounts needed\)$/);
 	assert.equal(row.includes(id), false, "the identifier is not painted in place of the label");
 });
 
@@ -255,10 +252,10 @@ test("collapses outcome whitespace so a hand-edited label cannot split a row", (
 			{ ...map().capabilities[0]!, id: newlineId, outcome: "FP-1\nSecond line" },
 			{ ...map().capabilities[1]!, id: spacesId, outcome: "Spaces   collapse\ttoo", surfaces: ["web"] },
 		],
-	})), PROJECT_MAP_EXPANDED, newlineId, 80, new Set([newlineId]));
+	})), PROJECT_MAP_EXPANDED, newlineId, 80);
 	const newlineTarget = body.capabilities.find((entry) => entry.id === newlineId)!;
 	const spacesTarget = body.capabilities.find((entry) => entry.id === spacesId)!;
-	assert.equal(body.lines[newlineTarget.line], "▸ ? ✿ ✓ FP-1 Second line");
+	assert.equal(body.lines[newlineTarget.line], "▸ ? ✓ FP-1 Second line");
 	assert.equal(body.lines[spacesTarget.line], "  ? ○ Spaces collapse too");
 	assert.equal(body.lines[newlineTarget.line]!.includes("\n"), false, "a newline in the artifact stays inside one painted row");
 	assert.equal(newlineTarget.id, newlineId, "click metadata remains addressed by id");
@@ -277,22 +274,6 @@ test("a capability row carries the marker left of its lifecycle glyph", () => {
 	const row = body.lines[target.line]!;
 	assert.match(row, /^\s+\? [✓○✕◉◐] /, "the marker precedes the lifecycle glyph");
 	assert.equal(target.help, row.indexOf(PROJECT_MAP_HELP_MARKER), "the recorded column is the one the row paints");
-});
-
-test("a launchable capability carries the launch marker between the help marker and the glyph", () => {
-	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, new Set(["merchant-catalog"]));
-	const target = body.capabilities.find((entry) => entry.id === "merchant-catalog")!;
-	const row = body.lines[target.line]!;
-	assert.match(row, /^\s+\? ✿ [✓○✕◉◐] /, "the launch marker sits between the help marker and the lifecycle glyph");
-	assert.equal(target.launch, row.indexOf(PROJECT_MAP_LAUNCH_MARKER), "the recorded column is the one the row paints");
-	assert.equal(target.help, row.indexOf(PROJECT_MAP_HELP_MARKER), "and the help marker keeps its own column");
-});
-
-test("a capability that cannot be launched keeps the row it has today", () => {
-	const withEmptySet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, undefined, undefined, new Set());
-	const withoutSet = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED);
-	assert.deepEqual(withEmptySet.lines, withoutSet.lines, "an empty launchable set changes nothing");
-	assert.equal(withEmptySet.capabilities[0]!.launch, undefined, "and records no launch column");
 });
 
 test("a capability that declares no surface ends at its label without an absence tail", () => {
@@ -386,12 +367,12 @@ test("builds unpacked map coverage lines in schema order from the supplied count
 });
 
 test("the card paints only its groups and label-only rows, preserving row targets", () => {
-	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120, new Set(["merchant-catalog"]));
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120);
 	assert.deepEqual(body.lines, [
 		"▾ Foundations 1/1", "  ✓ repository-tooling", "▾ Product capabilities 1/3",
-		"▸ ? ✿ ✓ Merchants manage a catalog.", "  ? ○ Shoppers build a cart.", "  ? ✕ Shoppers check out.",
+		"▸ ? ✓ Merchants manage a catalog.", "  ? ○ Shoppers build a cart.", "  ? ✕ Shoppers check out.",
 	]);
-	assert.deepEqual(body.capabilities, [{ line: 3, id: "merchant-catalog", height: 1, help: 2, launch: 4 }, { line: 4, id: "shopping-cart", height: 1, help: 2 }, { line: 5, id: "checkout", height: 1, help: 2 }]);
+	assert.deepEqual(body.capabilities, [{ line: 3, id: "merchant-catalog", height: 1, help: 2 }, { line: 4, id: "shopping-cart", height: 1, help: 2 }, { line: 5, id: "checkout", height: 1, help: 2 }]);
 	assert.equal(body.selected, 3);
 });
 
@@ -448,12 +429,10 @@ test("a painted label change moves the card digest", () => {
 });
 
 test("the label uses all the width left after the plain markers", () => {
-	for (const launchable of [new Set<string>(), new Set(["merchant-catalog"])]) {
-		const prefix = launchable.size === 0 ? "  ? ✓ " : "  ? ✿ ✓ ";
-		const outcome = "L".repeat(46 - prefix.length);
-		const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46, launchable);
-		assert.equal(body.lines[body.capabilities[0]!.line], `${prefix}${outcome}`);
-	}
+	const prefix = "  ? ✓ ";
+	const outcome = "L".repeat(46 - prefix.length);
+	const body = projectMapCardBody(ready(map({ capabilities: [{ ...map().capabilities[0]!, outcome }] })), PROJECT_MAP_EXPANDED, undefined, 46);
+	assert.equal(body.lines[body.capabilities[0]!.line], `${prefix}${outcome}`);
 });
 
 test("keeps the digest stable when the card does not change and moves when it does", () => {

@@ -1,7 +1,6 @@
 import { wrapTextWithAnsi as wrapTextAnsi, type Component, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { cardStyle, panelExtraRows, panelInnerWidth, renderCard, type CardTheme } from "./shell-card.ts";
 import { sidebarPart, sidebarState, type SidebarRail } from "./shell-sidebar.ts";
-import { probeProjectMapOpenPiHost, type ProjectMapOpenPiHost } from "./project-map-open-pi.ts";
 import {
 	PROJECT_MAP_EXPANDED,
 	PROJECT_MAP_OVERLAY_UNAVAILABLE,
@@ -17,32 +16,11 @@ import {
 
 export const PROJECT_MAP_RAIL_KEY = "project-map";
 
-let memoizedOpenPiHost: ProjectMapOpenPiHost | undefined;
-
-/** tmux availability cannot change while this Pi process is alive. */
-export function projectMapOpenPiHostOnce(probe = probeProjectMapOpenPiHost): ProjectMapOpenPiHost {
-	return memoizedOpenPiHost ??= probe({ env: process.env, timeoutMs: 1000 });
-}
-
 export interface ProjectMapCardSession {
 	collapse(): ProjectMapCollapseState;
 	selection(): string | undefined;
 	select(id: string | undefined): void;
 	toggle(group: ProjectMapGroup): void;
-}
-
-/**
- * The launch affordance the card draws and reports.
- *
- * The card paints the marker, but it cannot decide who may be launched — that answer needs the
- * store — and it cannot run a command, whose handler is an awaited host call. So it asks for the
- * set and reports the click, exactly like the `?` marker reports the capability it explains.
- */
-export interface ProjectMapLaunchPort {
-	/** The capabilities that may be opened right now. */
-	launchable(): ReadonlySet<string>;
-	/** Runs the product's own open flow for one capability. */
-	open(capabilityId: string): void;
 }
 
 function state(artifactPath: string): ProjectMapCardState {
@@ -63,7 +41,7 @@ export function renderProjectMapCard(
 	collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED,
 	hint?: string,
 ): string[] {
-	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, panelInnerWidth(theme, width), undefined, (role, text) => theme.fg(role, text)), theme, width, { expanded, hint, panel: true });
+	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, panelInnerWidth(theme, width), (role, text) => theme.fg(role, text)), theme, width, { expanded, hint, panel: true });
 }
 
 /**
@@ -79,9 +57,9 @@ export interface ProjectMapCardDetail {
 	digest(): string;
 }
 
-export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort, readState: () => ProjectMapCardState = () => state(artifactPath)): SidebarRail {
+export function projectMapCardRail(artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, reveal?: (localLine: number) => void, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, readState: () => ProjectMapCardState = () => state(artifactPath)): SidebarRail {
 	const headerLines = new Map<number, ProjectMapGroup>();
-	const capabilityLines = new Map<number, { id: string; help: number; launch?: number }>();
+	const capabilityLines = new Map<number, { id: string; help: number }>();
 	const capabilityStarts = new Map<string, number>();
 	let revealedSelection: string | undefined;
 	let bodyStartColumn = CARD_FRAME_COLUMNS;
@@ -90,12 +68,11 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 		capabilityLines.clear();
 		capabilityStarts.clear();
 		const current = readState();
-		const launchable = launch?.launchable();
 		// The marker is painted with the theme's own role, so the row still follows the configured
 		// theme; the descriptor and the hit map must be built from the same call.
 		const paint = (role: string, text: string) => theme.fg(role, text);
-		const body = projectMapCardBody(current, session.collapse(), session.selection(), panelInnerWidth(theme, width), launchable, paint);
-		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), panelInnerWidth(theme, width), launchable, paint);
+		const body = projectMapCardBody(current, session.collapse(), session.selection(), panelInnerWidth(theme, width), paint);
+		const descriptor = projectMapCardDescriptor(current, session.collapse(), session.selection(), panelInnerWidth(theme, width), paint);
 		const lines = renderCard(descriptor, theme, width, { expanded: true, hint, panel: true });
 		// Map body indices through the shared panel geometry and wrapping. Float panels
 		// add a top padding row, a header separator, and a transparent left margin.
@@ -116,7 +93,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 				height += wrapTextAnsi(body.lines[index]!, panelInnerWidth(theme, width)).length;
 			}
 			capabilityStarts.set(capability.id, start);
-			for (let line = start; line < start + height; line++) capabilityLines.set(line, { id: capability.id, help: capability.help, ...(capability.launch === undefined ? {} : { launch: capability.launch }) });
+			for (let line = start; line < start + height; line++) capabilityLines.set(line, { id: capability.id, help: capability.help });
 		}
 		// The layout that shows the new selection is the one that reveals it, whoever changed
 		// it — a click, a shortcut, or the artifact — and a render that does not change the
@@ -135,7 +112,7 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 	};
 	return {
 		render,
-		digest: () => `${cardStyle()}|${projectMapCardDigest(readState(), session.collapse(), session.selection(), launch?.launchable())}|${detail?.digest() ?? ""}`,
+		digest: () => `${cardStyle()}|${projectMapCardDigest(readState(), session.collapse(), session.selection())}|${detail?.digest() ?? ""}`,
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -146,14 +123,9 @@ export function projectMapCardRail(artifactPath: string, theme: CardTheme, sessi
 			}
 			const capability = capabilityLines.get(event.y);
 			if (capability === undefined) return undefined;
-			// Each marker has its own target: explaining is not launching and neither is selecting,
-			// and a click that lands on a marker must not change what the Inspector shows.
+			// Explaining does not change the selected capability.
 			if (event.x === bodyStartColumn + capability.help) {
 				onExplain?.(capability.id);
-				return { handled: true };
-			}
-			if (capability.launch !== undefined && event.x === bodyStartColumn + capability.launch) {
-				launch?.open(capability.id);
 				return { handled: true };
 			}
 			session.select(capability.id === session.selection() ? undefined : capability.id);
@@ -174,7 +146,7 @@ export function projectMapCardBottom(artifactPath: string, theme: CardTheme, rea
 	};
 }
 
-export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, launch?: ProjectMapLaunchPort, readState: () => ProjectMapCardState = () => state(artifactPath)): Component {
+export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTheme, session: ProjectMapCardSession, hint?: string, detail?: ProjectMapCardDetail, onExplain?: (capabilityId: string) => void, readState: () => ProjectMapCardState = () => state(artifactPath)): Component {
 	return sidebarPart(tui, PROJECT_MAP_RAIL_KEY, projectMapCardBottom(artifactPath, theme, readState), projectMapCardRail(
 		artifactPath,
 		theme,
@@ -183,7 +155,6 @@ export function projectMapCardPart(tui: TUI, artifactPath: string, theme: CardTh
 		(localLine) => sidebarState(tui).reveal?.(PROJECT_MAP_RAIL_KEY, localLine),
 		detail,
 		onExplain,
-		launch,
 		readState,
 	));
 }

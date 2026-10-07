@@ -100,7 +100,7 @@ export interface ProjectMapCardBody {
 	headers: Array<{ line: number; group: ProjectMapGroup }>;
 	selected?: number;
 	/** Capability targets share the same body indices as the rendered descriptor. */
-	capabilities: Array<{ line: number; id: string; height: number; /** The body column of the marker that explains it. */ help: number; /** The body column of the launch marker, absent when the row does not carry one. */ launch?: number }>;
+	capabilities: Array<{ line: number; id: string; height: number; /** The body column of the marker that explains it. */ help: number }>;
 }
 
 export interface ProjectMapCardDescriptor {
@@ -240,8 +240,6 @@ export function projectMapStaticBlockers(map: ProjectMapV1, capabilityId: string
  * inner width, which is why the real width is threaded down from the render path.
  */
 const CARD_BODY_BUDGET = 60;
-/** The launchable set a caller that does not know one passes: an empty set draws no marker. */
-const EMPTY_LAUNCHABLE: ReadonlySet<string> = new Set<string>();
 
 /**
  * Cuts a label that does not fit at its end, keeping its head: the functional point's code and
@@ -263,12 +261,6 @@ function endTruncate(text: string, room: number): string {
  * range the card tests cannot drift away from the row the card paints.
  */
 export const PROJECT_MAP_HELP_MARKER = "?";
-/**
- * The marker that opens the capability in a parallel session, drawn only when the capability is
- * launchable. It is the shell's own petal, in the shell's own accent role, so it needs no
- * patched font and no color of its own.
- */
-export const PROJECT_MAP_LAUNCH_MARKER = "✿";
 /** Todo's row budget applies only to capability body rows, not headers or foundations. */
 const ROW_CAP = 12;
 const GLYPH_ROLE: Partial<Record<ProjectMapState, string>> = { planned: "muted", active: "accent", done: "success" };
@@ -276,8 +268,6 @@ const OUTCOME_ROLE: Partial<Record<ProjectMapState, string>> = { planned: "text"
 const ROW_INDENT = "  ";
 const ROW_SELECTED = "▸ ";
 export const PROJECT_MAP_HELP_COLUMN = ROW_INDENT.length;
-/** The launch marker sits one `? ` group to the right of the help marker. */
-export const PROJECT_MAP_LAUNCH_COLUMN = PROJECT_MAP_HELP_COLUMN + 2;
 
 /** Paints one segment of a row with a theme role. The default leaves the row plain. */
 export type ProjectMapRowPaint = (role: string, text: string) => string;
@@ -299,20 +289,19 @@ function paintedLabel(capability: ProjectMapCapabilityV1): string {
  * Below the markers' floor the row is as short as its own markers allow, which is wider than
  * the width it was given. The label is truncated rather than wrapped to keep one body line.
  */
-function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number, launchable: boolean, paint: ProjectMapRowPaint): string {
+function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, innerWidth: number, paint: ProjectMapRowPaint): string {
 	const outcome = paintedLabel(capability);
-	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${launchable ? `${PROJECT_MAP_LAUNCH_MARKER} ` : ""}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
-	// The label budget is measured on the plain head: the painted marker carries an escape
-	// sequence, and counting its bytes would shorten every launchable row for no reason.
+	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
+	// Measure the plain head, not the bytes of the painted escape sequences.
 	const glyphRole = GLYPH_ROLE[capability.state];
 	const outcomeRole = OUTCOME_ROLE[capability.state];
 	const glyph = PROJECT_MAP_STATE_GLYPH[capability.state];
 	const label = endTruncate(outcome, innerWidth - plainHead.length);
-	const head = `${selected ? ROW_SELECTED : ROW_INDENT}${paint("muted", PROJECT_MAP_HELP_MARKER)} ${launchable ? `${paint("accent", PROJECT_MAP_LAUNCH_MARKER)} ` : ""}${glyphRole === undefined ? glyph : paint(glyphRole, glyph)} `;
+	const head = `${selected ? ROW_SELECTED : ROW_INDENT}${paint("muted", PROJECT_MAP_HELP_MARKER)} ${glyphRole === undefined ? glyph : paint(glyphRole, glyph)} `;
 	return `${head}${outcomeRole === undefined ? label : paint(outcomeRole, label)}`;
 }
 
-export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
+export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
 	const body: ProjectMapCardBody = { lines: [], headers: [], capabilities: [] };
 	const add = (line: string): number => {
 		const index = body.lines.length;
@@ -364,10 +353,9 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 		}
 		for (const capability of visible) {
 			const selected = capability.id === selection;
-			const canLaunch = launchable.has(capability.id);
-			const line = addRow(capabilityRow(capability, selected, innerWidth, canLaunch, paint));
+			const line = addRow(capabilityRow(capability, selected, innerWidth, paint));
 			// Every capability row is exactly one body line, so the click target is that line.
-			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN, ...(canLaunch ? { launch: PROJECT_MAP_LAUNCH_COLUMN } : {}) });
+			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN });
 			if (selected) body.selected = line;
 		}
 		if (more > 0) addRow(`${ROW_INDENT}${paint("muted", `… ${more} more`)}`);
@@ -375,8 +363,8 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	return body;
 }
 
-export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
-	const body = projectMapCardBody(state, collapse, selection, innerWidth, launchable, paint).lines;
+export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
+	const body = projectMapCardBody(state, collapse, selection, innerWidth, paint).lines;
 	if (state.kind === "no-fp") return { title: "Project Map", subtitle: "no functional points", tone: "info", body };
 	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
@@ -394,11 +382,8 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
  * A stable digest of the descriptor the card renders. Width and theme are already part of the
  * layout's section cache key, so this follows descriptor changes without reinterpreting state.
  */
-export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, launchable?: ReadonlySet<string>): string {
-	const descriptor = projectMapCardDescriptor(state, collapse, selection, CARD_BODY_BUDGET, launchable);
-	// The launch marker is not part of the descriptor's text at this budget (the paint is
-	// identity here), so the set that decides it is folded in explicitly: without it the rail's
-	// section cache would keep painting the previous frame's markers.
+export function projectMapCardDigest(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection): string {
+	const descriptor = projectMapCardDescriptor(state, collapse, selection, CARD_BODY_BUDGET);
 	const labels = state.kind === "ready" ? state.map.capabilities.map(paintedLabel) : [];
-	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body, labels, launchable: launchable === undefined ? [] : [...launchable].sort() })}`;
+	return `project-map/${state.kind}:${JSON.stringify({ title: descriptor.title, subtitle: descriptor.subtitle, tone: descriptor.tone, body: descriptor.body, labels })}`;
 }

@@ -18,7 +18,6 @@ import {
 	PROJECT_MAP_RAIL_KEY,
 	projectMapCardBottom,
 	projectMapCardRail,
-	projectMapOpenPiHostOnce,
 	renderProjectMapCard,
 	type ProjectMapCardSession,
 } from "../lib/shell-project-map-card.ts";
@@ -34,28 +33,25 @@ for (const style of [CARD_STYLE.FLOAT, CARD_STYLE.NEON]) {
 			withArtifact(JSON.stringify(map()), (path) => {
 				const current = session();
 				const explained: string[] = [];
-				const launched: string[] = [];
 				const revealed: number[] = [];
 				const id = "capability-with-an-unbreakable-identifier";
 				const rail = projectMapCardRail(path, floatTheme, current, "alt+m", (row) => revealed.push(row), undefined,
-					(value) => explained.push(value), { launchable: () => new Set([id]), open: (value) => launched.push(value) });
+					(value) => explained.push(value));
 				for (const width of [9, 20, 56]) {
 					const lines = rail.render(width);
 					assert.ok(lines.every((line) => visibleWidth(line) <= width));
 				}
 				const lines = rail.render(56);
-				const row = lines.findIndex((line) => line.includes("? ✿"));
+				const row = lines.findIndex((line) => line.includes("? ✓"));
 				const margin = style === CARD_STYLE.FLOAT ? 1 : 0;
 				const click = (x: number, y = row) => rail.handleMouse?.({ type: "click", button: "left", x, y, screenX: x, screenY: y, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
 				assert.deepEqual(click(4 + margin), { handled: true });
 				assert.deepEqual(explained, [id]);
-				assert.deepEqual(click(6 + margin), { handled: true });
-				assert.deepEqual(launched, [id]);
 				assert.deepEqual(current.selected, []);
 				assert.equal(click(10, 0), undefined);
 				assert.deepEqual(click(10), { handled: true, render: true });
 				const selected = rail.render(56);
-				assert.deepEqual(revealed, [selected.findIndex((line) => line.includes("▸ ? ✿"))]);
+				assert.deepEqual(revealed, [selected.findIndex((line) => line.includes("▸ ? ✓"))]);
 				rail.render(56);
 				assert.equal(revealed.length, 1);
 				const group = selected.findIndex((line) => line.includes("Product capabilities"));
@@ -120,11 +116,11 @@ for (const style of [CARD_STYLE.FLOAT, CARD_STYLE.NEON]) {
 			const capabilities = Array.from({ length: 12 }, (_, index) => ({ ...base, id: `row-${String(index).padStart(2, "0")}`, outcome: `Row ${index}`, state: index < 2 ? "done" : "planned" }));
 			withArtifact(JSON.stringify(map({ capabilities })), (path) => {
 				const current = session();
-				const explained: string[] = [], launched: string[] = [], revealed: number[] = [];
+				const explained: string[] = [], revealed: number[] = [];
 				const painted: Array<{ role: string; text: string }> = [];
 				const recording = { ...floatTheme, fg: (role: string, text: string) => { painted.push({ role, text }); return `\x1b[32m${text}\x1b[39m`; } };
 				const rail = projectMapCardRail(path, recording, current, undefined, (row) => revealed.push(row), undefined,
-					(id) => explained.push(id), { launchable: () => new Set(capabilities.map(({ id }) => id)), open: (id) => launched.push(id) });
+					(id) => explained.push(id));
 				rail.render(80);
 				capabilities.push({ ...base, id: "row-12", outcome: "Row 12", state: "planned" });
 				writeFileSync(path, JSON.stringify(map({ capabilities })));
@@ -137,9 +133,7 @@ for (const style of [CARD_STYLE.FLOAT, CARD_STYLE.NEON]) {
 				assert.equal(click(4, summary), undefined, "the done summary has no stale row target");
 				const margin = style === CARD_STYLE.FLOAT ? 1 : 0;
 				assert.deepEqual(click(4 + margin, row), { handled: true });
-				assert.deepEqual(click(6 + margin, row), { handled: true });
 				assert.deepEqual(explained, ["row-02"]);
-				assert.deepEqual(launched, ["row-02"]);
 				assert.deepEqual(click(10, row), { handled: true, render: true });
 				assert.deepEqual(current.selected, ["row-02"]);
 				rail.render(80);
@@ -151,7 +145,6 @@ for (const style of [CARD_STYLE.FLOAT, CARD_STYLE.NEON]) {
 				const overflow = rail.render(80).findIndex((line) => line.includes("2 more"));
 				assert.ok(overflow > row);
 				assert.equal(click(4 + margin, overflow), undefined, "overflow has no explain target");
-				assert.equal(click(6 + margin, overflow), undefined, "overflow has no launch target");
 				assert.equal(click(10, overflow), undefined, "overflow has no selection target");
 				assert.equal(click(10, overflow + 1), undefined, "old trailing row targets were cleared");
 			});
@@ -223,13 +216,6 @@ test("rail digest follows rendered diagnostics but ignores unrendered map fields
 		assert.notEqual(secondMessage, firstMessage, "the invalid diagnostics differ in their rendered message");
 		assert.notEqual(rail.digest!(), firstInvalid);
 	});
-});
-
-test("memoizes the host probe", () => {
-	let probes = 0;
-	assert.deepEqual(projectMapOpenPiHostOnce(() => { probes += 1; return { available: true, version: "tmux test" }; }), { available: true, version: "tmux test" });
-	assert.equal(projectMapOpenPiHostOnce(() => { probes += 1; return { available: false, version: null }; }).available, true);
-	assert.equal(probes, 1);
 });
 
 test("the rail is expanded while the bottom card is one collapsed body line", () => {
@@ -307,37 +293,6 @@ test("the marker explains a capability while the rest of the row still selects i
 		assert.deepEqual(current.selected, [], "explaining does not select");
 		assert.deepEqual(click(10), { handled: true, render: true });
 		assert.deepEqual(current.selected, ["capability-with-an-unbreakable-identifier"], "the rest of the row still selects");
-	});
-});
-
-// Launching is not selecting either: the launch marker has its own target, and a click on it
-// must leave the Inspector where it was.
-test("the launch marker opens the capability while the rest of the row still selects it", () => {
-	withArtifact(JSON.stringify(map()), (path) => {
-		const current = session();
-		const launched: string[] = [];
-		const rail = projectMapCardRail(path, theme, current, undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: (id) => launched.push(id) });
-		const lines = rail.render(56);
-		const header = lines.findIndex((line) => line.includes("Product capabilities"));
-		const bodyEnd = lines.length - 1;
-		const row = lines.map((line, index) => ({ line, index })).find((entry) => entry.index > header && entry.index < bodyEnd && entry.line.includes("? ✿ "))!.index;
-		const click = (x: number) => rail.handleMouse?.({ type: "click", button: "left", x, y: row, screenX: x, screenY: row, width: 56, height: lines.length, shift: false, alt: false, ctrl: false });
-		// The launch marker is four body columns in, and the frame spends two before the body.
-		assert.deepEqual(click(6), { handled: true }, "the launch marker is handled, and nothing repaints");
-		assert.deepEqual(launched, ["capability-with-an-unbreakable-identifier"]);
-		assert.deepEqual(current.selected, [], "launching does not select");
-		assert.deepEqual(click(4), { handled: true }, "the help marker keeps its own target");
-		assert.deepEqual(launched, ["capability-with-an-unbreakable-identifier"], "and a click on it does not launch");
-	});
-});
-
-test("the launch marker is painted with the theme's accent role", () => {
-	withArtifact(JSON.stringify(map()), (path) => {
-		const painted: Array<{ role: string; text: string }> = [];
-		const recording = { fg: (role: string, text: string) => { painted.push({ role, text }); return text; } };
-		const rail = projectMapCardRail(path, recording, session(), undefined, undefined, undefined, undefined, { launchable: () => new Set(["capability-with-an-unbreakable-identifier"]), open: () => {} });
-		rail.render(56);
-		assert.ok(painted.some((entry) => entry.role === "accent" && entry.text === "✿"), "the marker is painted with the accent role");
 	});
 });
 
