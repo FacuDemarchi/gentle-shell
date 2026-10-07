@@ -35,6 +35,54 @@ function sources(text: string) {
 	};
 }
 
+test("work-unit prefix: T rows become capabilities and continuations remain steps", () => {
+	const input = sources('- **Work unit prefix:** `T`\n- [ ] **T1 — First**\n- [x] **T2 — Second**\n- [ ] **T1b — Letter**\n- [ ] **T1.2 — Dot**\n- [ ] **TR-1 — Other**');
+	for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example")]) {
+		assert.deepEqual(result.map?.capabilities.map((row) => row.outcome), ["T1 — First", "T2 — Second"]);
+	}
+	assert.match(joined(generateProjectMapDraft(input).assumptions), /3 work units.*"T"/);
+	assert.deepEqual(collectProjectMapSteps(input.oddTaskDocuments, "T1").map((step) => step.code), ["T1b", "T1.2"]);
+});
+
+test("work-unit prefix: resolves different literals per document", () => {
+	const input = { packageJson: manifest(), oddTaskDocuments: [
+		{ path: "odd/tasks/a.md", text: '- [ ] **T1 — First**\n  + **Work unit prefix:** `T`' },
+		{ path: "odd/tasks/b.md", text: '**Work unit prefix:** `HOR-`\n- [ ] **HOR-01 — Second**\n- [ ] **T2 — Not a row**' },
+	] };
+	for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example")]) {
+		assert.deepEqual(result.map?.capabilities.map((row) => row.outcome), ["T1 — First", "HOR-01 — Second"]);
+	}
+	assert.match(joined(generateProjectMapDraft(input).assumptions), /"T".*"HOR-"/);
+});
+
+test("work-unit prefix: unreadable declarations report the document and retain the default", () => {
+	for (const declaration of ["T", "`T` `HOR-`", "``", "`T T`", "`T\tT`", "`T```"]) {
+		const input = sources(`**Work unit prefix:** ${declaration}\n- [ ] **FP-1 — Default**\n- [ ] **T1 — Not a row**`);
+		for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example")]) {
+			assert.deepEqual(result.map?.capabilities.map((row) => row.outcome), ["FP-1 — Default"]);
+			assert.match(joined(result.omissions), /odd\/tasks\/roadmap\.md.*unreadable \*\*Work unit prefix:\*\*/);
+		}
+	}
+});
+
+test("work-unit prefix: first readable declaration wins and duplicates are reported", () => {
+	const input = sources('**Work unit prefix:** missing\n**Work unit prefix:** `T`\n**Work unit prefix:** `HOR-`\n**Work unit prefix:** `T`\n**Work unit prefix:** ``\n- [ ] **T1 — First**\n- [ ] **HOR-01 — Not a row**');
+	for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example")]) {
+		assert.deepEqual(result.map?.capabilities.map((row) => row.outcome), ["T1 — First"]);
+		assert.equal(result.omissions.filter((line) => /unreadable \*\*Work unit prefix:\*\*/.test(line)).length, 2);
+		assert.equal(result.omissions.filter((line) => /duplicate \*\*Work unit prefix:\*\*/.test(line)).length, 2);
+		assert.ok(result.omissions.filter((line) => /\*\*Work unit prefix:\*\*/.test(line)).every((line) => line.includes("odd/tasks/roadmap.md")));
+	}
+});
+
+test("work-unit prefix: absent declaration keeps FP-", () => {
+	const input = sources('- [ ] **FP-1 — Default**\n- [ ] **T1 — Not a row**');
+	for (const result of [generateProjectMapDraft(input), deriveProjectMap(input, "example")]) {
+		assert.deepEqual(result.map?.capabilities.map((row) => row.outcome), ["FP-1 — Default"]);
+		assert.ok(!joined(result.omissions).includes("**Work unit prefix:**"));
+	}
+});
+
 test("derives project identity and the repository foundation from a manifest", () => {
 	const result = generateProjectMapDraft({ packageJson: manifest() });
 	assert.ok(result.map);
@@ -458,7 +506,7 @@ test("keeps every supplied ODD task document as a source under the fixed FP conv
 		],
 	});
 	assert.deepEqual(result.map?.capabilities.map((capability) => capability.id), ["first-capability", "second-capability"]);
-	assert.ok(joined(result.assumptions).includes('fixed "FP-" convention'));
+	assert.ok(joined(result.assumptions).includes('resolved prefix ("FP-")'));
 });
 
 test("derives surfaces from only backticked declared paths using the longest matching prefix", () => {
@@ -726,7 +774,7 @@ function expectedHeadCapability(path: string, id: string, outcome: string) {
 }
 
 const headFallbackAssumptions = [
-	'0 work units were read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.',
+	"0 work units were read as steps instead of capabilities because their codes do not match their document's resolved prefix (\"FP-\").",
 	"Every generated map is a draft: this generator never marks a map approved, and approval requires a human actor and an explicit transition.",
 	"A generated foundation is done only when its named structured source carries a well-formed declaration of it; done therefore means declared, not verified.",
 	"Foundation identifiers are generic proposals derived from repository tooling, and the human is expected to replace or extend them with the project's real foundations.",
@@ -892,6 +940,17 @@ test("declared parents own every non-row unit despite its code, indentation, or 
 		{ code: "FP-1b.0", title: "Another different row's extension", state: "done", path: "odd/tasks/declared.md" },
 	]);
 	assert.deepEqual(collectProjectMapSteps(documents, "FP-7", "FP-"), [], "a declaration takes precedence over the extension fallback");
+
+	const mixed = [...documents,
+		{ path: "odd/tasks/t.md", text: '**Work unit prefix:** `T`\n**Belongs to:** `T1`\n- [ ] **T1b — Letter**\n- [x] **T1.2 — Dot**\n- [ ] **T2 — Another row**' },
+		{ path: "odd/tasks/hor.md", text: '**Work unit prefix:** `HOR-`\n**Belongs to:** `HOR-01`\n- [ ] **HOR-01a — Detail**\n- [ ] **HOR-02 — Another row**' },
+	];
+	assert.deepEqual(collectProjectMapSteps(mixed, "T1", "FP-").map((step) => step.code), ["T1b", "T1.2"]);
+	assert.deepEqual(collectProjectMapSteps(mixed, "HOR-01", "FP-").map((step) => step.code), ["HOR-01a"]);
+	assert.deepEqual(collectProjectMapSteps(mixed, "FP-5", "FP-"), collectProjectMapSteps(documents, "FP-5", "FP-"));
+	assert.deepEqual(collectProjectMapSteps(mixed, "T1", null), []);
+	const suppliedDefault = [{ path: "odd/tasks/custom.md", text: '**Work unit prefix:** ``\n**Belongs to:** `X1`\n- [ ] **X1b — Detail**\n- [ ] **X2 — Another row**' }];
+	assert.deepEqual(collectProjectMapSteps(suppliedDefault, "X1", "X").map((step) => step.code), ["X1b"]);
 });
 
 test("reports each unreadable or unusable declared parent once without falling back", () => {
@@ -1099,7 +1158,7 @@ test("keeps the no-declaration collector and generated draft byte-identical", ()
 		"No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.",
 	]);
 	assert.deepEqual(result.assumptions, [
-		'2 work units were read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.',
+		"2 work units were read as steps instead of capabilities because their codes do not match their document's resolved prefix (\"FP-\").",
 		...headFallbackAssumptions.slice(1),
 	]);
 	assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization([expectedHeadCapability("odd/tasks/fallback.md", "five", "FP-5 — Five")]));
@@ -1157,7 +1216,7 @@ test("matches HEAD's complete output for synthetic no-convention corpora", () =>
 		assert.equal(serializeProjectMap(result.map!), expectedHeadSerialization(fixture.capabilities), fixture.name);
 		assert.deepEqual(result.omissions, fixture.omissions, fixture.name);
 		assert.deepEqual(result.assumptions, [
-			`${fixture.name === "an invalid title" || fixture.name === "a document containing only steps" ? "1 work unit was" : "0 work units were"} read as steps instead of capabilities because their codes do not match the fixed "FP-" convention.`,
+			`${fixture.name === "an invalid title" || fixture.name === "a document containing only steps" ? "1 work unit was" : "0 work units were"} read as steps instead of capabilities because their codes do not match their document's resolved prefix ("FP-").`,
 			...headFallbackAssumptions.slice(1),
 		], fixture.name);
 	}

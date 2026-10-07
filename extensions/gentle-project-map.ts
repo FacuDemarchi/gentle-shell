@@ -925,7 +925,7 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 	if (parsed.action === "show") {
 		const derived = readProjectMapDisplay(ctx.cwd);
 		options.onShow?.();
-		ctx.ui.notify(derived.map === null ? "Project Map card shown for this session.\nNo FP work units were found in odd/tasks/*.md." : `Project Map card shown for this session.\nProject: ${derived.map.project.name}\n${derived.map.capabilities.map((row) => row.outcome).join("\n")}`);
+		ctx.ui.notify(derived.map === null ? "Project Map card shown for this session.\nNo FP work units were found in odd/tasks/*.md. Documents declare their prefix with **Work unit prefix:** followed by one backticked literal; without it the map expects FP-." : `Project Map card shown for this session.\nProject: ${derived.map.project.name}\n${derived.map.capabilities.map((row) => row.outcome).join("\n")}`);
 		return { action: "show", wrote: false, map: derived.map, assumptions: derived.assumptions, omissions: derived.omissions, diagnostics: [] };
 	}
 

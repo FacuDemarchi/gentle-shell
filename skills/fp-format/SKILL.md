@@ -16,6 +16,9 @@ Use for explicit FP documentation intent in ODD, not global formatting or task e
 - Keep ODD feature documents authoritative, without duplicates.
 - Write Spanish narrative; preserve IDs, states, meaning, exact paths/commands/APIs, dependencies, and evidence.
 - Preserve non-`FP-N` codes; never renumber.
+- Declare the document's row prefix near its title using `**Work unit prefix:**` followed by exactly one backticked literal (for example `T`); without it the map expects `FP-`. The first readable declaration wins per document. The reader scans every line after trimming and stripping an optional list marker; the colon may be inside or immediately after the bold marker.
+- Match the prefix literally and case-sensitively, followed by digits and optional dash-separated digits: `T1` is a row under `T`, `TR-1` is not. Unicode-letter or dot continuations (`T1b`, `T1.2`) stay sub-element steps, never rows, even without their parent.
+- Report both prefix omission rules: no backticked span, multiple spans, an empty value, whitespace or a backtick in the value makes a declaration unreadable; subsequent readable declarations are duplicates even if identical. Each omission names the document and leaves resolution unchanged; an unreadable marker does not prevent a later readable declaration from winning.
 - Report missing descriptions/criteria; absent dependencies mean `UNKNOWN`, not none. Never invent facts or passes.
 - Propose existing-document formatting/translation; await approval before applying.
 - Put one document-level `**Belongs to:**` near the title, before checkboxes, with one backticked confirmed parent code; never infer or repeat it per task.

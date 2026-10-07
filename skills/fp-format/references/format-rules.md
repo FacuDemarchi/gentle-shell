@@ -32,6 +32,27 @@ markers, and evidence) are exempt from translation.
   fork, not established native release 4.0.0 parser/Project Map behavior. Writing
   it does not update a release map, validate hierarchy, or refresh anything.
 
+## Work unit prefix
+
+Declare a document's row prefix near its title with `**Work unit prefix:**`
+followed by exactly one backticked literal, for example `T` or `HOR-`.
+Without a declaration the map expects `FP-`. The reader scans every line,
+trims it and strips an optional leading list marker; the colon may be inside
+or immediately after the bold marker. The first readable declaration wins,
+independently per document, in both display and artifact extraction.
+
+Matching is literal and case-sensitive: the prefix must be followed by digits
+and optional dash-separated digits. Under `T`, `T1` and `T2` are rows, while
+`TR-1` is a step. A row continued by a Unicode letter or a dot is a sub-element,
+never a row, even if its parent is absent: `T1b` and `T1.2` remain steps.
+
+Both omission rules name the source document and leave resolution unchanged:
+a declaration with no backticked span, multiple spans, an empty value, whitespace
+or a backtick in the value is unreadable and ignored; every subsequent readable
+declaration is a duplicate and ignored, even when it repeats the same literal.
+An unreadable declaration before the first readable one does not prevent that
+later declaration from winning. Preserve existing codes; do not renumber.
+
 ## Allowed edit surfaces
 
 Put the declaration in the indented body of its work unit, directly under the

@@ -1,6 +1,24 @@
 # FP-1 — Consultar el horario de una biblioteca ficticia
 
 **Belongs to:** `BIB-PLAN`
+**Work unit prefix:** `FP-`
+
+<!-- Contrato de prefijo del ejemplo: **Work unit prefix:** conserva su literal
+     inglés y contiene exactamente un valor entre comillas invertidas. Sin
+     declaración, el mapa espera FP-. Se leen todas las líneas, quitando
+     espacios exteriores y un marcador de lista opcional; los dos puntos pueden
+     ir dentro o inmediatamente después de la negrita. La primera declaración
+     legible gana solo para este documento.
+     La coincidencia es literal y sensible a mayúsculas: prefijo seguido de
+     dígitos y grupos opcionales de guion y dígitos. Aquí FP-1 es fila y HOR-01
+     y HOR-02 son pasos, sin renumerarlos. Con T, T1 sería fila y TR-1 seguiría
+     siendo paso. Las continuaciones con letra Unicode o punto (T1b, T1.2)
+     son subelementos, nunca filas, incluso sin su padre.
+     Ambas omisiones nombran el documento y mantienen la resolución: una
+     declaración sin span entre comillas invertidas, con varios, con valor
+     vacío, espacios en blanco o una comilla invertida es ilegible y se ignora;
+     toda declaración legible posterior es duplicada y se ignora, aunque sea
+     idéntica. Una ilegible no impide que gane una legible posterior. -->
 
 > Ejemplo íntegramente ficticio. Los IDs, requisitos y dependencias ilustran una
 > entrada aprobada imaginaria; no describen un repositorio real. No se ejecutaron

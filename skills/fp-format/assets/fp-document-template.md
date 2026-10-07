@@ -1,6 +1,23 @@
 # <ID FP existente o aprobado> — <Resultado funcional>
 
 **Belongs to:** `<código padre confirmado>`
+**Work unit prefix:** `FP-`
+
+<!-- Contrato de prefijo: conservar el literal inglés **Work unit prefix:** y
+     sustituir FP- solo por el prefijo confirmado, sin renumerar los IDs.
+     Sin declaración, el mapa espera FP-. Se leen todas las líneas, quitando
+     espacios exteriores y un marcador de lista opcional; los dos puntos pueden
+     ir dentro o inmediatamente después de la negrita. La primera declaración
+     legible gana para este documento, no para los demás.
+     La coincidencia es literal y sensible a mayúsculas: prefijo seguido de
+     dígitos y grupos opcionales de guion y dígitos. Con T, T1 es fila y TR-1
+     es paso. Las continuaciones con letra Unicode o punto (T1b, T1.2) son
+     subelementos, nunca filas, incluso si falta su padre.
+     Ambas omisiones nombran el documento y no cambian la resolución: una
+     declaración sin span entre comillas invertidas, con varios, con valor
+     vacío, espacios en blanco o una comilla invertida es ilegible y se ignora;
+     toda declaración legible posterior es duplicada y se ignora, aunque sea
+     idéntica. Una ilegible no impide que gane otra legible posterior. -->
 
 <!-- Reemplazar el marcador solo por un código padre existente o aprobado y
      confirmado para este documento. No inferirlo. Si la declaración original

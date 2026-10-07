@@ -35,6 +35,8 @@ const BULLET = /^(?:[-*+]|\d+[.)])\s+/;
 const ALLOWED_EDIT_SURFACES_MARKER = /^\*\*Allowed edit surfaces:?\*\*:?[\t ]*/;
 // Like allowed edit surfaces, the colon may sit inside or immediately after the bold marker.
 const BELONGS_TO_MARKER = /^\*\*Belongs to:?\*\*:?[\t ]*/;
+const WORK_UNIT_PREFIX_MARKER = /^\*\*Work unit prefix:?\*\*:?[\t ]*/;
+const DEFAULT_WORK_UNIT_PREFIX = "FP-";
 
 type RecordValue = Record<string, unknown>;
 
@@ -127,7 +129,8 @@ export function collectProjectMapSteps(documents: readonly { path: string; text:
 	const seen = new Set<string>();
 	for (const document of [...documents].sort((left, right) => comparePaths(left.path, right.path))) {
 		const declared = readDeclaredProjectMapParent(document.text);
-		const declaredParentIsUsable = declared.code !== null && delegablePrefix !== null && isDelegableWorkUnitCode(declared.code, delegablePrefix);
+		const documentPrefix = delegablePrefix === null ? null : readDeclaredWorkUnitPrefix(document.path, document.text, [], delegablePrefix);
+		const declaredParentIsUsable = declared.code !== null && documentPrefix !== null && isDelegableWorkUnitCode(declared.code, documentPrefix);
 		for (const rawLine of document.text.split("\n")) {
 			const match = DESCRIPTION_WORK_UNIT.exec(rawLine.replace(/\r$/, ""));
 			if (match === null) continue;
@@ -135,7 +138,7 @@ export function collectProjectMapSteps(documents: readonly { path: string; text:
 			const split = splitWorkUnitLabel(label);
 			const unitCode = (split.head.length === 0 ? label : split.head.replace(/—\s*$/, "")).trim();
 			if (declared.hasDeclaration) {
-				if (!declaredParentIsUsable || declared.code !== code || (delegablePrefix !== null && isDelegableWorkUnitLabel(label, delegablePrefix))) continue;
+				if (!declaredParentIsUsable || declared.code !== code || (documentPrefix !== null && isDelegableWorkUnitLabel(label, documentPrefix))) continue;
 				const stepCode = split.head.length === 0 ? "" : unitCode;
 				if (stepCode.length > 0 && seen.has(stepCode)) continue;
 				if (stepCode.length > 0) seen.add(stepCode);
@@ -229,12 +232,37 @@ function readDeclaredProjectMapParent(documentText: string): DeclaredProjectMapP
 	return { code, hasDeclaration, hasUnreadableDeclaration };
 }
 
+/** Resolves each document independently; invalid and repeated markers never replace a prefix. */
+function readDeclaredWorkUnitPrefix(path: string, text: string, omissions: string[], defaultPrefix = DEFAULT_WORK_UNIT_PREFIX): string {
+	let prefix: string | null = null;
+	for (const rawLine of text.split("\n")) {
+		const line = rawLine.replace(/\r$/, "").trim().replace(BULLET, "");
+		const marker = WORK_UNIT_PREFIX_MARKER.exec(line);
+		if (marker === null) continue;
+		const value = line.slice(marker[0].length);
+		const spans = [...value.matchAll(/`([^`]*)`/g)];
+		if (spans.length !== 1 || /[\s`]/.test(spans[0]![1]!) || spans[0]![1]!.length === 0
+			|| value.replace(/`[^`]*`/g, "").includes("`")) {
+			omissions.push(`${path} has an unreadable **Work unit prefix:** declaration that was ignored.`);
+			continue;
+		}
+		if (prefix !== null) {
+			omissions.push(`${path} has a duplicate **Work unit prefix:** declaration that was ignored; the first readable declaration "${prefix}" was used instead.`);
+			continue;
+		}
+		prefix = spans[0]![1]!;
+	}
+	return prefix ?? defaultPrefix;
+}
+
 interface ExtractedWorkUnits {
 	capabilities: { capability: ProjectMapCapabilityV1; line: string }[];
 	stepCount: number;
+	prefix: string;
 }
 
-function extractWorkUnits(path: string, text: string, omissions: string[], delegablePrefix: string | null): ExtractedWorkUnits {
+function extractWorkUnits(path: string, text: string, omissions: string[]): ExtractedWorkUnits {
+	const delegablePrefix = readDeclaredWorkUnitPrefix(path, text, omissions);
 	const capabilities: { capability: ProjectMapCapabilityV1; line: string }[] = [];
 	let stepCount = 0;
 	for (const rawLine of text.split("\n")) {
@@ -270,7 +298,7 @@ function extractWorkUnits(path: string, text: string, omissions: string[], deleg
 			line,
 		});
 	}
-	return { capabilities, stepCount };
+	return { capabilities, stepCount, prefix: delegablePrefix };
 }
 
 function declaredEditSurfacePaths(documentText: string, capabilityId: string, rowCode?: string): { path: string; surfaceName?: string }[] {
@@ -368,7 +396,7 @@ export function projectMapSourceChanges(stored: ProjectMapV1, generated: Project
 	return changes;
 }
 
-/** The display contract is fixed by the harness, never by a project's configuration. */
+/** The display reads document declarations, never a project's configuration. */
 export function deriveProjectMap(sources: Pick<ProjectMapDraftSources, "packageJson" | "oddTaskDocuments">, fallbackName: string): ProjectMapDraftResult {
 	const omissions: string[] = [];
 	const manifest = isRecord(sources.packageJson) ? sources.packageJson : null;
@@ -379,7 +407,7 @@ export function deriveProjectMap(sources: Pick<ProjectMapDraftSources, "packageJ
 	const identifiers = new Set<string>();
 	for (const document of [...(sources.oddTaskDocuments ?? [])].sort((a, b) => comparePaths(a.path, b.path))) {
 		if (!/^odd\/tasks\/[^/]+\.md$/.test(document.path) || !isSafeFeatureDocumentPath(document.path)) continue;
-		for (const { capability } of extractWorkUnits(document.path, document.text, omissions, "FP-").capabilities) {
+		for (const { capability } of extractWorkUnits(document.path, document.text, omissions).capabilities) {
 			const label = splitWorkUnitLabel(capability.outcome);
 			const code = (label.head.length === 0 ? capability.outcome : label.head.replace(/—\s*$/, "")).trim();
 			if (seen.has(code)) continue;
@@ -397,7 +425,7 @@ export function deriveProjectMap(sources: Pick<ProjectMapDraftSources, "packageJ
 		}
 	}
 	if (capabilities.length === 0) {
-		omissions.push("No FP work units were found in odd/tasks/*.md.");
+		omissions.push("No FP work units were found in odd/tasks/*.md. Documents declare their prefix with **Work unit prefix:** followed by one backticked literal; without it the map expects FP-.");
 		return { map: null, assumptions: [], omissions };
 	}
 	const scripts = manifest?.scripts;
@@ -464,7 +492,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 	omissions.push("No structured source in this step names product capabilities; they must come from the ODD work-unit extraction or from the human.");
 	const capabilities: ProjectMapCapabilityV1[] = [];
 	const declaredBy = new Map<string, { path: string; line: string }>();
-	const declaredDelegablePrefix = "FP-";
+	const resolvedPrefixes = new Set<string>();
 	const documents = Array.isArray(sources.oddTaskDocuments)
 		? sources.oddTaskDocuments
 			.filter(
@@ -485,7 +513,8 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 
 	let stepCount = 0;
 	for (const document of capabilityDocuments) {
-		const extracted = extractWorkUnits(document.path, document.text, omissions, declaredDelegablePrefix);
+		const extracted = extractWorkUnits(document.path, document.text, omissions);
+		resolvedPrefixes.add(extracted.prefix);
 		stepCount += extracted.stepCount;
 		if (extracted.capabilities.length === 0 && extracted.stepCount === 0) {
 			omissions.push(`${document.path} declares no work unit this generator can read, so it contributed no capability.`);
@@ -515,7 +544,7 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 		const declared = readDeclaredProjectMapParent(document.text);
 		if (!declared.hasDeclaration) continue;
 		const usable = declared.code !== null
-			&& isDelegableWorkUnitCode(declared.code, declaredDelegablePrefix) && rowCodes.has(declared.code);
+			&& isDelegableWorkUnitCode(declared.code, readDeclaredWorkUnitPrefix(document.path, document.text, [])) && rowCodes.has(declared.code);
 		if (!usable) {
 			const reason = declared.code === null ? "" : `: "${declared.code}" is not a functional point this map declares`;
 			omissions.push(`${document.path} declares an unusable **Belongs to:** declaration${reason}, so its work units were associated with no functional-point row.`);
@@ -523,8 +552,9 @@ export function generateProjectMapDraft(sources: ProjectMapDraftSources): Projec
 			omissions.push(`${document.path} has an unreadable **Belongs to:** marker that was ignored; the readable declaration "${declared.code}" was used instead.`);
 		}
 	}
+	const prefixSummary = [...(resolvedPrefixes.size === 0 ? [DEFAULT_WORK_UNIT_PREFIX] : resolvedPrefixes)].map((prefix) => `"${prefix}"`).join(", ");
 	assumptions.push(
-		`${stepCount} work unit${stepCount === 1 ? " was" : "s were"} read as steps instead of capabilities because their codes do not match the fixed "${declaredDelegablePrefix}" convention.`,
+		`${stepCount} work unit${stepCount === 1 ? " was" : "s were"} read as steps instead of capabilities because their codes do not match their document's resolved prefix (${prefixSummary}).`,
 	);
 	if (capabilities.length === 0) {
 		omissions.push("No supplied source names a product capability, so the draft carries none; capabilities must come from the ODD work-unit extraction or from the human.");

@@ -1679,6 +1679,7 @@ test("a project without FP rows reports their absence instead of an empty map", 
 		assert.equal(report.wrote, false);
 		assert.equal(probe.confirmations, 0);
 		assert.match(probe.notified.join("\n"), /No FP work units/);
+		assert.match(probe.notified.join("\n"), /\*\*Work unit prefix:\*\*.*without it the map expects FP-/);
 		const extension = projectMapExtension();
 		const widget = widgetContext(directory, "no-fp");
 		await extension.fire("session_start", widget.ctx);
@@ -1686,6 +1687,8 @@ test("a project without FP rows reports their absence instead of an empty map", 
 		widget.widgets.get("gentle-project-map")!(tui, { fg: (_role: string, text: string) => text });
 		const body = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(80).join("\n");
 		assert.match(body, /No FP work units/);
+		assert.match(body, /\*\*Work unit prefix:\*\*/);
+		assert.match(body, /default: FP-/);
 		assert.doesNotMatch(body, /Product capabilities 0\/0|generate|ensure|draft|approve/);
 	}, { config: null, task: "- [ ] **FP-77b — Orphan**\n- [ ] **PM-2 — Not FP**\n" });
 });

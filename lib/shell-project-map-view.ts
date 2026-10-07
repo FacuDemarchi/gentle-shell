@@ -319,6 +319,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	};
 	if (state.kind === "no-fp") {
 		add("No FP work units were found in odd/tasks/*.md.");
+		add("Declare **Work unit prefix:** with a backticked literal; default: FP-.");
 		return body;
 	}
 	if (state.kind === "empty") {
