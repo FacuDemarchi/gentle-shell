@@ -130,7 +130,7 @@ test("classifies a missing artifact as empty", () => {
 		const descriptor = projectMapCardDescriptor(state);
 		assert.equal(descriptor.tone, "info");
 		assert.equal(descriptor.title, "Project Map");
-		assert.equal(descriptor.subtitle, "no map");
+		assert.equal(descriptor.subtitle, "");
 		assert.deepEqual(descriptor.body, []);
 		assert.deepEqual(projectMapCardBody(state), { lines: [], headers: [], capabilities: [] });
 		assert.doesNotMatch(JSON.stringify(descriptor), /\/gentle:/);

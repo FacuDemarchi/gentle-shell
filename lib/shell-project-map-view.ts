@@ -314,11 +314,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 		body.lines.push(line);
 		return index;
 	};
-	if (state.kind === "no-fp") {
-		add("No FP work units were found in odd/tasks/*.md.");
-		add("Declare **Work unit prefix:** with a backticked literal; default: FP-.");
-		return body;
-	}
+	if (state.kind === "no-fp") return body;
 	if (state.kind === "empty") return body;
 	if (state.kind === "invalid") {
 		add("The Project Map artifact is not valid:");
@@ -360,8 +356,10 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 
 export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardDescriptor {
 	const body = projectMapCardBody(state, collapse, selection, innerWidth, paint).lines;
-	if (state.kind === "no-fp") return { title: "Project Map", subtitle: "no functional points", tone: "info", body };
-	if (state.kind === "empty") return { title: "Project Map", subtitle: "no map", tone: "info", body };
+	// The owner's decision: with nothing to show, the card is its title and nothing else —
+	// no message, no instruction and no subtitle, in both empty states.
+	if (state.kind === "no-fp") return { title: "Project Map", subtitle: "", tone: "info", body };
+	if (state.kind === "empty") return { title: "Project Map", subtitle: "", tone: "info", body };
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
 		title: "Project Map",

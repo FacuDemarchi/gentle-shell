@@ -428,7 +428,7 @@ test("artifact-free sessions render derived data and preserve git status", async
 	});
 });
 
-test("a project without FP rows reports their absence instead of an empty map", async () => {
+test("a project without FP rows renders the title only", async () => {
 	await withRepository(async (directory) => {
 		assert.equal(readProjectMapDisplay(directory).map, null);
 		const extension = projectMapExtension();
@@ -437,9 +437,8 @@ test("a project without FP rows reports their absence instead of an empty map", 
 		const tui = newTui();
 		widget.widgets.get("gentle-project-map")!(tui, theme);
 		const body = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(80).join("\n");
-		assert.match(body, /No FP work units/);
-		assert.match(body, /\*\*Work unit prefix:\*\*/);
-		assert.match(body, /default: FP-/);
+		assert.match(body, /Project Map/);
+		assert.doesNotMatch(body, /No FP work units|Work unit prefix|default: FP-/);
 		assert.doesNotMatch(body, /Product capabilities 0\/0/);
 	}, { task: "- [ ] **FP-77b — Orphan**\n- [ ] **PM-2 — Not FP**\n" });
 });

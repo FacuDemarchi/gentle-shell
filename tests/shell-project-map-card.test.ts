@@ -179,7 +179,9 @@ test("renders empty and invalid artifacts distinctly without throwing", () => {
 			assert.doesNotThrow(() => emptyLines);
 			assert.doesNotThrow(() => invalidLines);
 			assert.notDeepEqual(emptyLines, invalidLines);
-			assert.match(emptyLines.join("\n"), /no map/);
+			// The owner's decision: with nothing to show, the card is its title and nothing else.
+			assert.match(emptyLines.join("\n"), /Project Map/);
+			assert.doesNotMatch(emptyLines.join("\n"), /no map|no functional points|No FP work units/);
 			assert.match(invalidLines.join("\n"), /invalid/);
 		});
 	});
@@ -366,7 +368,7 @@ test("the bottom leaves the empty body blank and renders one invalid diagnostic 
 		const lines = bottom.render(80);
 		assert.equal(lines.length, 2, "only the card frame remains without body rows");
 		assert.match(lines[0]!, /Project Map/);
-		assert.match(lines[0]!, /no map/);
+		assert.doesNotMatch(lines[0]!, /no map|no functional points/);
 		assert.doesNotMatch(lines.join("\n"), /No Project Map at|\/gentle:/);
 		assert.equal(bottom.handleMouse, undefined);
 	});
