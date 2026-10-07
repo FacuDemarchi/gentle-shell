@@ -17,7 +17,6 @@ import { readProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { PROJECT_MAP_STORE_DIAGNOSTIC_CODES } from "../lib/project-map-store-schema.ts";
 import { initializeProjectMapStore } from "../lib/project-map-store.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
-import { planProjectMapWorktree } from "../lib/project-map-worktrees.ts";
 import { PROJECT_MAP_SCHEMA_V1, serializeProjectMap, type ProjectMapV1 } from "../lib/shell-project-map-schema.ts";
 
 const NOW = new Date("2026-09-26T12:00:00.000Z");
@@ -209,16 +208,6 @@ test("a capability claim belongs to one session, and status and release see the 
 		const free = harness(cwd, "session-b");
 		await runProjectMapCommand("lead status catalog", free.ctx, { now: () => LATER });
 		assert.ok(free.notified.some((message) => message.includes("catalog") && message.includes("free")), free.notified.join("\n"));
-	});
-});
-
-test("the capability claim is what unblocks the worktree plan's claim precondition", async () => {
-	await withFixture(async ({ cwd }) => {
-		const before = planProjectMapWorktree({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW.toISOString() });
-		assert.ok(before.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED), "before the claim, provisioning refuses for exactly this reason");
-		await runProjectMapCommand("lead claim catalog", harness(cwd, "session-a").ctx, { now: () => NOW });
-		const after = planProjectMapWorktree({ cwd, capabilityId: "catalog", sessionId: "session-a", now: NOW.toISOString() });
-		assert.equal(after.diagnostics.some((entry) => entry.code === PROJECT_MAP_STORE_DIAGNOSTIC_CODES.WORKTREE_CLAIM_REQUIRED), false, "the claim surface is what makes the documented provisioning step reachable");
 	});
 });
 

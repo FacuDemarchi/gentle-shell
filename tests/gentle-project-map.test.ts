@@ -95,7 +95,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "integrate", "translate"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "integrate", "translate"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -1682,7 +1682,6 @@ const GATE_OFF: NodeJS.ProcessEnv = {};
 const GATE_ON: NodeJS.ProcessEnv = { GENTLE_PI_PROJECT_MAP: "1" };
 
 const GATED_COMMANDS: Array<[string, string]> = [
-	["worktree provision catalog", "worktree"],
 	["lead claim", "lead"],
 	["lead renew", "lead"],
 	["contract propose catalog checkout-1 Title body.md", "contract"],
@@ -1712,28 +1711,12 @@ test("every route that acts outside the artifact is refused while the gate is of
 test("reads, releases and usage errors keep their own answer while the gate is off", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-read-"));
 	try {
-		const reachable = ["status", "show", "hide", "lead status", "lead release", "contract list", "worktree inspect catalog", "worktree list"];
+		const reachable = ["status", "show", "hide", "lead status", "lead release", "contract list"];
 		for (const command of reachable) {
 			const h = harness(directory);
 			const report = await runProjectMapCommand(command, h.ctx, { env: GATE_OFF });
 			assert.equal(report.diagnostics.some((entry) => entry.code === "project-map/executable-disabled"), false, `${command} must not be gated`);
 		}
-		// A malformed gated command is a usage error first: the gate never masks a typo.
-		const malformed = await runProjectMapCommand("worktree provision", harness(directory).ctx, { env: GATE_OFF });
-		assert.equal(malformed.diagnostics[0]?.code, "project-map/invalid-field");
-		assert.match(malformed.diagnostics[0]!.message, /capability id/i);
-	} finally {
-		rmSync(directory, { recursive: true, force: true });
-	}
-});
-
-test("the gate is open when it is explicitly enabled", async () => {
-	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-on-"));
-	try {
-		// Without a repository there is nothing to provision, so the gate being open is
-		// shown by the answer that follows it rather than by a successful provisioning.
-		const report = await runProjectMapCommand("worktree provision catalog", harness(directory).ctx, { env: GATE_ON });
-		assert.equal(report.diagnostics.some((entry) => entry.code === "project-map/executable-disabled"), false);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
