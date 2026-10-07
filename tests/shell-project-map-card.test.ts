@@ -111,6 +111,56 @@ function withArtifact(text: string | null, run: (path: string) => void): void {
 	}
 }
 
+for (const style of [CARD_STYLE.FLOAT, CARD_STYLE.NEON]) {
+	test(`${style} folding removes hit targets and retains themed marker offsets`, () => {
+		const previous = cardStyle();
+		setCardStyle(style);
+		try {
+			const base = (map().capabilities as Array<Record<string, unknown>>)[0]!;
+			const capabilities = Array.from({ length: 12 }, (_, index) => ({ ...base, id: `row-${String(index).padStart(2, "0")}`, outcome: `Row ${index}`, state: index < 2 ? "done" : "planned" }));
+			withArtifact(JSON.stringify(map({ capabilities })), (path) => {
+				const current = session();
+				const explained: string[] = [], launched: string[] = [], revealed: number[] = [];
+				const painted: Array<{ role: string; text: string }> = [];
+				const recording = { ...floatTheme, fg: (role: string, text: string) => { painted.push({ role, text }); return `\x1b[32m${text}\x1b[39m`; } };
+				const rail = projectMapCardRail(path, recording, current, undefined, (row) => revealed.push(row), undefined,
+					(id) => explained.push(id), { launchable: () => new Set(capabilities.map(({ id }) => id)), open: (id) => launched.push(id) });
+				rail.render(80);
+				capabilities.push({ ...base, id: "row-12", outcome: "Row 12", state: "planned" });
+				writeFileSync(path, JSON.stringify(map({ capabilities })));
+				const lines = rail.render(80);
+				const plain = lines.map((line) => line.replace(/\x1b\[[\d;]*m/g, ""));
+				const summary = plain.findIndex((line) => line.includes("✓ 2 done"));
+				const row = plain.findIndex((line) => line.includes("Row 2"));
+				assert.ok(summary > 0 && row === summary + 1);
+				const click = (x: number, y: number) => rail.handleMouse?.({ type: "click", button: "left", x, y, screenX: x, screenY: y, width: 80, height: lines.length, shift: false, alt: false, ctrl: false });
+				assert.equal(click(4, summary), undefined, "the done summary has no stale row target");
+				const margin = style === CARD_STYLE.FLOAT ? 1 : 0;
+				assert.deepEqual(click(4 + margin, row), { handled: true });
+				assert.deepEqual(click(6 + margin, row), { handled: true });
+				assert.deepEqual(explained, ["row-02"]);
+				assert.deepEqual(launched, ["row-02"]);
+				assert.deepEqual(click(10, row), { handled: true, render: true });
+				assert.deepEqual(current.selected, ["row-02"]);
+				rail.render(80);
+				assert.deepEqual(revealed, [row]);
+				assert.ok(painted.some(({ role, text }) => role === "text" && text === "Row 2"));
+				assert.ok(painted.some(({ role, text }) => role === "muted" && text === "?"));
+				capabilities.push({ ...base, id: "row-13", outcome: "Row 13", state: "planned" });
+				writeFileSync(path, JSON.stringify(map({ capabilities })));
+				const overflow = rail.render(80).findIndex((line) => line.includes("2 more"));
+				assert.ok(overflow > row);
+				assert.equal(click(4 + margin, overflow), undefined, "overflow has no explain target");
+				assert.equal(click(6 + margin, overflow), undefined, "overflow has no launch target");
+				assert.equal(click(10, overflow), undefined, "overflow has no selection target");
+				assert.equal(click(10, overflow + 1), undefined, "old trailing row targets were cleared");
+			});
+		} finally {
+			setCardStyle(previous);
+		}
+	});
+}
+
 test("composes the ready descriptor through renderCard", () => {
 	withArtifact(JSON.stringify(map()), (path) => {
 		const state = projectMapCardState(path, PROJECT_MAP_OVERLAY_UNAVAILABLE);

@@ -63,6 +63,62 @@ function withArtifact(text: string | null, run: (path: string) => void): void {
 	}
 }
 
+test("capability rows use Todo theme roles without changing marker geometry", () => {
+	const painted: Array<{ role: string; text: string }> = [];
+	const paint = (role: string, text: string) => { painted.push({ role, text }); return text; };
+	const body = projectMapCardBody(ready(map()), PROJECT_MAP_EXPANDED, "merchant-catalog", 120, new Set(["merchant-catalog"]), paint);
+	assert.deepEqual(painted.filter(({ text }) => ["✓", "Merchants manage a catalog.", "○", "Shoppers build a cart."].includes(text)), [
+		{ role: "success", text: "✓" },
+		{ role: "dim", text: "Merchants manage a catalog." },
+		{ role: "muted", text: "○" },
+		{ role: "text", text: "Shoppers build a cart." },
+	]);
+	assert.ok(painted.some(({ role, text }) => role === "muted" && text === "?"));
+	assert.ok(painted.some(({ role, text }) => role === "accent" && text === "✿"));
+	assert.equal(body.lines[3], "▸ ? ✿ ✓ Merchants manage a catalog.");
+	assert.deepEqual(body.capabilities[0], { line: 3, id: "merchant-catalog", height: 1, help: 2, launch: 4 });
+});
+
+test("long capability lists fold done rows and cap open rows exactly like Todos", () => {
+	const capabilities = Array.from({ length: 40 }, (_, index) => ({ ...map().capabilities[0]!, id: `row-${index}`, outcome: `Row ${index}`, state: index < 25 ? "done" as const : index === 25 ? "active" as const : "planned" as const }));
+	const painted: Array<{ role: string; text: string }> = [];
+	const paint = (role: string, text: string) => { painted.push({ role, text }); return text; };
+	const body = projectMapCardBody(ready(map({ capabilities })), PROJECT_MAP_EXPANDED, "row-25", 80, new Set(capabilities.map(({ id }) => id)), paint);
+	assert.deepEqual({ count: body.lines.length, summary: body.lines[3], firstOpen: body.lines[4], more: body.lines.at(-1) }, {
+		count: 15, summary: "  ✓ 25 done", firstOpen: "▸ ? ✿ ◉ Row 25", more: "  … 5 more",
+	}, "foundation header and row, capability header, twelve capability body rows");
+	assert.deepEqual(body.capabilities.map(({ id }) => id), capabilities.slice(25, 35).map(({ id }) => id));
+	assert.equal(body.selected, 4);
+	assert.ok(painted.some(({ role, text }) => role === "muted" && text === "25 done"));
+	assert.ok(painted.some(({ role, text }) => role === "muted" && text === "… 5 more"));
+	assert.ok(painted.some(({ role, text }) => role === "accent" && text === "◉"));
+	assert.ok(painted.some(({ role, text }) => role === "accent" && text === "Row 25"));
+});
+
+test("folding boundaries retain twelve rows, cap all-open lists, and collapse all-done lists", () => {
+	const capabilities = Array.from({ length: 13 }, (_, index) => ({ ...map().capabilities[0]!, id: `row-${index}`, outcome: `Row ${index}`, state: "planned" as const }));
+	const atCap = projectMapCardBody(ready(map({ foundations: [], capabilities: capabilities.slice(0, 12) })));
+	assert.equal(atCap.lines.length, 13);
+	assert.equal(atCap.capabilities.length, 12);
+	const overCap = projectMapCardBody(ready(map({ foundations: [], capabilities })));
+	assert.equal(overCap.lines.length, 13);
+	assert.equal(overCap.capabilities.length, 11);
+	assert.equal(overCap.lines.at(-1), "  … 2 more");
+	const allDone = projectMapCardBody(ready(map({ foundations: [], capabilities: capabilities.map((row) => ({ ...row, state: "done" })) })), PROJECT_MAP_EXPANDED, "row-0");
+	assert.deepEqual(allDone.lines, ["▾ Product capabilities 13/13", "  ✓ 13 done"]);
+	assert.deepEqual(allDone.capabilities, []);
+	assert.equal(allDone.selected, undefined);
+	const mixed = capabilities.map((row, index) => index === 0 ? { ...row, state: "done" as const } : row);
+	const folded = projectMapCardBody(ready(map({ capabilities: mixed })));
+	assert.equal(folded.lines.at(-1), "  … 2 more");
+	assert.equal(folded.capabilities.length, 10);
+	const noOverflow = projectMapCardBody(ready(map({ capabilities: mixed.map((row, index) => index < 2 ? { ...row, state: "done" as const } : row) })));
+	assert.equal(noOverflow.capabilities.length, 11);
+	assert.equal(noOverflow.lines.some((line) => line.includes("more")), false);
+	const foundations = Array.from({ length: 13 }, (_, index) => ({ ...map().foundations[0]!, id: `foundation-${index}` }));
+	assert.equal(projectMapCardBody(ready(map({ foundations, capabilities: [] }))).lines.length, 15, "foundations are never capped");
+});
+
 test("publishes a glyph for every frozen state", () => {
 	assert.deepEqual(Object.keys(PROJECT_MAP_STATE_GLYPH).sort(), ["active", "blocked", "done", "planned", "ready", "review"]);
 	assert.equal(PROJECT_MAP_STATE_GLYPH.done, "✓");
@@ -125,19 +181,18 @@ test("classifies a valid artifact as ready and carries the map", () => {
 	});
 });
 
-test("renders the approval state in the subtitle so a draft never reads as approved", () => {
+test("renders capability progress in the subtitle independently of artifact approval", () => {
 	const draft = projectMapCardDescriptor(ready(map()));
-	assert.ok(draft.subtitle.includes("Example Shop"));
-	assert.ok(draft.subtitle.includes("draft"));
-	// The frame paints the theme's card role like Status and Todos; the approval state lives in
-	// the subtitle, so the tone does not need to encode it.
+	assert.equal(draft.subtitle, "Example Shop · 1/3");
 	assert.equal(draft.tone, "info");
 
 	const approved = projectMapCardDescriptor(
 		ready(map({ approval: { state: "approved", approvedAt: "2026-09-23T12:00:00Z", approvedBy: "facundo" } })),
 	);
-	assert.ok(approved.subtitle.includes("approved"));
+	assert.equal(approved.subtitle, draft.subtitle);
 	assert.equal(approved.tone, "info");
+	assert.equal(projectMapCardDescriptor({ ...ready(map()), derived: true }).subtitle, draft.subtitle);
+	assert.equal(projectMapCardDescriptor(ready(map({ capabilities: [] }))).subtitle, "Example Shop · 0/0");
 });
 
 test("renders grouped rows with done indicators and lifecycle glyphs", () => {

@@ -269,6 +269,10 @@ export const PROJECT_MAP_HELP_MARKER = "?";
  * patched font and no color of its own.
  */
 export const PROJECT_MAP_LAUNCH_MARKER = "✿";
+/** Todo's row budget applies only to capability body rows, not headers or foundations. */
+const ROW_CAP = 12;
+const GLYPH_ROLE: Partial<Record<ProjectMapState, string>> = { planned: "muted", active: "accent", done: "success" };
+const OUTCOME_ROLE: Partial<Record<ProjectMapState, string>> = { planned: "text", active: "accent", done: "dim" };
 const ROW_INDENT = "  ";
 const ROW_SELECTED = "▸ ";
 export const PROJECT_MAP_HELP_COLUMN = ROW_INDENT.length;
@@ -300,8 +304,12 @@ function capabilityRow(capability: ProjectMapCapabilityV1, selected: boolean, in
 	const plainHead = `${selected ? ROW_SELECTED : ROW_INDENT}${PROJECT_MAP_HELP_MARKER} ${launchable ? `${PROJECT_MAP_LAUNCH_MARKER} ` : ""}${PROJECT_MAP_STATE_GLYPH[capability.state]} `;
 	// The label budget is measured on the plain head: the painted marker carries an escape
 	// sequence, and counting its bytes would shorten every launchable row for no reason.
-	const head = launchable ? plainHead.replace(PROJECT_MAP_LAUNCH_MARKER, paint("accent", PROJECT_MAP_LAUNCH_MARKER)) : plainHead;
-	return `${head}${endTruncate(outcome, innerWidth - plainHead.length)}`;
+	const glyphRole = GLYPH_ROLE[capability.state];
+	const outcomeRole = OUTCOME_ROLE[capability.state];
+	const glyph = PROJECT_MAP_STATE_GLYPH[capability.state];
+	const label = endTruncate(outcome, innerWidth - plainHead.length);
+	const head = `${selected ? ROW_SELECTED : ROW_INDENT}${paint("muted", PROJECT_MAP_HELP_MARKER)} ${launchable ? `${paint("accent", PROJECT_MAP_LAUNCH_MARKER)} ` : ""}${glyphRole === undefined ? glyph : paint(glyphRole, glyph)} `;
+	return `${head}${outcomeRole === undefined ? label : paint(outcomeRole, label)}`;
 }
 
 export function projectMapCardBody(state: ProjectMapCardState, collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED, selection?: ProjectMapSelection, innerWidth = CARD_BODY_BUDGET, launchable: ReadonlySet<string> = EMPTY_LAUNCHABLE, paint: ProjectMapRowPaint = IDENTITY_PAINT): ProjectMapCardBody {
@@ -342,7 +350,19 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 	const capabilityHeader = add(`${collapse.capabilities ? "▸" : "▾"} ${PROJECT_MAP_GROUP_LABEL.capabilities} ${completed(map.capabilities)}/${map.capabilities.length}`);
 	body.headers.push({ line: capabilityHeader, group: "capabilities" });
 	if (!collapse.capabilities) {
-		for (const capability of map.capabilities) {
+		let visible = map.capabilities;
+		let more = 0;
+		if (map.capabilities.length > ROW_CAP) {
+			const done = completed(map.capabilities);
+			const open = map.capabilities.filter((capability) => capability.state !== "done");
+			// Mirror Todo's bodyRows: a done summary, open rows in order, then overflow.
+			const summaryRows = done > 0 ? 1 : 0;
+			if (done > 0) addRow(`${ROW_INDENT}${paint("success", "✓")} ${paint("muted", `${done} done`)}`);
+			const room = ROW_CAP - summaryRows - (open.length > ROW_CAP - summaryRows ? 1 : 0);
+			visible = open.slice(0, room);
+			more = Math.max(0, open.length - room);
+		}
+		for (const capability of visible) {
 			const selected = capability.id === selection;
 			const canLaunch = launchable.has(capability.id);
 			const line = addRow(capabilityRow(capability, selected, innerWidth, canLaunch, paint));
@@ -350,6 +370,7 @@ export function projectMapCardBody(state: ProjectMapCardState, collapse: Project
 			body.capabilities.push({ line, id: capability.id, height: 1, help: PROJECT_MAP_HELP_COLUMN, ...(canLaunch ? { launch: PROJECT_MAP_LAUNCH_COLUMN } : {}) });
 			if (selected) body.selected = line;
 		}
+		if (more > 0) addRow(`${ROW_INDENT}${paint("muted", `… ${more} more`)}`);
 	}
 	return body;
 }
@@ -361,9 +382,9 @@ export function projectMapCardDescriptor(state: ProjectMapCardState, collapse: P
 	if (state.kind === "invalid") return { title: "Project Map", subtitle: "invalid", tone: "error", body };
 	return {
 		title: "Project Map",
-		subtitle: `${state.map.project.name} · ${state.derived ? "derived" : state.map.approval.state}`,
-		// The frame is the theme's card frame, the same rose look Status and Todos paint; the
-		// approval state is already in the subtitle, so the tone must not encode it again.
+		subtitle: `${state.map.project.name} · ${completed(state.map.capabilities)}/${state.map.capabilities.length}`,
+		// The frame is the theme's card frame, the same rose look Status and Todos paint;
+		// artifact approval is independent of this capability-progress display.
 		tone: "info",
 		body,
 	};

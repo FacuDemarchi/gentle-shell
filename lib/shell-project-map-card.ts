@@ -63,7 +63,7 @@ export function renderProjectMapCard(
 	collapse: ProjectMapCollapseState = PROJECT_MAP_EXPANDED,
 	hint?: string,
 ): string[] {
-	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, panelInnerWidth(theme, width)), theme, width, { expanded, hint, panel: true });
+	return renderCard(projectMapCardDescriptor(state(artifactPath), collapse, undefined, panelInnerWidth(theme, width), undefined, (role, text) => theme.fg(role, text)), theme, width, { expanded, hint, panel: true });
 }
 
 /**
