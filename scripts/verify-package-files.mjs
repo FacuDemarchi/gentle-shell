@@ -114,7 +114,6 @@ const requiredPaths = [
   "lib/project-map-integration-documents.ts",
   "lib/project-map-integration-repository.ts",
   "lib/project-map-integration.ts",
-  "lib/project-map-open-pi.ts",
   "lib/project-map-store-blockers.ts",
   "lib/project-map-store-claims.ts",
   "lib/project-map-store-contracts.ts",

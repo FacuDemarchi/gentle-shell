@@ -32,7 +32,6 @@ import gentleProjectMap, {
 	explainProjectMapCapability,
 	parseProjectMapHelpKey,
 	PROJECT_MAP_HELP_KEY_DEFAULT,
-	projectMapOpenPiDecision,
 	readRepositorySources,
 	runProjectMapCommand,
 	type ProjectMapCommandContext,
@@ -96,7 +95,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "open", "integrate", "translate"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "worktree", "integrate", "translate"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -1684,7 +1683,6 @@ const GATE_ON: NodeJS.ProcessEnv = { GENTLE_PI_PROJECT_MAP: "1" };
 
 const GATED_COMMANDS: Array<[string, string]> = [
 	["worktree provision catalog", "worktree"],
-	["open catalog", "open"],
 	["lead claim", "lead"],
 	["lead renew", "lead"],
 	["contract propose catalog checkout-1 Title body.md", "contract"],
@@ -1739,15 +1737,6 @@ test("the gate is open when it is explicitly enabled", async () => {
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
-});
-
-test("the Open Pi offer is withdrawn while the gate is off, and the switch is named", () => {
-	const readiness = { permitted: true, capability: null, claim: null, worktree: null, host: null, diagnostics: [{ code: "project-map-open-pi/prior", path: "$.host", message: "prior", severity: "warning" }] } as never;
-	const withheld = projectMapOpenPiDecision(readiness, GATE_OFF);
-	assert.equal(withheld.permitted, false);
-	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/executable-disabled"));
-	assert.ok(withheld.diagnostics.some((entry) => entry.code === "project-map-open-pi/prior"), "the original diagnostics survive");
-	assert.equal(projectMapOpenPiDecision(readiness, GATE_ON), readiness, "an enabled gate changes nothing");
 });
 
 test("draft reads each ODD task document once", async () => {
