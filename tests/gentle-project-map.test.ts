@@ -94,7 +94,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "translate"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "translate"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -1622,11 +1622,6 @@ const GATE_OFF: NodeJS.ProcessEnv = {};
 const GATE_ON: NodeJS.ProcessEnv = { GENTLE_PI_PROJECT_MAP: "1" };
 
 const GATED_COMMANDS: Array<[string, string]> = [
-	["lead claim", "lead"],
-	["lead renew", "lead"],
-	["contract propose catalog checkout-1 Title body.md", "contract"],
-	["contract accept catalog checkout-1 because it is shared", "contract"],
-	["contract reject catalog checkout-1 because it is not", "contract"],
 ];
 
 test("every route that acts outside the artifact is refused while the gate is off", async () => {
@@ -1650,7 +1645,7 @@ test("every route that acts outside the artifact is refused while the gate is of
 test("reads, releases and usage errors keep their own answer while the gate is off", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "pm9-gate-read-"));
 	try {
-		const reachable = ["status", "show", "hide", "lead status", "lead release", "contract list"];
+		const reachable = ["status", "show", "hide"];
 		for (const command of reachable) {
 			const h = harness(directory);
 			const report = await runProjectMapCommand(command, h.ctx, { env: GATE_OFF });

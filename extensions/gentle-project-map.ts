@@ -2,13 +2,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { readProjectMapCoordinationState, PROJECT_MAP_LEAD_CAPABILITY_ID } from "../lib/project-map-coordination-state.ts";
-import { acquireProjectMapClaim, readProjectMapClaim, releaseProjectMapClaim, renewProjectMapClaim } from "../lib/project-map-store-claims.ts";
-import { decideProjectMapContract, listProjectMapContracts, proposeProjectMapContract } from "../lib/project-map-store-contracts.ts";
 import { basename, join, resolve } from "node:path";
+import { readProjectMapCoordinationState } from "../lib/project-map-coordination-state.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
-import { applyProjectMapContract } from "../lib/shell-project-map-contracts.ts";
 import { projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
 import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
 import { collectProjectMapSteps, deriveProjectMap, generateProjectMapDraft, projectMapSourceChanges, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
@@ -84,7 +81,7 @@ export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapHelpKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_HELP_KEY?.trim(), PROJECT_MAP_HELP_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "translate"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "translate"] as const;
 
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
@@ -96,8 +93,6 @@ const USAGE = {
 	status: `Usage: /${PROJECT_MAP_COMMAND_NAME} status`,
 	show: `Usage: /${PROJECT_MAP_COMMAND_NAME} show`,
 	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
-	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status> [capability-id]`,
-	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
 	translate: `Usage: /${PROJECT_MAP_COMMAND_NAME} translate`,
 } as const;
 
@@ -430,200 +425,6 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		ctx.ui.notify(message);
 		return emptyReport(action, [{ code: "project-map/executable-disabled", path, message, severity: "error" }]);
 	};
-
-	if (parsed.action === "lead" || parsed.action === "contract") {
-		const [routeOperation = ""] = parsed.argument.split(/\s+/);
-		// Writes to the shared store are gated. Reads are not, and neither is a release: a switch
-		// that refused to release a claim would strand the very state it exists to protect.
-		const gatePath = parsed.action === "lead"
-			? (routeOperation === "claim" || routeOperation === "renew" ? `$.lead.${routeOperation}` : undefined)
-			: (routeOperation === "propose" || routeOperation === "accept" || routeOperation === "reject" ? `$.contract.${routeOperation}` : undefined);
-		if (gatePath !== undefined) {
-			const gated = executableGate(parsed.action, gatePath);
-			if (gated !== undefined) return gated;
-		}
-		const root = storeRoot(ctx.cwd);
-		if (root.root === null) {
-			ctx.ui.notify(`Project Map coordination is unavailable.\n${describeDiagnostics(root.diagnostics)}`);
-			return emptyReport(parsed.action, root.diagnostics);
-		}
-		const sessionId = sessionKey(ctx);
-		const instant = now().toISOString();
-
-		if (parsed.action === "lead") {
-			const [operation = "", capabilityId = "", ...extra] = parsed.argument.split(/\s+/);
-			if (!(["claim", "renew", "release", "status"] as const).includes(operation as "claim" | "renew" | "release" | "status")) {
-				const message = `A lead operation is required. ${USAGE.lead}`;
-				ctx.ui.notify(message);
-				return emptyReport("lead", [refusal(message)]);
-			}
-			if (extra.length > 0) {
-				const message = `A lead operation takes at most one capability id. ${USAGE.lead}`;
-				ctx.ui.notify(message);
-				return emptyReport("lead", [refusal(message)]);
-			}
-			// One route for every claim. Without a capability id the target is the lead role, which is
-			// what this route has always claimed; with one it is that capability, which is the claim
-			// `worktree provision` requires and no route could create. The id is checked against the
-			// artifact first, because the claim store is map-independent: a claim on a typo would
-			// otherwise satisfy the worktree precondition for a capability that cannot exist.
-			if (capabilityId.length > 0) {
-				const read = readProjectMapFile(artifactPath);
-				if (read.map === null) {
-					const message = `A capability claim needs a readable Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.`;
-					ctx.ui.notify(`${message}\n${describeDiagnostics(read.diagnostics)}`);
-					return emptyReport("lead", [refusal(message, "$.capabilities"), ...read.diagnostics]);
-				}
-				const declared = read.map.capabilities.map((capability) => capability.id);
-				if (!declared.includes(capabilityId)) {
-					const message = `No capability named "${capabilityId}" is declared; this map declares: ${declared.join(", ") || "none"}.`;
-					ctx.ui.notify(message);
-					return emptyReport("lead", [refusal(message, "$.capabilities")]);
-				}
-			}
-			const target = capabilityId.length > 0 ? capabilityId : PROJECT_MAP_LEAD_CAPABILITY_ID;
-			const label = capabilityId.length > 0 ? `claim for ${capabilityId}` : "lead claim";
-			if (operation === "status") {
-				if (capabilityId.length === 0) {
-					const state = readProjectMapCoordinationState({ root: root.root, mapPath: artifactPath, now: instant });
-					const lead = state.lead;
-					ctx.ui.notify(lead.status === "free"
-						? `Lead is free (${PROJECT_MAP_LEAD_CAPABILITY_ID}).`
-						: `Lead is ${lead.status}: ${lead.sessionId ?? "unknown"}; renewal after ${lead.lease?.renewal_after ?? "unknown"}, renew by ${lead.lease?.renew_by ?? "unknown"}.`);
-					return { action: "lead", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: state.diagnostics };
-				}
-				const claim = readProjectMapClaim({ root: root.root, capabilityId, now: instant });
-				ctx.ui.notify(claim.status === "free"
-					? `Claim for ${capabilityId} is free.`
-					: `Claim for ${capabilityId} is ${claim.status}: ${claim.claim?.session_id ?? "unknown"}; renewal after ${claim.claim?.lease.renewal_after ?? "unknown"}, renew by ${claim.claim?.lease.renew_by ?? "unknown"}.`);
-				return { action: "lead", wrote: false, map: null, assumptions: [], omissions: [], diagnostics: claim.diagnostics };
-			}
-			if (sessionId.length === 0) {
-				const message = "Lead operations require this session's identity; nothing was written.";
-				ctx.ui.notify(message);
-				return emptyReport("lead", [refusal(message, "$.sessionId")]);
-			}
-			// A refusal is an error, not a diagnostic: a recovered stale claim arrives as a *warning*
-			// with the claim already written, and treating that as a failure announced "nothing
-			// happened" while the store had changed hands. Success is the operation's own effect, so
-			// the report cannot disagree with the store.
-			const outcome = operation === "claim"
-				? (() => { const claim = acquireProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: claim.claim !== null, diagnostics: claim.diagnostics }; })()
-				: operation === "renew"
-					? (() => { const renewed = renewProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: renewed.claim !== null, diagnostics: renewed.diagnostics }; })()
-					: (() => { const released = releaseProjectMapClaim({ root: root.root, capabilityId: target, sessionId, now: instant }); return { effect: released.released === true, diagnostics: released.diagnostics }; })();
-			if (!outcome.effect || outcome.diagnostics.some((entry) => entry.severity === "error")) {
-				ctx.ui.notify(`${capabilityId.length > 0 ? `The claim for ${capabilityId}` : `Lead ${operation}`} was refused.\n${describeDiagnostics(outcome.diagnostics)}`);
-				return emptyReport("lead", outcome.diagnostics);
-			}
-			ctx.ui.notify(operation === "release" ? `Released the Project Map ${label}.` : `${operation === "claim" ? "Claimed" : "Renewed"} the Project Map ${label} for ${sessionId}.`);
-			if (outcome.diagnostics.length > 0) ctx.ui.notify(describeDiagnostics(outcome.diagnostics));
-			return { action: "lead", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: outcome.diagnostics };
-		}
-
-		const [operation = "", ...arguments_] = parsed.argument.split(/\s+/);
-		if (!(["propose", "accept", "reject", "list"] as const).includes(operation as "propose" | "accept" | "reject" | "list")) {
-			const message = `A contract operation is required. ${USAGE.contract}`;
-			ctx.ui.notify(message);
-			return emptyReport("contract", [refusal(message)]);
-		}
-		if (operation === "propose") {
-			const [capabilityId = "", contractId = "", title = "", bodyPath = "", ...extra] = arguments_;
-			if (capabilityId.length === 0 || contractId.length === 0 || title.length === 0 || bodyPath.length === 0 || extra.length > 0) {
-				const message = `A proposal needs capability id, contract id, title, and body path. ${USAGE.contract}`;
-				ctx.ui.notify(message);
-				return emptyReport("contract", [refusal(message)]);
-			}
-			if (sessionId.length === 0) {
-				const message = "Contract proposals require this session's identity; nothing was written.";
-				ctx.ui.notify(message);
-				return emptyReport("contract", [refusal(message, "$.sessionId")]);
-			}
-			const body = bodyDigest(bodyPath);
-			if (body.digest === null) {
-				ctx.ui.notify(`The contract proposal was refused.\n${describeDiagnostics(body.diagnostics)}`);
-				return emptyReport("contract", body.diagnostics);
-			}
-			const result = proposeProjectMapContract({ root: root.root, capabilityId, contractId, title, digest: body.digest, sessionId, now: instant });
-			if (result.contract === null) {
-				ctx.ui.notify(`The contract proposal was refused.\n${describeDiagnostics(result.diagnostics)}`);
-				return emptyReport("contract", result.diagnostics);
-			}
-			ctx.ui.notify(`Proposed contract ${contractId} for ${capabilityId} with digest ${result.contract.digest}.`);
-			return { action: "contract", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: result.diagnostics };
-		}
-		if (operation === "list") {
-			const [capabilityId = "", ...extra] = arguments_;
-			if (extra.length > 0) {
-				const message = `Contract list accepts at most one capability id. ${USAGE.contract}`;
-				ctx.ui.notify(message);
-				return emptyReport("contract", [refusal(message)]);
-			}
-			const map = capabilityId.length === 0 ? readProjectMapFile(artifactPath) : null;
-			if (map !== null && map.map === null) {
-				ctx.ui.notify(`No map is available to list every contract.\n${describeDiagnostics(map.diagnostics)}`);
-				return emptyReport("contract", map.diagnostics);
-			}
-			const capabilityIds = capabilityId.length === 0 ? (map?.map?.capabilities.map((capability) => capability.id) ?? []) : [capabilityId];
-			const diagnostics: ProjectMapStoreDiagnostic[] = [];
-			const lines: string[] = [];
-			for (const id of capabilityIds) {
-				const listed = listProjectMapContracts({ root: root.root, capabilityId: id, includeDecided: true });
-				diagnostics.push(...listed.diagnostics);
-				for (const contract of listed.contracts) lines.push(`${id}: ${contract.contract_id} (${contract.state}) — ${contract.title}`);
-			}
-			ctx.ui.notify(lines.length === 0 ? "No contracts found." : lines.join("\n"));
-			if (diagnostics.length > 0) ctx.ui.notify(describeDiagnostics(diagnostics));
-			return { action: "contract", wrote: false, map: map?.map ?? null, assumptions: [], omissions: [], diagnostics };
-		}
-		const [capabilityId = "", contractId = "", ...rationaleParts] = arguments_;
-		const rationale = rationaleParts.join(" ");
-		if (capabilityId.length === 0 || contractId.length === 0 || rationale.length === 0) {
-			const message = `A ${operation} decision needs capability id, contract id, and rationale. ${USAGE.contract}`;
-			ctx.ui.notify(message);
-			return emptyReport("contract", [refusal(message)]);
-		}
-		if (sessionId.length === 0) {
-			const message = "Contract decisions require this session's identity; nothing was written.";
-			ctx.ui.notify(message);
-			return emptyReport("contract", [refusal(message, "$.sessionId")]);
-		}
-		const state = readProjectMapCoordinationState({ root: root.root, mapPath: artifactPath, now: instant });
-		if (state.lead.status !== "live" || state.lead.sessionId !== sessionId) {
-			const message = `Only the live Project Map lead may ${operation} a contract; current lead is ${state.lead.sessionId ?? "free"} (${state.lead.status}). Nothing was written.`;
-			ctx.ui.notify(message);
-			return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: state.diagnostics };
-		}
-		const observed = operation === "accept" ? readSource(artifactPath) : null;
-		if (operation === "accept") {
-			const confirmed = ctx.hasUI ? await ctx.ui.confirm("Accept and apply Project Map contract?", `Accept ${contractId} for ${capabilityId} and add it to ${PROJECT_MAP_ARTIFACT_PATH}?`) : false;
-			if (!confirmed) {
-				ctx.ui.notify("Contract acceptance discarded; nothing was written.");
-				return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: [] };
-			}
-			if (observed !== null && artifactMovedSince(artifactPath, observed)) {
-				const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
-				ctx.ui.notify(message);
-				return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: [refusal(message)] };
-			}
-		}
-		const decision = decideProjectMapContract({ root: root.root, capabilityId, contractId, decision: operation === "accept" ? "accepted" : "rejected", rationale, sessionId, now: instant });
-		if (decision.contract === null) {
-			ctx.ui.notify(`The contract decision was refused.\n${describeDiagnostics(decision.diagnostics)}`);
-			return { action: "contract", wrote: false, map: state.map, assumptions: [], omissions: [], diagnostics: decision.diagnostics };
-		}
-		if (operation === "reject") {
-			ctx.ui.notify(`Rejected contract ${contractId}; the Project Map artifact was not changed.`);
-			return { action: "contract", wrote: true, map: null, assumptions: [], omissions: [], diagnostics: decision.diagnostics };
-		}
-		const applied = applyProjectMapContract({ path: artifactPath, capabilityId, contractId });
-		if (applied.map === null) {
-			ctx.ui.notify(`Accepted contract ${contractId} durably, but it could not be applied to the Project Map. The apply can be retried.\n${describeDiagnostics(applied.diagnostics)}`);
-			return { action: "contract", wrote: true, map: state.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
-		}
-		ctx.ui.notify(`Accepted contract ${contractId} durably and applied it to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "contract", wrote: true, map: applied.map, assumptions: [], omissions: [], diagnostics: [...decision.diagnostics, ...applied.diagnostics] };
-	}
 
 	if (parsed.action === "show") {
 		const derived = readProjectMapDisplay(ctx.cwd);
