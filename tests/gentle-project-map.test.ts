@@ -1489,6 +1489,46 @@ test("collapse survives a widget remount but is dropped at session shutdown with
 	});
 });
 
+test("the Project Map card renders by default with the executable gate unset", async () => {
+	await withRepository(async (directory) => {
+		writeDisplayDocuments(directory);
+		const extension = projectMapExtension({ [PROJECT_MAP_EXECUTABLE_ENV]: undefined });
+		const probe = widgetContext(directory, "gate-unset-visible");
+		await extension.fire("session_start", probe.ctx);
+		const factory = probe.widgets.get("gentle-project-map");
+		assert.ok(factory, "the card mounts by default with the executable gate unset");
+		assert.deepEqual(probe.calls.at(-1)?.[2], { placement: "belowEditor" });
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		factory(tui, { fg: (_color: string, text: string) => text });
+		const card = sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY);
+		assert.ok(card, "the visible card registers its rail part");
+		assert.match(card.render(80).join("\n"), /FP-1 — Catalog/, "the default card renders the project's functional points");
+		await extension.fire("session_shutdown", probe.ctx);
+	});
+});
+
+test("hiding the Project Map card stops rendering for the session with the executable gate unset", async () => {
+	await withRepository(async (directory) => {
+		writeDisplayDocuments(directory);
+		const extension = projectMapExtension({ [PROJECT_MAP_EXECUTABLE_ENV]: undefined });
+		const probe = widgetContext(directory, "gate-unset-hidden");
+		await extension.fire("session_start", probe.ctx);
+		const factory = probe.widgets.get("gentle-project-map");
+		assert.ok(factory, "the card mounts before the session hides it with the gate unset");
+		const tui = { terminal: {}, requestRender() {} } as unknown as TUI;
+		factory(tui, { fg: (_color: string, text: string) => text });
+		assert.match(sidebarState(tui).parts.get(PROJECT_MAP_RAIL_KEY)!.render(80).join("\n"), /FP-1 — Catalog/);
+
+		await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("hide", probe.ctx);
+		assert.equal(probe.widgets.has("gentle-project-map"), false, "hide clears the widget with the gate unset");
+		assert.equal(sidebarState(tui).parts.has(PROJECT_MAP_RAIL_KEY), false, "hide removes the rendering rail part");
+		assert.equal(probe.calls.at(-1)?.[1], undefined);
+		await extension.fire("session_start", probe.ctx);
+		assert.equal(probe.widgets.has("gentle-project-map"), false, "the explicit hide choice survives a mount attempt in the same session");
+		await extension.fire("session_shutdown", probe.ctx);
+	});
+});
+
 test("show and hide mount only for this session and do not write the artifact", async () => {
 	await withRepository(async (directory) => {
 		const extension = projectMapExtension();
