@@ -237,7 +237,7 @@ test("fixture integrity: POST_WRAPPER_IDENTITY_BLOCK matches design.md converged
 // ---------------------------------------------------------------------------
 
 test("Table A rule: wrapper :177 'You are el Gentleman...' survives verbatim (KEEP once, wrapper)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -248,7 +248,7 @@ test("Table A rule: wrapper :177 'You are el Gentleman...' survives verbatim (KE
 });
 
 test("Table A rule: wrapper :180/:181 + orchestrator :9,:12 self-description MERGE into wrapper bullet 1", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -269,7 +269,7 @@ test("Table A rule: wrapper :180/:181 + orchestrator :9,:12 self-description MER
 });
 
 test("Table A rule: orchestrator :17 'never introduce yourself...' ADDED to wrapper (orchestrator-only rule)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -280,7 +280,7 @@ test("Table A rule: orchestrator :17 'never introduce yourself...' ADDED to wrap
 });
 
 test("Table A rule: persona-mode selection (trimmed) survives; language clause NOT restated in Identity contract", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -291,7 +291,7 @@ test("Table A rule: persona-mode selection (trimmed) survives; language clause N
 });
 
 test("Table A rule: ODD and subagents core-capabilities bullet survives (KEEP once)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -302,7 +302,7 @@ test("Table A rule: ODD and subagents core-capabilities bullet survives (KEEP on
 });
 
 test("Table A rule: memory rule (wrapper phrasing, with never-invent clause) survives (KEEP wrapper)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -313,7 +313,7 @@ test("Table A rule: memory rule (wrapper phrasing, with never-invent clause) sur
 });
 
 test("Table A rule: 'Do not claim portability outside the Pi runtime.' survives (KEEP once, byte-identical wrapper :184 / orchestrator :20)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -332,7 +332,7 @@ test("Table B rule: LB2 subagent-English delegation kept verbatim in orchestrato
 		fileURLToPath(new URL("../assets/orchestrator-delegation.md", import.meta.url)),
 		"utf8",
 	);
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona) + delegationDetail;
 		assert.match(
 			prompt,
@@ -343,7 +343,7 @@ test("Table B rule: LB2 subagent-English delegation kept verbatim in orchestrato
 });
 
 test("Table B rule: LB3 artifacts-English kept verbatim in orchestrator (unique)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -354,7 +354,7 @@ test("Table B rule: LB3 artifacts-English kept verbatim in orchestrator (unique)
 });
 
 test("Table B rule: LB4 public-comment target language kept verbatim in orchestrator (unique)", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.match(
 			prompt,
@@ -373,7 +373,7 @@ test("Table B rule: LB5 exceptions kept verbatim in orchestrator (unique)", () =
 		fileURLToPath(new URL("../assets/orchestrator-delegation.md", import.meta.url)),
 		"utf8",
 	);
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona) + delegationDetail;
 		assert.match(
 			prompt,
@@ -427,7 +427,7 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 test("dup guard (exact-string): 'Do not claim portability outside the Pi runtime.' occurs exactly once", () => {
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.equal(
 			countOccurrences(prompt, "Do not claim portability outside the Pi runtime."),
@@ -440,7 +440,7 @@ test("dup guard (exact-string): 'Do not claim portability outside the Pi runtime
 test("dup guard (exact-string): identity self-description sentence occurs exactly once", () => {
 	const selfDescription =
 		"I am el Gentleman: a Pi-specific coding-agent harness for controlled development, with a senior architect persona. I run Organic Driven Development, coordinate subagents, track substantial work, run commands, and edit files. I am not a generic chatbot.";
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.equal(
 			countOccurrences(prompt, selfDescription),
@@ -466,7 +466,7 @@ test("dup guard (exact-string): LB2/LB3/LB4 each occur exactly once", () => {
 		"Generated technical artifacts — whether by the parent inline or by subagents";
 	const lb4 =
 		"Public/contextual comments and replies are different from technical artifacts.";
-	for (const persona of ["gentleman", "neutral"] as const) {
+	for (const persona of ["gentleman", "neutral", "mapper"] as const) {
 		const prompt = __testing.buildGentlePrompt(persona);
 		assert.equal(
 			countOccurrences(prompt + delegationDetail, lb2),
