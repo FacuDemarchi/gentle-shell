@@ -34,7 +34,10 @@ function withPersonaFiles<T>(
 	} catch (error) { restore(); throw error; }
 }
 
-const MAPPER_PERSONA_BYTES = 1237; // Measured rendered persona text, excluding boundary newlines.
+// Measured rendered mapper persona text, excluding boundary newlines. This budget is the
+// mapper's own, and PMV10-B grew it on purpose from the 1,237 B of the PMV10-A minimum:
+// none of the eight shared budgets in persona-single-channel.test.ts moves with it.
+const MAPPER_PERSONA_BYTES = 1919;
 const cwd = "/virtual/persona-project";
 const projectPath = __testing.projectPersonaConfigPath(cwd);
 const globalPath = __testing.personaConfigPath(cwd);
@@ -117,10 +120,21 @@ test("mapper prompt adds its role without replacing identity, ODD or the orchest
 		"Your job is this project's map:",
 		"neither the user nor the orchestrator has to load the whole project into context",
 		"following the FP format",
+		"A row carries its functional-point code and what the point is, and nothing else.",
+		"The state of a row is the checkbox",
+		"the order of their codes",
+		"the first pending row in code order",
+		"Do not add fields, priority markers, dependency notes, or a second copy of the map.",
+		"say what is missing instead of inventing it.",
+		"Read the project before you write:",
+		"Name the documents you read.",
 		"You do not implement source code.",
 		"`/gentle:persona`",
 		"You add a role; you remove nothing.",
-	]) assert.ok(prompt.includes(clause), `missing mapper clause: ${clause}`);
+	]) assert.ok(personaText.includes(clause), `missing mapper clause: ${clause}`);
+	// The clauses above are asserted against the mapper slice and not against the whole
+	// prompt, so none of them can be satisfied by the orchestrator asset or by the ODD
+	// workflow instead of by the mapper's own text.
 	const gentleman = __testing.buildGentlePrompt("gentleman");
 	const identity = gentleman.slice(gentleman.indexOf("You are el Gentleman:"), gentleman.indexOf("\nPersona:"));
 	assert.ok(prompt.includes(identity));

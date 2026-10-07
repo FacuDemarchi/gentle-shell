@@ -68,7 +68,7 @@ Operating constraints: no push and no commit without an explicit go; single-thre
 
 - [x] **PMV10-A — the third mode, end to end, with an honest role.** *(closed 2026-10-07 with work-unit commit `cef0fcc6` — 7 files, +326/−32, with the independent verification's three findings closed: the reference text lives in this document, the fallback covers the non-string and missing-key cases, and the 16 pre-existing failures were reproduced on a pristine worktree instead of asserted.)*
   - `PersonaMode` and `PERSONA_OPTIONS` gain `mapper` (`:1196`, `:1198`); `readPersonaFile` (`:1898`) recognises it while every unknown value keeps today's `gentleman` fallback byte for byte and `readPersonaMode`'s precedence (`:1909`) is untouched; `handlePersonaCommand` stops rejecting it (`:4659`); `writePersonaMode` (`:1917`) implements the project-scoped policy; the `/reload` advice (`:4668`) is replaced by the measured truth.
-  - `buildGentlePrompt("mapper")` gains the mapper's persona text — the mode line, the Rioplatense language rule, and the role in three lines: its job is the project's map, its value is context economy, and it does not implement source code (the switch back is `/gentle:persona`) — while the identity block, the ODD workflow and the orchestrator asset stay exactly as they are. That is the honest minimum, so the mode never impersonates the gentleman block. The reference text, which the implementation must match line for line — this is the artifact the independent verifier needed and did not have:
+  - `buildGentlePrompt("mapper")` gains the mapper's persona text — the mode line, the Rioplatense language rule, and the role in three lines: its job is the project's map, its value is context economy, and it does not implement source code (the switch back is `/gentle:persona`) — while the identity block, the ODD workflow and the orchestrator asset stay exactly as they are. That is the honest minimum, so the mode never impersonates the gentleman block. The text **as PMV10-A shipped it**, kept as that slice's record. It is *not* the current reference any more, because PMV10-B grew it into the block recorded in its own entry below — compare against that one:
 
     ```ts
     const MAPPER_PERSONA_PROMPT = `Persona:
@@ -93,8 +93,23 @@ Operating constraints: no push and no commit without an explicit go; single-thre
 
 - [ ] **PMV10-B — the mapper's full contract text.**
   - The persona text grows from the honest minimum to the complete contract: what the map is for (the guide for the user and the orchestrator, and *what is next* as its question), what it produces (functional points in the project's own documents, following the FP format, carrying state and order), and its boundary (no source implementation; the orchestrator implements; the switch is `/gentle:persona`).
-  - Its size is asserted by a measured budget in `tests/persona-mapper.test.ts`, never by relaxing an existing one.
-  - The text is shown to the user before it is committed.
+  - **The user approved this text verbatim (2026-10-07)**, and the mapper's persona text must match it line for line. It is the reference an independent verifier compares against; the `Persona:` block above it is unchanged, word for word, from the PMV10-A minimum.
+
+    ```
+    Mapper role:
+    - Your job is this project's map: the functional points that say what the project does and what is still missing.
+    - The map exists so that neither the user nor the orchestrator has to load the whole project into context: after a functionality lands, the map answers what comes next.
+    - You write those functional points into the project's own documents, following the FP format. A row carries its functional-point code and what the point is, and nothing else.
+    - The state of a row is the checkbox, and ODD's tracking already updates it as work closes. The order of the rows is the order of their codes. So what comes next is the first pending row in code order — read it from there instead of inferring it.
+    - Do not add fields, priority markers, dependency notes, or a second copy of the map. When the map cannot answer something, say what is missing instead of inventing it.
+    - Read the project before you write: the decomposition comes from what the project actually does, from its documents and its code, not from the conversation alone. Name the documents you read.
+    - You do not implement source code. When the user asks for implementation, say that the switch back is `/gentle:persona` and that the orchestrator builds it under ODD.
+    - Organic Driven Development still governs you: explore before writing, track the map's document, and close your work with a commit. You add a role; you remove nothing.
+    ```
+
+  - Its size is asserted by a measured budget in `tests/persona-mapper.test.ts`: **1,919 B** of rendered persona text, measured after the change and grown from the 1,237 B of the PMV10-A minimum. That budget is the mapper's own and growing it **is** this slice; none of the eight shared budgets in `tests/persona-single-channel.test.ts` moves.
+  - The decision that pins the text (2026-10-07): a row carries its code and what the point is, its state is the checkbox ODD's tracking already updates, and its order is the code order — so *what is next* is read rather than inferred. Priority markers, dependency fields and a second copy of the map are out, and the text says so.
+  - The text is shown to the user before it is committed. *(Done: approved 2026-10-07.)*
   - Acceptance: with the mode on, the injected prompt carries the full mapper contract **and** the unchanged ODD workflow; with either other mode the prompt is byte-identical to today.
 
 - [ ] **PMV10-C — docs and activation.**
@@ -123,7 +138,7 @@ Behaviour changes with runnable deterministic tests use focused RED/GREEN first,
 - **The global persona default becomes unreachable from the command**, which is the write policy read all the way through. Written down rather than discovered later: if both scopes are ever wanted, it is an explicit scope argument and a separate unit.
 - **The corrupted-file fallback keeps today's behaviour** by decision, not by oversight: an unknown mode in a project file still reads as `gentleman` and masks the bad value instead of falling through to the global.
 - **The tone cannot be composed**: with a single-value enum, `mapper` implies Rioplatense. A neutral mapping mode would be the second persisted field this unit deliberately does not add.
-- **What the map must carry to answer *what is next* is not yet pinned.** The rows' state comes from the documents ODD already updates, and their order from the FP codes, so the mapper must produce rows that both are readable — a design point PMV10-B has to settle with the user, since it decides the text of the contract.
+- **What the map carries to answer *what is next* is decided (2026-10-07): nothing new.** A row carries its functional-point code and what the point is, and that is all. Its state is the checkbox that ODD's tracking already updates when work closes, and its order is the order of the codes, so *what is next* is the first pending row in code order. The mapper writes the decomposition and never mirrors progress by hand; priority markers, dependency fields and a second copy of the map are explicitly out.
 - **The suite's baseline on this machine is not stable across an install.** The 16 failures above are pre-existing and attributed, but any future red or green in `tests/vim-editor-adapter.test.ts` must be re-measured on a tree that lacks the diff before it is trusted, exactly as the port document already warns.
 
 ## Next step
