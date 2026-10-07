@@ -27,10 +27,6 @@ import { projectMapCardPart } from "../lib/shell-project-map-card.ts";
 import { createOrchestratorSessionTabsSnapshot, orchestratorSessionTabsDigest, orchestratorSessionTabsRail, renderOrchestratorSessionTabDetail } from "../lib/shell-project-map-tabs.ts";
 import { listPresence } from "../lib/orchestrator-presence.ts";
 import { sidebarHeaderContributor, sidebarState } from "../lib/shell-sidebar.ts";
-import { deriveProjectMapIntegrationReadiness, renderProjectMapIntegrationReport, PROJECT_MAP_INTEGRATION_GATING_CHECKS, type ProjectMapIntegrationChecks } from "../lib/project-map-integration.ts";
-import { checkProjectMapIntegrationFreshness, checkProjectMapIntegrationOverlap, projectMapIntegrationGitExecutor, resolveProjectMapIntegrationTarget } from "../lib/project-map-integration-repository.ts";
-import { checkProjectMapIntegrationTasks, parseProjectMapTaskDocument, readProjectMapTestCommand } from "../lib/project-map-integration-documents.ts";
-import { issueProjectMapStoreReadinessReceipt } from "../lib/project-map-store-receipts.ts";
 import { resolveGentlePiAgentHome } from "../lib/agent-home.ts";
 import type { CardTheme } from "../lib/shell-card.ts";
 import { invalidateSidebar, RAIL_WIDTH } from "../lib/shell-sidebar-layout.ts";
@@ -88,7 +84,7 @@ export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapHelpKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_HELP_KEY?.trim(), PROJECT_MAP_HELP_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "integrate", "translate"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "translate"] as const;
 
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
@@ -102,7 +98,6 @@ const USAGE = {
 	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
 	lead: `Usage: /${PROJECT_MAP_COMMAND_NAME} lead <claim|renew|release|status> [capability-id]`,
 	contract: `Usage: /${PROJECT_MAP_COMMAND_NAME} contract <propose|accept|reject|list> ...`,
-	integrate: `Usage: /${PROJECT_MAP_COMMAND_NAME} integrate`,
 	translate: `Usage: /${PROJECT_MAP_COMMAND_NAME} translate`,
 } as const;
 
@@ -641,104 +636,6 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		options.onHide?.();
 		ctx.ui.notify("Project Map card hidden for this session.");
 		return emptyReport("hide");
-	}
-
-	if (parsed.action === "integrate") {
-		if (parsed.argument.length > 0) {
-			const message = `integrate takes no argument. ${USAGE.integrate}`;
-			ctx.ui.notify(message);
-			return emptyReport("integrate", [refusal(message)]);
-		}
-		// Readiness is read-only, but it issues a receipt, and a receipt is a store write.
-		const gatedIntegrate = executableGate("integrate", "$.integrate");
-		if (gatedIntegrate !== undefined) return gatedIntegrate;
-		const root = storeRoot(ctx.cwd);
-		if (root.root === null) {
-			ctx.ui.notify(`Project Map coordination is unavailable, so integration readiness cannot be measured.\n${describeDiagnostics(root.diagnostics)}`);
-			return emptyReport("integrate", root.diagnostics);
-		}
-		const path = artifactPath;
-		const read = readProjectMapFile(path);
-		const coordination = readProjectMapCoordinationState({ root: root.root, mapPath: path, now: new Date().toISOString() });
-		const listed = listProjectMapStoreWorktreeBindings({ root: root.root });
-		const bindings = listed.bindings.map((binding) => ({ capabilityId: binding.capability_id, sessionId: binding.session_id, branch: binding.branch, worktreeRoot: binding.worktree_root, baseCommit: binding.base_commit }));
-		const run = projectMapIntegrationGitExecutor();
-		const resolved = resolveProjectMapIntegrationTarget({ cwd: ctx.cwd, run });
-
-		const freshness = new Map<string, { check: ProjectMapIntegrationChecks["freshness"]; behindBy: number | null; reason?: string }>();
-		for (const binding of bindings) freshness.set(binding.capabilityId, checkProjectMapIntegrationFreshness({ cwd: ctx.cwd, run, target: resolved.target, baseCommit: binding.baseCommit }));
-		const overlap = checkProjectMapIntegrationOverlap({ cwd: ctx.cwd, run, target: resolved.target, candidates: bindings.map((binding) => ({ capabilityId: binding.capabilityId, branch: binding.branch })) });
-
-		// Feature documents are read here and parsed purely; a document the map declares
-		// but that cannot be read is a mismatch rather than a silent pass.
-		const documents = new Map<string, { path: string; done: number; total: number }>();
-		for (const capability of read.map?.capabilities ?? []) {
-			const reference = capability.featureDocs[0];
-			if (reference === undefined) continue;
-			try { documents.set(capability.id, { path: reference, ...parseProjectMapTaskDocument(readFileSync(join(ctx.cwd, reference), "utf8")) }); }
-			catch { /* left unread, and the check reports it as a mismatch */ }
-		}
-
-		const checks = new Map<string, Partial<ProjectMapIntegrationChecks>>();
-		const evidence = new Map<string, { behindBy: number | null; overlaps: string[] }>();
-		const reasons = new Map<string, Partial<Record<keyof ProjectMapIntegrationChecks, string>>>();
-		for (const capability of read.map?.capabilities ?? []) {
-			const measured = freshness.get(capability.id);
-			const shared = overlap.get(capability.id);
-			const tasks = checkProjectMapIntegrationTasks({ declaredState: capability.state, declaredDocumentCount: capability.featureDocs.length, document: documents.get(capability.id) ?? null });
-			checks.set(capability.id, {
-				freshness: measured?.check ?? "unverified",
-				conflicts: shared?.check ?? "unverified",
-				tasks: tasks.check,
-				// The review store records candidates, not capabilities, so no lineage can be
-				// attributed to a capability today. Reporting that honestly beats inventing a link.
-				review: "unverified",
-			});
-			evidence.set(capability.id, { behindBy: measured?.behindBy ?? null, overlaps: shared?.overlaps ?? [] });
-			reasons.set(capability.id, {
-				...(measured?.reason === undefined ? {} : { freshness: measured.reason }),
-				...(shared?.reason === undefined ? {} : { conflicts: shared.reason }),
-				...(tasks.reason === undefined ? {} : { tasks: tasks.reason }),
-				review: "the review store records candidates, not capabilities, so no lineage can be attributed to this capability",
-			});
-		}
-
-		const readiness = deriveProjectMapIntegrationReadiness({
-			map: read.map === null ? null : { capabilities: read.map.capabilities.map((capability) => ({ id: capability.id, outcome: capability.outcome, state: capability.state, dependsOn: capability.dependsOn, contracts: capability.contracts, featureDocs: capability.featureDocs })) },
-			coordination: { satellites: coordination.satellites.map((satellite) => ({ capabilityId: satellite.capabilityId, sessionId: satellite.sessionId })), capabilities: coordination.capabilities, conflicts: coordination.conflicts },
-			worktreeBindings: bindings,
-			verification: { testCommand: readProjectMapTestCommand(readSource(join(ctx.cwd, "package.json")).text || null) },
-			target: resolved.target,
-			review: new Map(),
-			tasks: documents,
-			checks,
-			evidence,
-			reasons,
-			diagnostics: [...resolved.diagnostics, ...read.diagnostics.map((diagnostic) => ({ code: diagnostic.code, path: diagnostic.path, message: diagnostic.message, severity: diagnostic.severity }))],
-		});
-
-		ctx.ui.notify(renderProjectMapIntegrationReport(readiness, { limit: 10 }).join("\n"));
-
-		// A receipt is what makes the verification durable, and it grants nothing: the
-		// report says so, and the record carries `authority: "none"`.
-		const issued: string[] = [];
-		const issuedBy = sessionKey(ctx);
-		if (issuedBy.length > 0) {
-			for (const candidate of readiness.candidates.filter((entry) => entry.ready)) {
-				const result = issueProjectMapStoreReadinessReceipt({
-					root: root.root,
-					capabilityId: candidate.capabilityId,
-					issuedBy,
-					verified: PROJECT_MAP_INTEGRATION_GATING_CHECKS.filter((name) => candidate.checks[name] === "verified"),
-					evidence: ["project-map-integration/integrate", ...(candidate.behindBy === null ? [] : [`behind ${readiness.target} by ${candidate.behindBy}`])],
-					now: new Date().toISOString(),
-				});
-				if (result.receipt !== null) issued.push(candidate.capabilityId);
-			}
-		}
-		if (issued.length > 0) ctx.ui.notify(`Readiness receipts issued for ${issued.join(", ")}. Each one records authority "none": it is evidence, not permission.`);
-
-		return { action: "integrate", wrote: false, map: read.map, assumptions: [], omissions: ["Review evidence could not be attributed to any capability: the review store records candidates, not capabilities."], diagnostics: [...root.diagnostics, ...read.diagnostics, ...coordination.diagnostics] };
 	}
 
 	if (parsed.action === "status") {

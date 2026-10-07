@@ -112,7 +112,6 @@ const requiredPaths = [
   "lib/project-map-translations.ts",
   "lib/project-map-surface-table.ts",
   "lib/project-map-integration-documents.ts",
-  "lib/project-map-integration-repository.ts",
   "lib/project-map-integration.ts",
   "lib/project-map-store-blockers.ts",
   "lib/project-map-store-claims.ts",

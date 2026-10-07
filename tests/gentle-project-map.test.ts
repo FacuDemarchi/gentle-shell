@@ -14,7 +14,6 @@ import { acquireProjectMapClaim } from "../lib/project-map-store-claims.ts";
 import { beatProjectMapStoreHeartbeat, bindProjectMapStoreSession } from "../lib/project-map-store-heartbeats.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
 import { bindProjectMapStoreWorktree } from "../lib/project-map-store-worktrees.ts";
-import { issueProjectMapStoreReadinessReceipt, readProjectMapStoreReadinessReceipts } from "../lib/project-map-store-receipts.ts";
 import { PROJECT_MAP_ARTIFACT_PATH, readProjectMapFile } from "../lib/shell-project-map-schema.ts";
 import { generateProjectMapDraft } from "../lib/shell-project-map-draft.ts";
 import { hashProjectMapDescription } from "../lib/project-map-translations.ts";
@@ -95,7 +94,7 @@ function withRepository(run: (directory: string) => Promise<void> | void, overri
 }
 
 test("parses a known sub-action and rejects everything else", () => {
-	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "integrate", "translate"]);
+	assert.deepEqual([...PROJECT_MAP_SUB_ACTIONS], ["ensure", "draft", "declare", "approve", "status", "show", "hide", "lead", "contract", "translate"]);
 	for (const action of PROJECT_MAP_SUB_ACTIONS) {
 		const parsed = parseProjectMapSubAction(action);
 		assert.equal(parsed.ok, true);
@@ -1262,65 +1261,6 @@ test("unmounting the card releases the header contribution", async () => {
 	});
 });
 
-test("the integrate sub-action is advertised and parses without an argument", () => {
-	assert.ok((PROJECT_MAP_SUB_ACTIONS as readonly string[]).includes("integrate"));
-	const parsed = parseProjectMapSubAction("integrate");
-	assert.equal(parsed.ok, true);
-	assert.equal(parsed.action, "integrate");
-	assert.equal(parsed.argument, "");
-});
-
-test("integrate refuses an argument and reports that readiness cannot be measured without coordination", async () => {
-	await withRepository(async (directory) => {
-		writeGroupedReadyArtifact(directory);
-		const extension = projectMapExtension();
-		const probe = widgetContext(directory, "integrate-unavailable");
-		await extension.fire("session_start", probe.ctx);
-		const command = extension.commands.get(PROJECT_MAP_COMMAND_NAME)!;
-		await command.handler("integrate catalog", probe.ctx);
-		assert.ok(probe.notified.some((message) => /integrate takes no argument/.test(message)), probe.notified.join("\n"));
-		const report = await runProjectMapCommand("integrate", probe.ctx as unknown as ProjectMapCommandContext, { env: GATE_ON });
-		assert.equal(report.action, "integrate");
-		assert.ok(probe.notified.some((message) => /coordination is unavailable/i.test(message)), probe.notified.join("\n"));
-	});
-});
-
-test("integrate names the next safe integration action and issues a receipt for it", async () => {
-	await withGitRepository(async (directory, store, agentHome) => {
-		const now = new Date().toISOString();
-		// A capability in flight whose document agrees, with every repository-facing check satisfiable.
-		mkdirSync(join(directory, "odd", "tasks"), { recursive: true });
-		writeFileSync(join(directory, "odd", "tasks", "catalog.md"), "- [x] one\n- [ ] two\n", "utf8");
-		mkdirSync(join(directory, "openspec"), { recursive: true });
-		writeFileSync(join(directory, "package.json"), JSON.stringify({ name: "example-shop", scripts: { test: "pnpm test" } }), "utf8");
-		writeFileSync(artifactPath(directory), JSON.stringify({
-			version: "gentle-shell.project-map/v1",
-			project: { id: "example-shop", name: "Example Shop" },
-			approval: { state: "draft" },
-			foundations: [],
-			capabilities: [{ id: "catalog", outcome: "Catalog", foundationRefs: [], dependsOn: [], contracts: [], featureDocs: ["odd/tasks/catalog.md"], surfaces: ["web"], state: "active" }],
-		}), "utf8");
-		const head = String(execFileSync("git", ["-C", directory, "rev-parse", "HEAD"], { encoding: "utf8" })).trim();
-		execFileSync("git", ["-C", directory, "branch", "feat/catalog"], { stdio: "ignore" });
-		// No receipt is planted: the run below has to issue the first one itself, which is the whole
-		// point of the coverage check no longer gating on its own product.
-		assert.ok(bindProjectMapStoreWorktree({ root: store, capabilityId: "catalog", branch: "feat/catalog", worktreeRoot: directory, sessionId: "session-catalog", baseCommit: head, now }).binding);
-
-		const extension = projectMapExtension({ GENTLE_PI_AGENT_HOME: agentHome });
-		const probe = widgetContext(directory, "integrate-ready");
-		await extension.fire("session_start", probe.ctx);
-		await extension.commands.get(PROJECT_MAP_COMMAND_NAME)!.handler("integrate", probe.ctx);
-		const printed = probe.notified.join("\n");
-		assert.match(printed, /Next safe integration action: catalog/, printed);
-		assert.match(printed, /grants nothing/i);
-		assert.match(printed, /verification: pnpm test/);
-		assert.match(printed, /tasks: odd\/tasks\/catalog\.md 1\/2/);
-		assert.match(printed, /the review store records candidates, not capabilities/);
-		assert.equal(readProjectMapStoreReadinessReceipts({ root: store, capabilityId: "catalog", limit: 5 }).receipts.length, 1, "the run issued the first receipt, with nothing planted for it");
-		assert.ok(probe.notified.some((message) => /authority "none"/.test(message)), printed);
-	});
-});
-
 test("the collapse shortcut toggles all groups only while the card is mounted", async () => {
 	await withRepository(async (directory) => {
 		writeGroupedReadyArtifact(directory);
@@ -1687,7 +1627,6 @@ const GATED_COMMANDS: Array<[string, string]> = [
 	["contract propose catalog checkout-1 Title body.md", "contract"],
 	["contract accept catalog checkout-1 because it is shared", "contract"],
 	["contract reject catalog checkout-1 because it is not", "contract"],
-	["integrate", "integrate"],
 ];
 
 test("every route that acts outside the artifact is refused while the gate is off", async () => {
