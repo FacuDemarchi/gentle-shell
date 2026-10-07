@@ -100,7 +100,7 @@ This is guidance through existing tools, not a new CLI, phase, state engine, or 
 
 | Capability                     | What it does                                                                                                                                  |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **el Gentleman persona**       | Makes Pi behave like a senior architect and teacher, not a generic chatbot. Spanish responses use Rioplatense voseo by default; neutral mode is saved globally with project overrides. |
+| **el Gentleman persona**       | Makes Pi behave like a senior architect and teacher, not a generic chatbot. Spanish responses use Rioplatense voseo by default; `neutral` is professional Spanish, and `mapper` turns the same harness to writing the project's functional points. The switch is saved as a project override. |
 | **Configurable startup intro** | Adds a rose/text-logo startup intro, compact runtime panel, color presets, and commands to hide or show the decorative parts.                  |
 | **Work routing discipline**    | ODD keeps small tasks inline and delegates context-heavy work. |
 | **Subagent orchestration**     | Keeps one parent session responsible while child agents explore, implement, test, or review with focused context.                             |
@@ -392,7 +392,7 @@ The Gentle AI adapter projects native `gentle-pi:ask-user-question:blocked`, leg
 /gentle:doctor          Run read-only diagnostics for assets, config, tools, and guards.
 /gentle:models             Assign global model/effort routing to packaged/custom agents.
 /gentle:profiles           Create, switch, and manage global agent-model profiles.
-/gentle:persona            Switch between gentleman and neutral persona modes.
+/gentle:persona            Switch the persona for this project: gentleman, neutral, or mapper.
 /gentle:background-subagents  Show or set the managed background-subagents policy, with its deciding source.
 /gentle:review-mode          Show or set the receipt-driven development mode (status|enable|disable).
 /gentle:animations         Show or set global animations: quality, performance, or potato.
@@ -690,20 +690,25 @@ Delegation contract:
 | ----------- | ------------------------------------------------------------------------------------------------------------- |
 | `gentleman` | Senior architect, teacher, direct technical feedback, Rioplatense Spanish/voseo when the user writes Spanish. |
 | `neutral`   | Same discipline, warmer professional language, no regional expression.                                        |
+| `mapper`    | Same discipline in mapping mode: writes the project's functional points so the map answers what comes next.   |
 
-Saved globally at:
+`mapper` adds a role instead of replacing one: the identity, the ODD workflow, the delegation ladder and the review lifecycle stay exactly as they are, and the mode only adds the mapping contract. It writes the project's functional points and does not implement source code, and it points back to `/gentle:persona` when what you want is implementation. See [Project Map](project-map.md) for the map it feeds.
 
-```text
-~/.pi/gentle-ai/persona.json
-```
-
-A project can still override the global default with:
+The persona is saved as a **project override**:
 
 ```text
 .pi/gentle-ai/persona.json
 ```
 
-`/gentle:persona` writes the global config and updates an existing project override when one is present, so the current project does not stay stale. Run `/reload` or start a new Pi session after switching persona.
+`/gentle:persona` writes that file, creating it when it does not exist, and leaves the global default alone:
+
+```text
+~/.pi/gentle-ai/persona.json
+```
+
+The global file is what a project without an override inherits, and the command does not change it; edit it by hand for a different default everywhere.
+
+Switching takes effect **on the next message**, with no `/reload`: the persona section is re-derived per run and patched by name. Measured on a real RPC session against this checkout with the file flipped on disk between turns: turn one carried the full section set (96,497 bytes) with the `gentleman` block, and turn two carried a 27,567-byte patch of the persona section with the `mapper` block, with the identity, the ODD workflow and the orchestrator contract still present in it.
 
 ## Model and effort assignment
 
@@ -876,7 +881,7 @@ One limitation is worth stating. When a pinned profile omits an agent, that agen
 | `/gentle:models`                 | Opens global model + effort assignment UI. Press `x` to export, `r` to restore saved routing, and `u` to save routing and capture the session in the current profile. |
 | `/gentle:profiles`               | Opens global agent-model profiles: apply live, create, snapshot, duplicate, rename, delete, export, and import. |
 | `/gentle:commands`               | Opens the command palette (default `alt+k`): a curated, grouped menu (Configuration, Session, Diagnostics, Skills) of registered Gentle commands; search and run by label. |
-| `/gentle:persona`                | Switches global persona mode, with project override support.        |
+| `/gentle:persona`                | Switches the persona for the current project (writes the project override; leaves the global default alone). |
 | `/gentle:background-subagents`   | Shows or sets the managed background-subagents policy (`status\|enable\|disable`), naming the source that decided it. |
 | `/gentle:double-esc-cancel`      | Shows or sets the double-esc-cancel preference (`status\|enable\|disable`); no argument toggles it. |
 | `/gentle:animations`            | Shows or sets global animations (`status\|quality\|performance\|potato`); no argument opens a selector. |
