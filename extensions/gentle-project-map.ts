@@ -5,12 +5,10 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { readProjectMapCoordinationState } from "../lib/project-map-coordination-state.ts";
 import { resolveProjectMapStoreRoot } from "../lib/project-map-store-root.ts";
-import type { ProjectMapStoreDiagnostic } from "../lib/project-map-store-schema.ts";
 import { projectMapExecutableRefusal } from "../lib/shell-project-map-gate.ts";
-import { approveProjectMap, declareProjectMapSurfaces, writeProjectMapFile } from "../lib/shell-project-map-approval.ts";
-import { collectProjectMapSteps, deriveProjectMap, generateProjectMapDraft, projectMapSourceChanges, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
 import { listProjectMapStoreWorktreeBindings } from "../lib/project-map-store-worktrees.ts";
 import { readProjectMapStoreHeartbeat } from "../lib/project-map-store-heartbeats.ts";
+import { collectProjectMapSteps, deriveProjectMap, splitWorkUnitLabel } from "../lib/shell-project-map-draft.ts";
 import { readCapabilityDescription, type ProjectMapDescription } from "../lib/project-map-description.ts";
 import {
 	PROJECT_MAP_TRANSLATIONS_PATH,
@@ -81,16 +79,12 @@ export function parseProjectMapPrevKey(env: NodeJS.ProcessEnv = process.env): st
 export function parseProjectMapHelpKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
 	return projectMapKey(env.GENTLE_PI_PROJECT_MAP_HELP_KEY?.trim(), PROJECT_MAP_HELP_KEY_DEFAULT);
 }
-export const PROJECT_MAP_SUB_ACTIONS = ["ensure", "draft", "declare", "approve", "status", "show", "hide", "translate"] as const;
+export const PROJECT_MAP_SUB_ACTIONS = ["show", "hide", "translate"] as const;
 
 export type ProjectMapSubAction = (typeof PROJECT_MAP_SUB_ACTIONS)[number];
 
 const USAGE = {
 	command: `Usage: /${PROJECT_MAP_COMMAND_NAME} <${PROJECT_MAP_SUB_ACTIONS.join("|")}>`,
-	draft: `Usage: /${PROJECT_MAP_COMMAND_NAME} draft`,
-	declare: `Usage: /${PROJECT_MAP_COMMAND_NAME} declare <capability-id> <surface>...`,
-	approve: `Usage: /${PROJECT_MAP_COMMAND_NAME} approve <actor>`,
-	status: `Usage: /${PROJECT_MAP_COMMAND_NAME} status`,
 	show: `Usage: /${PROJECT_MAP_COMMAND_NAME} show`,
 	hide: `Usage: /${PROJECT_MAP_COMMAND_NAME} hide`,
 	translate: `Usage: /${PROJECT_MAP_COMMAND_NAME} translate`,
@@ -171,27 +165,6 @@ function sessionKey(ctx: ProjectMapCommandContext): string {
 
 function describeDiagnostics(diagnostics: Array<{ code: string; path: string; message: string }>): string {
 	return diagnostics.map((diagnostic) => `[${diagnostic.code}] ${diagnostic.path}: ${diagnostic.message}`).join("\n");
-}
-
-function storeRoot(cwd: string): { root: string | null; diagnostics: ProjectMapStoreDiagnostic[] } {
-	const resolved = resolveProjectMapStoreRoot(cwd);
-	return { root: resolved.root, diagnostics: resolved.diagnostics };
-}
-
-function bodyDigest(path: string): { digest: string | null; diagnostics: ProjectMapStoreDiagnostic[] } {
-	try {
-		return { digest: `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`, diagnostics: [] };
-	} catch {
-		return {
-			digest: null,
-			diagnostics: [{ code: "project-map-store/unreadable-store", path: "$.bodyPath", message: `Contract body at ${path} could not be read.`, severity: "error" }],
-		};
-	}
-}
-
-function readText(path: string): string | undefined {
-	const read = readSource(path);
-	return read.ok ? read.text : undefined;
 }
 
 /**
@@ -328,28 +301,6 @@ function helpOverlayOptions(railColumns: number): { anchor: string; width: strin
 	return { anchor: "left-center", width: "70%", minWidth: 60, maxHeight: "85%", margin: { left: 2, right: railColumns + 2 } };
 }
 
-function readArtifactText(path: string): string | null {
-	const read = readSource(path);
-	return read.ok ? read.text : null;
-}
-
-/**
- * Reports whether the artifact moved since it was observed. An unreadable artifact is its
- * own state rather than an absent one, because conflating them would let a write replace a
- * file nobody could read: the observation would be `null`, the re-check would also be
- * `null`, and the guard would wave the write through.
- */
-function artifactMovedSince(path: string, observed: SourceRead): boolean {
-	const current = readSource(path);
-	return current.ok !== observed.ok || current.reason !== observed.reason || current.text !== observed.text;
-}
-
-function unreadableArtifactRefusal(path: string): ProjectMapDiagnostic | null {
-	const observed = readSource(path);
-	if (observed.reason !== "unreadable") return null;
-	return refusal(`The artifact at ${path} exists but could not be read, so nothing was written; writing blind would replace a file this command cannot inspect.`, "$");
-}
-
 export function readRepositorySources(cwd: string): { sources: { packageJson?: unknown; oddTaskDocuments?: { path: string; text: string }[] }; omissions: string[] } {
 	const omissions: string[] = [];
 	const sources: { packageJson?: unknown; oddTaskDocuments?: { path: string; text: string }[] } = {};
@@ -394,17 +345,6 @@ function displayCardState(cwd: string): ProjectMapCardState {
 	return map === null ? { kind: "no-fp", path: cwd, overlay } : { kind: "ready", path: cwd, map, coverage: projectMapCoverage(map), overlay, derived: true };
 }
 
-function describe(map: ProjectMapV1): string {
-	const done = map.capabilities.filter((capability) => capability.state === "done").length;
-	const undetermined = map.capabilities.filter((capability) => capability.surfaces.length === 0).length;
-	return [
-		`Project Map (${map.approval.state})`,
-		`Project: ${map.project.name} (${map.project.id})`,
-		`Foundations: ${map.foundations.length}`,
-		`Capabilities: ${map.capabilities.length} (${done} done, ${undetermined} without a declared surface)`,
-	].join("\n");
-}
-
 export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandContext, options: ProjectMapCommandOptions = {}): Promise<ProjectMapCommandReport> {
 	const parsed = parseProjectMapSubAction(args);
 	if (!parsed.ok) {
@@ -439,16 +379,6 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		return emptyReport("hide");
 	}
 
-	if (parsed.action === "status") {
-		const read = readProjectMapFile(artifactPath);
-		if (read.map === null) {
-			ctx.ui.notify(`No approved or draft Project Map at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return emptyReport("status", read.diagnostics);
-		}
-		ctx.ui.notify(describe(read.map));
-		return { action: "status", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
-	}
-
 	/**
 	 * What a translation pass still has to do, and the exact shape to write.
 	 *
@@ -480,204 +410,6 @@ export async function runProjectMapCommand(args: string, ctx: ProjectMapCommandC
 		return { action: "translate", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [...read.diagnostics, ...reportTranslations(read.map)] };
 	}
 
-	const confirmDraftWrite = (returnsToDraft = false): Promise<boolean> => ctx.hasUI
-		? ctx.ui.confirm("Write the Project Map draft?", `Write a draft map to ${PROJECT_MAP_ARTIFACT_PATH}? It stays a draft until you approve it.${returnsToDraft ? " This write returns the approved map to draft." : ""}`)
-		: Promise.resolve(false);
-
-	/**
-	 * Generates the plan, shows it, and writes it only after a confirmation. `draft` and
-	 * `ensure` share this flow so the two entries can never drift apart: the only difference
-	 * between them is what `ensure` does first when a usable map already exists.
-	 */
-	const generatePlan = async (action: "draft" | "ensure"): Promise<ProjectMapCommandReport> => {
-		const observed = readSource(artifactPath);
-		const unreadable = unreadableArtifactRefusal(artifactPath);
-		if (unreadable !== null) {
-			ctx.ui.notify(unreadable.message);
-			return emptyReport(action, [unreadable]);
-		}
-		const current = readProjectMapFile(artifactPath);
-		const repository = readRepositorySources(ctx.cwd);
-		const generated = generateProjectMapDraft(repository.sources);
-		const omissions = [...repository.omissions, ...generated.omissions];
-		if (generated.map === null) {
-			ctx.ui.notify(`A draft could not be generated.\n${omissions.join("\n")}`);
-			return { action, wrote: false, map: null, assumptions: generated.assumptions, omissions, diagnostics: [refusal("The draft could not be generated.")] };
-		}
-		// An artifact that exists and does not parse is replaced, and saying so first is the
-		// difference between a regeneration the human asked for and a silent overwrite. A
-		// missing artifact is the first-run case and needs no warning.
-		const replaced = existsSync(artifactPath) && current.map === null && current.diagnostics.length > 0
-			? ["", `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} is not a usable map and will be replaced:`, ...current.diagnostics.map((diagnostic) => `- ${diagnostic.path}: ${diagnostic.message}`)]
-			: [];
-		const summary = [describe(generated.map), ...replaced, "", "Assumptions:", ...generated.assumptions.map((entry) => `- ${entry}`), "", "Omissions:", ...omissions.map((entry) => `- ${entry}`)].join("\n");
-		ctx.ui.notify(summary);
-		// The confirmation is the same two-option dialog every other write in this command uses:
-		// the human accepts or rejects the write instead of typing an answer, and a dialog that is
-		// dismissed is not an acceptance.
-		const confirmed = await confirmDraftWrite();
-		if (!confirmed) {
-			ctx.ui.notify("Draft discarded; nothing was written.");
-			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
-		}
-		if (artifactMovedSince(artifactPath, observed)) {
-			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
-			ctx.ui.notify(message);
-			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [refusal(message, "$")] };
-		}
-		const written = writeProjectMapFile(artifactPath, generated.map);
-		if (!written.ok) {
-			ctx.ui.notify(`The draft could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { action, wrote: false, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: written.diagnostics };
-		}
-		ctx.ui.notify(`Wrote a draft map to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action, wrote: true, map: generated.map, assumptions: generated.assumptions, omissions, diagnostics: [] };
-	};
-
-	const refreshPlan = async (stored: ProjectMapV1, observed: ReturnType<typeof readSource>): Promise<ProjectMapCommandReport> => {
-		const kept: ProjectMapCommandReport = { action: "ensure", wrote: false, map: stored, assumptions: [], omissions: [], diagnostics: [] };
-		const repository = readRepositorySources(ctx.cwd);
-		const generated = generateProjectMapDraft(repository.sources);
-		const omissions = [...repository.omissions, ...generated.omissions];
-		if (generated.map === null) {
-			ctx.ui.notify(`A draft could not be generated.\n${omissions.join("\n")}`);
-			return { ...kept, assumptions: generated.assumptions, omissions };
-		}
-		const changes = projectMapSourceChanges(stored, generated.map);
-		if (changes.length === 0) return kept;
-		ctx.ui.notify(["Project Map sources changed:", ...changes.map((change) => `- ${change}`)].join("\n"));
-		// A document that says nothing about surfaces leaves that declaration to the human.
-		// Only that field carries over: all other facts, including approval, belong to this draft.
-		const storedById = new Map(stored.capabilities.map((capability) => [capability.id, capability]));
-		const draft: ProjectMapV1 = {
-			...generated.map,
-			capabilities: generated.map.capabilities.map((capability) => ({
-				...capability,
-				surfaces: capability.surfaces.length === 0
-					? [...(storedById.get(capability.id)?.surfaces ?? [])]
-					: capability.surfaces,
-			})),
-		};
-		const confirmed = await confirmDraftWrite(stored.approval.state === "approved");
-		if (!confirmed) {
-			ctx.ui.notify("Draft discarded; nothing was written.");
-			return kept;
-		}
-		if (artifactMovedSince(artifactPath, observed)) {
-			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
-			ctx.ui.notify(message);
-			return { ...kept, map: readProjectMapFile(artifactPath).map, diagnostics: [refusal(message, "$")] };
-		}
-		const written = writeProjectMapFile(artifactPath, draft);
-		if (!written.ok) {
-			ctx.ui.notify(`The draft could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { ...kept, diagnostics: written.diagnostics };
-		}
-		ctx.ui.notify(`Wrote a draft map to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "ensure", wrote: artifactMovedSince(artifactPath, observed), map: draft, assumptions: generated.assumptions, omissions, diagnostics: [] };
-	};
-
-	if (parsed.action === "ensure") {
-		const observed = readSource(artifactPath);
-		const read = readProjectMapFile(artifactPath);
-		let settled: ProjectMapCommandReport;
-		if (read.map !== null) {
-			options.onShow?.();
-			ctx.ui.notify(`Project Map card shown for this session.\n\n${describe(read.map)}`);
-			settled = await refreshPlan(read.map, observed);
-		} else {
-			settled = await generatePlan("ensure");
-			if (settled.wrote) options.onShow?.();
-		}
-		// The agent needs the settled map's bodies, not the draft the human may have declined.
-		// Reading the artifact again also respects a competing write refused by the guard.
-		const map = readProjectMapFile(artifactPath).map;
-		if (map !== null) settled.diagnostics.push(...reportTranslations(map));
-		return settled;
-	}
-
-	if (parsed.action === "draft") return generatePlan("draft");
-
-	if (parsed.action === "declare") {
-		const [capabilityId = "", ...surfaces] = parsed.argument.split(/\s+/);
-		const unreadable = unreadableArtifactRefusal(artifactPath);
-		if (unreadable !== null) {
-			ctx.ui.notify(unreadable.message);
-			return emptyReport("declare", [unreadable]);
-		}
-		const observed = readSource(artifactPath);
-		const read = readProjectMapFile(artifactPath);
-		if (read.map === null) {
-			ctx.ui.notify(`No map to declare surfaces for at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return emptyReport("declare", read.diagnostics);
-		}
-		const transition = declareProjectMapSurfaces({ map: read.map, capabilityId, surfaces });
-		if (!transition.ok || transition.map === null) {
-			ctx.ui.notify(`The surfaces cannot be declared yet.\n${transition.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: transition.diagnostics };
-		}
-		const declared = transition.map.capabilities.find((capability) => capability.id === capabilityId)?.surfaces ?? [];
-		const change = declared.length === 0 ? "not yet determined" : declared.join(", ");
-		ctx.ui.notify([describe(transition.map), "", `Declared surfaces for ${capabilityId}: ${change}.`].join("\n"));
-		const confirmed = ctx.hasUI ? await ctx.ui.confirm("Declare Project Map surfaces?", `Replace the declared surfaces for ${capabilityId} in ${PROJECT_MAP_ARTIFACT_PATH} with ${change}?`) : false;
-		if (!confirmed) {
-			ctx.ui.notify("Surface declaration discarded; nothing was written.");
-			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
-		}
-		if (artifactMovedSince(artifactPath, observed)) {
-			const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
-			ctx.ui.notify(message);
-			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [refusal(message, "$")] };
-		}
-		const written = writeProjectMapFile(artifactPath, transition.map);
-		if (!written.ok) {
-			ctx.ui.notify(`The surface declaration could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-			return { action: "declare", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: written.diagnostics };
-		}
-		ctx.ui.notify(`Declared surfaces for ${capabilityId} and wrote to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-		return { action: "declare", wrote: true, map: transition.map, assumptions: [], omissions: [], diagnostics: [] };
-	}
-
-	const actor = parsed.argument;
-	if (actor.length === 0) {
-		ctx.ui.notify(`Approval requires an actor identity, because an approval nobody can attribute is not auditable.\n${USAGE.approve}`);
-		return emptyReport("approve", [refusal("Approval requires an actor identity.", "$.approval.approvedBy")]);
-	}
-	const observed = readSource(artifactPath);
-	const unreadable = unreadableArtifactRefusal(artifactPath);
-	if (unreadable !== null) {
-		ctx.ui.notify(unreadable.message);
-		return emptyReport("approve", [unreadable]);
-	}
-	const read = readProjectMapFile(artifactPath);
-	if (read.map === null) {
-		ctx.ui.notify(`No map to approve at ${PROJECT_MAP_ARTIFACT_PATH}.\n${read.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-		return emptyReport("approve", read.diagnostics);
-	}
-	const approvedAt = now().toISOString();
-	const transition = approveProjectMap({ map: read.map, approvedBy: actor, approvedAt });
-	if (!transition.ok || transition.map === null) {
-		ctx.ui.notify(`The map cannot be approved yet.\n${transition.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: transition.diagnostics };
-	}
-	ctx.ui.notify([describe(transition.map), "", `Approving as ${actor} at ${approvedAt}. Approval grants plan authority only: it starts no writer and authorizes no commit, push, merge, or release.`].join("\n"));
-	const confirmed = ctx.hasUI ? await ctx.ui.confirm("Approve the Project Map?", `Record ${actor} as the approver of ${PROJECT_MAP_ARTIFACT_PATH}?`) : false;
-	if (!confirmed) {
-		ctx.ui.notify("Approval discarded; nothing was written.");
-		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [] };
-	}
-	if (artifactMovedSince(artifactPath, observed)) {
-		const message = `The artifact at ${PROJECT_MAP_ARTIFACT_PATH} changed while the decision was pending, so nothing was written. Re-run to see the current state.`;
-		ctx.ui.notify(message);
-		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: [refusal(message, "$")] };
-	}
-	const written = writeProjectMapFile(artifactPath, transition.map);
-	if (!written.ok) {
-		ctx.ui.notify(`The approval could not be written.\n${written.diagnostics.map((diagnostic) => `${diagnostic.path}: ${diagnostic.message}`).join("\n")}`);
-		return { action: "approve", wrote: false, map: read.map, assumptions: [], omissions: [], diagnostics: written.diagnostics };
-	}
-	ctx.ui.notify(`Approved by ${actor} and written to ${PROJECT_MAP_ARTIFACT_PATH}.`);
-	return { action: "approve", wrote: true, map: transition.map, assumptions: [], omissions: [], diagnostics: [] };
 }
 
 interface ProjectMapSessionRecord {

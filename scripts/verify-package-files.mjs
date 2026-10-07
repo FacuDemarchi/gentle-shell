@@ -123,7 +123,6 @@ const requiredPaths = [
   "lib/project-map-store-schema.ts",
   "lib/project-map-store-worktrees.ts",
   "lib/project-map-store.ts",
-  "lib/shell-project-map-approval.ts",
   "lib/shell-project-map-card.ts",
   "lib/shell-project-map-display-order.ts",
   "lib/shell-project-map-draft.ts",
