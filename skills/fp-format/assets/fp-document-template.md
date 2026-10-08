@@ -1,6 +1,23 @@
 # <ID FP existente o aprobado> — <Resultado funcional>
 
 **Belongs to:** `<código padre confirmado>`
+**Work unit prefix:** `FP-`
+
+<!-- Contrato de prefijo: conservar el literal inglés **Work unit prefix:** y
+     sustituir FP- solo por el prefijo confirmado, sin renumerar los IDs.
+     Sin declaración, el mapa espera FP-. Se leen todas las líneas, quitando
+     espacios exteriores y un marcador de lista opcional; los dos puntos pueden
+     ir dentro o inmediatamente después de la negrita. La primera declaración
+     legible gana para este documento, no para los demás.
+     La coincidencia es literal y sensible a mayúsculas: prefijo seguido de
+     dígitos y grupos opcionales de guion y dígitos. Con T, T1 es fila y TR-1
+     es paso. Las continuaciones con letra Unicode o punto (T1b, T1.2) son
+     subelementos, nunca filas, incluso si falta su padre.
+     Ambas omisiones nombran el documento y no cambian la resolución: una
+     declaración sin span entre comillas invertidas, con varios, con valor
+     vacío, espacios en blanco o una comilla invertida es ilegible y se ignora;
+     toda declaración legible posterior es duplicada y se ignora, aunque sea
+     idéntica. Una ilegible no impide que gane otra legible posterior. -->
 
 <!-- Reemplazar el marcador solo por un código padre existente o aprobado y
      confirmado para este documento. No inferirlo. Si la declaración original
@@ -29,6 +46,37 @@
 
 <!-- Repetir con los IDs y marcadores originales, sin renumerar ni cambiar estados. -->
 - [ ] **<ID tarea existente o aprobado> — <Resultado de la tarea>**
+  **Allowed edit surfaces:** `<ruta relativa confirmada>`
+  <!-- Mantener la declaración en el cuerpo indentado de esta unidad, en una
+       sola línea. Sustituir el marcador únicamente con rutas aprobadas.
+
+### Contrato de superficies
+
+Cada entrada contiene una ruta entre comillas invertidas, precedida opcionalmente
+por `superficie:`. Leer de izquierda a derecha: el nombre abre un grupo para esa
+ruta y las siguientes sin nombre hasta el próximo nombre, válido o no.
+Separar entradas con comas. El parser lee entradas reconocidas, no valida la
+sintaxis completa de la línea. Vocabulario exacto y sensible a mayúsculas:
+`productUx`, `web`, `api`, `data`, `security`, `operations`, `tests`.
+Un nombre canónico asigna la superficie a su grupo sin consultar la tabla;
+una ruta anterior al primer nombre usa `surfaceForDeclaredPath` y la tabla canónica del harness (gana el
+prefijo más largo). Conservar el marcador `**Allowed edit surfaces:**` en inglés.
+
+Un nombre desconocido invalida su grupo: cada ruta hasta el próximo nombre genera
+su propia omisión que identifica la capability, el documento fuente, el nombre
+infractor y la ruta; no asigna superficie ni recurre a la tabla. Una ruta anterior
+al primer nombre y sin coincidencia también genera una omisión, nunca una suposición.
+Las rutas en las omisiones llevan el span declarado sin prefijo de superficie;
+el lector del documento normaliza el espacio en blanco antes del parsing, por lo
+que las secuencias de espacios o tabulaciones dentro de una ruta se colapsan.
+Si faltan datos, informarlo.
+
+Para delegar, el padre transforma esta declaración en rutas relativas al
+repositorio, una por línea, dentro de `## Allowed edit surfaces`. Nunca copiar
+la forma ``superficie: `ruta` `` a ese bloque: `lib/bounded-writer-admission.ts`
+solo admite rutas simples o íntegramente entre comillas invertidas y bloquea
+cualquier otra forma. Esta declaración no autoriza por sí sola una delegación.
+  -->
 
 ## Explicación de tareas
 
