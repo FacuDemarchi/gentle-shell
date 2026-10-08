@@ -194,16 +194,32 @@ export async function downloadGentleAiAsset(url, destination, maxBytes = MAX_DOW
 	const downloadOnce = async () => {
 		const response = await responseFor(url, redirects), contentLength = Number(response.headers["content-length"] ?? "0");
 		if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxBytes) { response.resume(); throw new Error("Gentle AI download exceeds the maximum allowed size"); }
-		await new Promise((resolve, reject) => {
-			const output = createWriteStream(destination, { flags: "wx", mode: 0o600 }); let received = 0, settled = false;
-			let timer = setTimeout(() => response.destroy(downloadTimeoutError("body")), bodyTimeoutMs);
-			const finish = (callback, value) => { if (!settled) { settled = true; clearTimeout(timer); callback(value); } };
-			const fail = (error) => { response.destroy(); output.destroy(); finish(reject, error); };
-			const reset = () => { clearTimeout(timer); timer = setTimeout(() => response.destroy(downloadTimeoutError("body")), bodyTimeoutMs); };
-			response.on("data", (chunk) => { reset(); received += chunk.length; if (received > maxBytes) response.destroy(new Error("Gentle AI download exceeds the maximum allowed size")); });
-			response.on("error", fail); response.setTimeout?.(bodyTimeoutMs, () => response.destroy(downloadTimeoutError("body")));
-			output.on("error", fail); output.on("finish", () => finish(resolve)); response.pipe(output);
-		});
+		let created = false;
+		try {
+			await new Promise((resolve, reject) => {
+				const output = createWriteStream(destination, { flags: "wx", mode: 0o600 }); let received = 0, settled = false;
+				output.on("open", () => { created = true; });
+				let timer = setTimeout(() => response.destroy(downloadTimeoutError("body")), bodyTimeoutMs);
+				// The exclusive open is asynchronous, so a failed attempt may settle the
+				// download before its destination stream finished with the filesystem. Wait
+				// for that stream to close first: otherwise a late creation outlives the
+				// retry's removal of the destination and the next exclusive open fails with
+				// EEXIST instead of reporting the timeout that caused the retry.
+				const closed = () => new Promise((done) => { if (output.closed) done(); else output.on("close", done); });
+				const finish = (callback, value) => { if (settled) return; settled = true; clearTimeout(timer); void closed().then(() => callback(value)); };
+				const fail = (error) => { response.destroy(); output.destroy(); finish(reject, error); };
+				const reset = () => { clearTimeout(timer); timer = setTimeout(() => response.destroy(downloadTimeoutError("body")), bodyTimeoutMs); };
+				response.on("data", (chunk) => { reset(); received += chunk.length; if (received > maxBytes) response.destroy(new Error("Gentle AI download exceeds the maximum allowed size")); });
+				response.on("error", fail); response.setTimeout?.(bodyTimeoutMs, () => response.destroy(downloadTimeoutError("body")));
+				output.on("error", fail); output.on("finish", () => finish(resolve)); response.pipe(output);
+			});
+		} catch (error) {
+			// A failed attempt removes only the file it created, once its stream closed, so
+			// the retry starts from a free destination path. A path this download never
+			// owned is left alone instead of being deleted with it.
+			if (created) await rm(destination, { force: true });
+			throw error;
+		}
 	};
 	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) try { if (attempt > 1) await rm(destination, { force: true }); await downloadOnce(); return; } catch (error) {
 		if (attempt === maxAttempts || !isRetryableDownloadError(error)) throw error;
@@ -568,7 +584,7 @@ async function recoverInterruptedPublication(runtimeRoot, bundleIsValid, options
 	const live = versionBundlePath(runtimeRoot);
 	const liveExists = await realBundleDirectory(live, runtimeRoot, "live bundle");
 	if (!liveExists) {
-		try { await (options.rename ?? rename)(backup, live); }
+		try { await renameWithWindowsPublicationRetry(backup, live, options); }
 		catch (error) { throw bundleRecoveryError(runtimeRoot, `could not restore valid backup ${backup}: ${error instanceof Error ? error.message : String(error)}`); }
 		return;
 	}
@@ -585,21 +601,43 @@ async function cleanupStaleStagingBundles(runtimeRoot) {
 	}
 }
 
+// Windows publication can lose a race with the just-executed gentle-ai.exe or a
+// real-time scanner still holding the staging directory. Retry only those lock
+// codes, and only on the effective win32 platform, so a permanent failure still
+// surfaces as the original error instead of a successful install.
+const WINDOWS_PUBLICATION_RETRY_DELAYS_MS = [200, 400, 800, 1600];
+
+function isRetryableWindowsPublicationLock(error) {
+	return Boolean(error && typeof error === "object" && ["EPERM", "EBUSY", "EACCES"].includes(error.code));
+}
+
+async function renameWithWindowsPublicationRetry(from, to, options) {
+	const renameFile = options.rename ?? rename;
+	if ((options.platform ?? process.platform) !== "win32") return renameFile(from, to);
+	for (let attempt = 0; attempt <= WINDOWS_PUBLICATION_RETRY_DELAYS_MS.length; attempt += 1) {
+		try { return await renameFile(from, to); }
+		catch (error) {
+			if (attempt === WINDOWS_PUBLICATION_RETRY_DELAYS_MS.length || !isRetryableWindowsPublicationLock(error)) throw error;
+			await new Promise((resolve) => setTimeout(resolve, WINDOWS_PUBLICATION_RETRY_DELAYS_MS[attempt]));
+		}
+	}
+}
+
 async function publishBundle(runtimeRoot, stagingDirectory, options) {
-	const versionDirectory = join(runtimeRoot, `v${INSTALLER_VERSION}`), renameFile = options.rename ?? rename;
+	const versionDirectory = join(runtimeRoot, `v${INSTALLER_VERSION}`);
 	const backupDirectory = join(runtimeRoot, `.v${INSTALLER_VERSION}.backup-${process.pid}-${Date.now()}`);
 	let movedPrior = false;
 	try {
 		try {
 			const current = await lstat(versionDirectory);
 			if (!current.isDirectory() || current.isSymbolicLink()) throw new Error("Gentle AI package-local version directory must be a real directory");
-			await renameFile(versionDirectory, backupDirectory);
+			await renameWithWindowsPublicationRetry(versionDirectory, backupDirectory, options);
 			movedPrior = true;
 		} catch (error) { if (!(error && typeof error === "object" && error.code === "ENOENT")) throw error; }
-		await renameFile(stagingDirectory, versionDirectory);
+		await renameWithWindowsPublicationRetry(stagingDirectory, versionDirectory, options);
 	} catch (error) {
 		if (movedPrior) {
-			try { await renameFile(backupDirectory, versionDirectory); }
+			try { await renameWithWindowsPublicationRetry(backupDirectory, versionDirectory, options); }
 			catch (rollbackError) { throw new Error("Gentle AI bundle publication failed and rollback could not restore the prior bundle", { cause: rollbackError }); }
 		}
 		throw error;

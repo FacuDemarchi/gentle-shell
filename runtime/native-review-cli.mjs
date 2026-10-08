@@ -261,6 +261,8 @@ export const NATIVE_REVIEW_RECOVER_DISPOSITION = ["scope_changed", "invalidated"
 
 
 
+
+
 export const NATIVE_REVIEW_LEGACY_QUARANTINE = {
 	DIAGNOSTIC: "historical findings freeze changed unrelated transaction state",
 	DISPOSITION: "quarantine-malformed-freeze-event",
@@ -472,6 +474,24 @@ export const NATIVE_REVIEW_UNACHIEVABLE_LENS_DETAIL_LIMIT = 512;
 // gentle-pi#638 fail-open capability gate: `review capture-unachievable` is younger than every released binary pinned in NATIVE_CLI_CONTRACTS, so the verb is gated invocation-adjacent instead of by a capability row. An older binary renders Go's exact `unknown review command "capture-unachievable"` refusal (internal/cli/review_facade.go) on stderr with no stdout, so the invocation rejects before any decode and the captured diagnostics are the only place that text survives. Every other failure -- a typed binding-mismatch refusal, a timeout, a decode failure -- is a real outcome the caller must surface, never a capability signal. Duck-typed on purpose: the classifier must survive a duplicated module instance exactly like the error it inspects.
 const NATIVE_REVIEW_UNKNOWN_UNACHIEVABLE_VERB_REFUSAL = /unknown review command "capture-unachievable"/;
 
+// A provider older than START lens selection refuses the STATUS preflight
+// flags with this exact typed preflight cause, before reading the repository.
+const NATIVE_REVIEW_UNKNOWN_LENS_FLAG_CAUSE = /^flag provided but not defined: -lenses(?:-reason)?$/;
+
+/** Reports a not-started STATUS refusal caused only by an unknown --lenses flag. */
+export function isNativeReviewLensSelectionUnsupported(error         )          {
+	if (!(error instanceof NativeReviewIntegrationError)) return false;
+	const failure = error.failureEnvelope;
+	return failure.code === "invalid_request" && failure.mutationOutcome === "not_started" &&
+		typeof failure.cause === "string" && NATIVE_REVIEW_UNKNOWN_LENS_FLAG_CAUSE.test(failure.cause);
+}
+
+function nativeLensSelectionArguments(request                            )                    {
+	if (request.lenses === undefined && request.lensesReason === undefined) return [];
+	if (request.lenses === undefined || request.lenses.length === 0 || request.lensesReason === undefined) throw new TypeError("Native lens selection requires lenses and lensesReason together");
+	return ["--lenses", request.lenses.join(","), "--lenses-reason", request.lensesReason];
+}
+
 export function isNativeReviewUnachievableVerbRefused(error         )          {
 	if (typeof error !== "object" || error === null) return false;
 	const stderr = (error                                          ).diagnostics?.stderr;
@@ -493,6 +513,16 @@ export const NATIVE_UNTRACKED_SCOPE = {
 
 
 
+
+
+
+
+
+/**
+ * The agent's own review lens choice (gentle-ai START --lenses): canonical
+ * lens names in 4R order and one reason. Providers that predate it refuse
+ * the flag, and START then falls back to the tier default.
+ */
 
 
 
@@ -1603,9 +1633,13 @@ class NativeReviewPlainCli {
 		if (request.maintainerAuthorization !== undefined && (request.maintainerAuthorization.length === 0 || /[\u0000-\u0009\u000b-\u001f\u007f]/.test(request.maintainerAuthorization))) {
 			throw new TypeError("Native RECOVER maintainerAuthorization must be a non-empty LF-only binding");
 		}
+		if (request.baseRef !== undefined && !isCanonicalProcessString(request.baseRef)) throw new TypeError("Native RECOVER baseRef must be a non-empty, trimmed, NUL-free string");
+		if (request.baseRef !== undefined && request.committedOnly !== true) throw new TypeError("Native RECOVER baseRef requires explicit committedOnly acknowledgement");
+		if (request.baseRef === undefined && request.committedOnly !== undefined) throw new TypeError("Native RECOVER committedOnly requires an explicit baseRef");
 		if (!(NATIVE_REVIEW_RECOVER_DISPOSITION                     ).includes(request.disposition)) throw new TypeError("Native RECOVER disposition must be scope_changed, invalidated, or escalated");
 		const { body } = await this.execute(NATIVE_REVIEW_OPERATION.RECOVER, request.cwd, [
 			"review", "recover", "--cwd", request.cwd,
+			...(request.baseRef === undefined ? [] : ["--base-ref", request.baseRef, "--committed-only"]),
 			"--predecessor-lineage", request.predecessorLineage,
 			"--expected-predecessor-revision", request.expectedPredecessorRevision,
 			"--successor-lineage", request.successorLineage,
@@ -1716,6 +1750,10 @@ export function nativeReviewAbandonAuthorization(request                        
 	// so the native v2 gate verifies an exact eight-line binding (schema, lineage,
 	// revision, snapshot_identity, reason, captured_lens_results, findings_present,
 	// actor) — there is no evidence_records_present line to derive or relay.
+	// capturedLensResults must arrive verbatim from the native authority
+	// inventory projection (issue #1159): the gate recomputes this line from its
+	// own ordered record, whose entries carry the ordinal prefix, so caller- or
+	// facade-authored lens names cannot reproduce it.
 	return [
 		"gentle-ai.review-abandon-authorization/v2",
 		`lineage=${request.lineage}`,
@@ -2150,7 +2188,7 @@ export class NativeReviewCliV216                            {
 		// drift; Pi never rebuilds that vector from request fields.
 		const projection = request.projection ?? "workspace";
 		const selection = nativeUntrackedSelection(request);
-		const status = await this.targetStatus({
+		const statusRequest                            = {
 			cwd: request.cwd,
 			projection,
 			...(request.baseRef === undefined ? {} : { baseRef: request.baseRef, committedOnly: true }),
@@ -2159,7 +2197,19 @@ export class NativeReviewCliV216                            {
 			...(request.intendedUntrackedSelection === undefined ? {} : { intendedUntrackedSelection: request.intendedUntrackedSelection }),
 			agent: "pi",
 			...(request.signal === undefined ? {} : { signal: request.signal }),
-		});
+		};
+		const lensSelection = request.lenses === undefined && request.lensesReason === undefined
+			? {}
+			: { lenses: request.lenses, lensesReason: request.lensesReason };
+		let status                ;
+		try {
+			status = await this.targetStatus({ ...statusRequest, ...lensSelection });
+		} catch (error) {
+			// Phase A: a provider that predates lens selection still reviews,
+			// with the tier default, instead of refusing the candidate.
+			if (Object.keys(lensSelection).length === 0 || !isNativeReviewLensSelectionUnsupported(error)) throw error;
+			status = await this.targetStatus(statusRequest);
+		}
 		const transition = status.nextTransition?.kind === "execute" && status.nextTransition.execute?.operation === "review.start"
 			? status.nextTransition.execute
 			: undefined;
@@ -2294,8 +2344,9 @@ export class NativeReviewCliV216                            {
 			...(request.baseRef === undefined ? [] : ["--base-ref", request.baseRef, "--committed-only"]),
 			...(request.lineageId === undefined ? [] : ["--lineage", request.lineageId]),
 			...(request.agent === undefined ? [] : ["--agent", request.agent]),
+			...nativeLensSelectionArguments(request),
 			"--next-transition",
-		] : ["review", "status", "--cwd", request.cwd, ...submittedTokens, ...forwardedBaseRef, ...forwardedLineage];
+		] : ["review", "status", "--cwd", request.cwd, ...submittedTokens, ...forwardedBaseRef, ...forwardedLineage, ...nativeLensSelectionArguments(request)];
 		const execution = await this.negotiated(NATIVE_REVIEW_OPERATION.STATUS, request.cwd, statusArguments, false, request.signal);
 		assertSupportedNextTransitionOperation(execution.body);
 		return decode(NATIVE_REVIEW_OPERATION.STATUS, false, () => decodeReviewStatusV3(execution.body));

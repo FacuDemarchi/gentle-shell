@@ -25,7 +25,7 @@ const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 // Pi requires explicit max mappings to offer that level; missing ordinary levels pass through.
 const FIXED_THINKING_LEVEL_MAP: NanChatModelConfig["thinkingLevelMap"] = {
 	off: null, minimal: null, low: null, high: null, xhigh: null, max: null,
-}; // Only medium remains usable: depth is fixed and reasoning cannot be disabled.
+}; // Medium is a Pi placeholder: NaN controls depth and offers no effort-based off switch.
 
 const CHAT_MODELS: NanChatModelConfig[] = ([
 	{
