@@ -32,6 +32,76 @@ markers, and evidence) are exempt from translation.
   fork, not established native release 4.0.0 parser/Project Map behavior. Writing
   it does not update a release map, validate hierarchy, or refresh anything.
 
+## Work unit prefix
+
+Declare a document's row prefix near its title with `**Work unit prefix:**`
+followed by exactly one backticked literal, for example `T` or `HOR-`.
+Without a declaration the map expects `FP-`. The reader scans every line,
+trims it and strips an optional leading list marker; the colon may be inside
+or immediately after the bold marker. The first readable declaration wins,
+independently per document, in both display and artifact extraction.
+
+Matching is literal and case-sensitive: the prefix must be followed by digits
+and optional dash-separated digits. Under `T`, `T1` and `T2` are rows, while
+`TR-1` is a step. A row continued by a Unicode letter or a dot is a sub-element,
+never a row, even if its parent is absent: `T1b` and `T1.2` remain steps.
+
+Both omission rules name the source document and leave resolution unchanged:
+a declaration with no backticked span, multiple spans, an empty value, whitespace
+or a backtick in the value is unreadable and ignored; every subsequent readable
+declaration is a duplicate and ignored, even when it repeats the same literal.
+An unreadable declaration before the first readable one does not prevent that
+later declaration from winning. Preserve existing codes; do not renumber.
+
+## Allowed edit surfaces
+
+Put the declaration in the indented body of its work unit, directly under the
+checkbox, not only in a separate explanation heading. The map reads the first
+matching declaration line in that unit's body; keep entries on that single line:
+
+```markdown
+- [ ] **FP-1 — Resultado aprobado**
+  **Allowed edit surfaces:** web: `apps/web/**`, `web/shared.ts`, api: `apps/api/catalog.ts`
+```
+
+Authoring requirements: each entry has an optional `surface:` immediately followed
+(with optional whitespace) by exactly one backticked repository-relative path;
+separate entries with commas. These are format requirements, not parser validation.
+Scan left to right: a name opens a group for its path and every subsequent unnamed
+path until the next name, whether the name is valid or not.
+The parser reads recognized entries rather than validating the whole line: write
+exactly one optional `name:` per backticked path, and do not rely on a malformed
+prefix being rejected.
+Keep the marker literal `**Allowed edit surfaces:**` in English, even in Spanish
+narrative. Use only these exact, case-sensitive canonical names, in canonical order:
+`productUx`, `web`, `api`, `data`, `security`, `operations`, `tests`.
+
+An explicit canonical name assigns that surface and bypasses the path table.
+Before any name opens a group, `surfaceForDeclaredPath` uses the harness-owned defaults in
+`lib/project-map-surface-table.ts` (longest prefix wins); the table is not project
+configuration. In the example, both `apps/web/**` and `web/shared.ts` belong to
+`web`; `api:` then opens a new group. Surfaces are deduplicated in canonical order in
+both the display and the artifact derivation.
+
+Both omission rules are mandatory: an unknown name (including a typo) reports the
+capability, source document, offending name and declared path, assigns no surface
+for each path in its group and never falls back to the table, until a later name
+opens a new group; a path before any name with no table match reports a named
+omission instead of guessing. Omission paths carry the declared span without a
+surface prefix; the document reader normalizes whitespace before parsing, so runs
+of spaces or tabs inside a declared path appear collapsed. No declaration
+means no declared surfaces, not inferred coverage. Do not invent paths or names
+when source input is missing.
+
+A delegation's `## Allowed edit surfaces` block is a different contract: it takes
+plain repository-relative paths, one per line. The parent maps the FP declaration
+into that block, stripping names and using only confirmed paths; never copy the
+``surface: `path` `` form into it. The writer admission gate in
+`lib/bounded-writer-admission.ts` checks path-line syntax, not surface names:
+the ordinary ``surface: `path` `` entry is neither bare nor wholly backticked
+and is rejected. An FP declaration does not itself
+authorize delegation or edits.
+
 ## Content and missing data
 
 Describe the FP's intended outcome, context/problem, scope, and rationale from
